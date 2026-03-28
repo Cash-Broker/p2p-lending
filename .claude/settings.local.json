@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(timeout 10 npx vite build)",
+      "Bash(cp frontend/src/App.vue resources/js/App.vue)",
+      "Bash(cp -r frontend/src/router resources/js/)",
+      "Bash(cp -r frontend/src/views resources/js/)",
+      "Bash(cp -r frontend/src/components resources/js/)",
+      "Bash(cp -r frontend/src/stores resources/js/)",
+      "Bash(npx vite:*)"
+    ]
+  }
+}
