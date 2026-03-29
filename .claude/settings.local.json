@@ -8,7 +8,13 @@
       "Bash(cp -r frontend/src/views resources/js/)",
       "Bash(cp -r frontend/src/components resources/js/)",
       "Bash(cp -r frontend/src/stores resources/js/)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(composer require:*)",
+      "Bash(composer show:*)",
+      "Bash(php artisan:*)",
+      "Bash(sed -i 's|^SESSION_DOMAIN=localhost$|SESSION_DOMAIN=p2p-lending.test|' .env)",
+      "Bash(sed -i 's|^SANCTUM_STATEFUL_DOMAINS=localhost:8000$|SANCTUM_STATEFUL_DOMAINS=p2p-lending.test|' .env)",
+      "Bash(sed -i 's|^FRONTEND_URL=http://localhost:8000$|FRONTEND_URL=https://p2p-lending.test|' .env)"
     ]
   }
 }
