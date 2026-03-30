@@ -8,6 +8,8 @@ const loading = ref(true)
 const withdrawals = ref([])
 const meta = ref({ current_page: 1, last_page: 1, total: 0 })
 
+const savedIbans = ref([])
+const selectedIbanId = ref('') // '' = manual input, number = saved iban id
 const form = ref({ amount: '', iban: '' })
 const errors = ref({})
 const submitLoading = ref(false)
@@ -34,9 +36,24 @@ async function loadHistory(page = 1) {
   } catch { /* KYC not approved — no history */ }
 }
 
+async function loadIbans() {
+  try {
+    const { data } = await api.get('/profile/ibans')
+    savedIbans.value = data.data
+  } catch { /* */ }
+}
+
+function onIbanSelect() {
+  if (selectedIbanId.value === '') {
+    form.value.iban = ''
+  }
+  // When a saved IBAN is selected, we don't set form.iban here —
+  // we send the full IBAN from savedIbans in submitWithdrawal
+}
+
 async function load() {
   loading.value = true
-  await loadHistory()
+  await Promise.all([loadHistory(), loadIbans()])
   loading.value = false
 }
 
@@ -50,8 +67,8 @@ function openConfirm() {
     errors.value = { amount: ['Недостатъчен свободен баланс.'] }
     return
   }
-  if (!form.value.iban || form.value.iban.replace(/\s/g, '').length < 15) {
-    errors.value = { iban: ['Въведете валиден IBAN.'] }
+  if (!selectedIbanId.value && (!form.value.iban || form.value.iban.replace(/\s/g, '').length < 15)) {
+    errors.value = { iban: ['Изберете запазен IBAN или въведете нов.'] }
     return
   }
   showConfirm.value = true
@@ -61,12 +78,16 @@ async function submitWithdrawal() {
   submitLoading.value = true
   errors.value = {}
   try {
-    await api.post('/withdrawal', {
-      amount: form.value.amount,
-      iban: form.value.iban.replace(/\s/g, '').toUpperCase(),
-    })
+    const payload = { amount: form.value.amount }
+    if (selectedIbanId.value) {
+      payload.saved_iban_id = selectedIbanId.value
+    } else {
+      payload.iban = form.value.iban.replace(/\s/g, '').toUpperCase()
+    }
+    await api.post('/withdrawal', payload)
     success.value = true
     form.value = { amount: '', iban: '' }
+    selectedIbanId.value = ''
     showConfirm.value = false
     await auth.fetchUser()
     await loadHistory()
@@ -158,7 +179,22 @@ onMounted(() => load())
 
               <div>
                 <label class="block text-sm font-medium text-navy-700 mb-1">IBAN</label>
+                <!-- Saved IBANs dropdown -->
+                <select
+                  v-if="savedIbans.length"
+                  v-model="selectedIbanId"
+                  @change="onIbanSelect"
+                  class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400 mb-2"
+                  :class="errors.iban || errors.saved_iban_id ? 'border-red-400' : ''"
+                >
+                  <option value="">Въведи нов IBAN</option>
+                  <option v-for="iban in savedIbans" :key="iban.id" :value="iban.id">
+                    {{ iban.iban }}{{ iban.label ? ` — ${iban.label}` : '' }}
+                  </option>
+                </select>
+                <!-- Manual IBAN input (shown when no saved IBAN selected) -->
                 <input
+                  v-if="!selectedIbanId"
                   v-model="form.iban"
                   type="text"
                   class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400"
@@ -166,6 +202,7 @@ onMounted(() => load())
                   placeholder="BG80BNBG96611020345678"
                 />
                 <p v-if="errors.iban" class="mt-1 text-xs text-red-500">{{ errors.iban[0] }}</p>
+                <p v-if="errors.saved_iban_id" class="mt-1 text-xs text-red-500">{{ errors.saved_iban_id[0] }}</p>
               </div>
 
               <button
@@ -228,7 +265,7 @@ onMounted(() => load())
           <p class="text-sm text-gray-500 mb-6">
             Сигурни ли сте, че искате да изтеглите
             <strong class="text-navy-700">{{ formatAmount(form.amount) }} €</strong>
-            към <strong class="text-navy-700 font-mono text-xs">{{ form.iban }}</strong>?
+            към <strong class="text-navy-700 font-mono text-xs">{{ selectedIbanId ? savedIbans.find(i => i.id === selectedIbanId)?.iban : form.iban }}</strong>?
           </p>
           <div class="flex gap-3">
             <button @click="showConfirm = false" class="flex-1 py-2.5 border border-gray-200 text-sm font-medium text-gray-600 rounded-xl">Отказ</button>

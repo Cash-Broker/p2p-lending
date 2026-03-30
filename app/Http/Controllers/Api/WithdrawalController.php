@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\WithdrawalRequest as WithdrawalFormRequest;
 use App\Http\Resources\WalletResource;
 use App\Http\Resources\WithdrawalRequestResource;
+use App\Models\SavedIban;
 use App\Models\WithdrawalRequest;
 use App\Services\WithdrawalService;
 use Illuminate\Http\JsonResponse;
@@ -17,10 +18,20 @@ class WithdrawalController extends Controller
 
     public function store(WithdrawalFormRequest $request): JsonResponse
     {
+        // Resolve IBAN: either from saved IBAN (server-side, never exposed) or raw input
+        if ($request->filled('saved_iban_id')) {
+            $savedIban = SavedIban::where('id', $request->saved_iban_id)
+                ->where('user_id', $request->user()->id)
+                ->firstOrFail();
+            $iban = $savedIban->iban;
+        } else {
+            $iban = $request->iban;
+        }
+
         $withdrawal = $this->withdrawalService->createRequest(
             $request->user()->id,
             number_format((float) $request->amount, 2, '.', ''),
-            $request->iban
+            $iban
         );
 
         return response()->json([
