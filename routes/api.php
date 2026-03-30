@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DepositController;
 use App\Http\Controllers\Api\LoanController;
+use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PortfolioController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\TransactionController;
@@ -58,6 +59,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/profile/ibans', [ProfileController::class, 'ibans']);
         Route::post('/profile/ibans', [ProfileController::class, 'storeIban']);
         Route::delete('/profile/ibans/{iban}', [ProfileController::class, 'destroyIban']);
+        Route::post('/profile/delete', [ProfileController::class, 'deleteAccount']);
+
+        // Notifications
+        Route::get('/notifications', [NotificationController::class, 'index']);
+        Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+        Route::post('/notifications/read-all', [NotificationController::class, 'markAllAsRead']);
+        Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+        Route::delete('/notifications', [NotificationController::class, 'destroyAll']);
 
         // Financial operations — KYC approval required
         Route::middleware('kyc')->group(function () {

@@ -7,6 +7,7 @@ use App\Http\Requests\ChangePasswordRequest;
 use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
 use App\Models\SavedIban;
+use App\Services\AccountDeletionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -106,5 +107,23 @@ class ProfileController extends Controller
         $iban->delete();
 
         return response()->json(['message' => 'IBAN removed.']);
+    }
+
+    public function deleteAccount(Request $request, AccountDeletionService $service): JsonResponse
+    {
+        $request->validate([
+            'password' => ['required', 'string'],
+        ]);
+
+        $service->deleteAccount($request->user(), $request->password);
+
+        auth()->guard('web')->logout();
+
+        if ($request->hasSession()) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+        }
+
+        return response()->json(['message' => 'Account deleted successfully.']);
     }
 }

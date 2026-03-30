@@ -4,17 +4,15 @@ namespace App\Services;
 
 use App\Models\DepositRequest;
 use App\Models\Transaction;
+use App\Notifications\DepositApprovedNotification;
+use App\Notifications\DepositRejectedNotification;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class DepositService
 {
     public function __construct(private WalletService $walletService) {}
 
-    /**
-     * Create a pending deposit request.
-     * The investor makes a bank transfer with the reference_code in the payment description.
-     * Admin manually matches the transfer and approves it.
-     */
     public function createRequest(int $userId, string $amount): DepositRequest
     {
         return DepositRequest::create([
@@ -26,12 +24,9 @@ class DepositService
         ]);
     }
 
-    /**
-     * Admin approves a deposit — credits the investor's wallet.
-     */
     public function approve(int $depositRequestId, int $adminId): DepositRequest
     {
-        return DB::transaction(function () use ($depositRequestId, $adminId) {
+        $deposit = DB::transaction(function () use ($depositRequestId, $adminId) {
             $deposit = DepositRequest::where('id', $depositRequestId)
                 ->where('status', 'pending')
                 ->lockForUpdate()
@@ -53,21 +48,38 @@ class DepositService
 
             return $deposit;
         });
+
+        // Notifications AFTER transaction — email failure must not rollback money
+        try {
+            $deposit->user->notify(new DepositApprovedNotification($deposit->amount, $deposit->reference_code));
+        } catch (\Throwable $e) {
+            Log::warning('Failed to send deposit approved notification', ['deposit_id' => $deposit->id, 'error' => $e->getMessage()]);
+        }
+
+        return $deposit;
     }
 
-    /**
-     * Admin rejects a deposit — no wallet change, just status update.
-     */
     public function reject(int $depositRequestId, int $adminId, ?string $note = null): DepositRequest
     {
-        $deposit = DepositRequest::where('id', $depositRequestId)
-            ->where('status', 'pending')
-            ->firstOrFail();
+        $deposit = DB::transaction(function () use ($depositRequestId, $adminId, $note) {
+            $deposit = DepositRequest::where('id', $depositRequestId)
+                ->where('status', 'pending')
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $deposit->update([
-            'status' => 'rejected',
-            'admin_note' => $note ?? "Rejected by admin #{$adminId}",
-        ]);
+            $deposit->update([
+                'status' => 'rejected',
+                'admin_note' => $note ?? "Rejected by admin #{$adminId}",
+            ]);
+
+            return $deposit;
+        });
+
+        try {
+            $deposit->user->notify(new DepositRejectedNotification($deposit->amount, $note));
+        } catch (\Throwable $e) {
+            Log::warning('Failed to send deposit rejected notification', ['deposit_id' => $deposit->id, 'error' => $e->getMessage()]);
+        }
 
         return $deposit;
     }

@@ -172,4 +172,96 @@ class ProfileTest extends TestCase
 
         $response->assertStatus(403);
     }
+
+    // ── Account deletion (GDPR) ──
+
+    public function test_delete_account_anonymizes_user(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => bcrypt('Password123!'),
+        ]);
+        $user->wallet()->create();
+        $user->savedIbans()->create(['iban' => 'BG80BNBG96611020345678']);
+
+        $response = $this->actingAs($user)->postJson('/api/profile/delete', [
+            'password' => 'Password123!',
+        ]);
+
+        $response->assertOk();
+
+        $user->refresh();
+        $this->assertStringStartsWith('Изтрит потребител', $user->name);
+        $this->assertStringContainsString('deleted_', $user->email);
+        $this->assertNull($user->phone);
+        $this->assertNull($user->wallet);
+        $this->assertEquals(0, $user->savedIbans()->count());
+    }
+
+    public function test_delete_account_fails_with_wrong_password(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => bcrypt('Password123!'),
+        ]);
+        $user->wallet()->create();
+
+        $response = $this->actingAs($user)->postJson('/api/profile/delete', [
+            'password' => 'WrongPass!',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors('password');
+    }
+
+    public function test_delete_account_fails_with_active_investments(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => bcrypt('Password123!'),
+        ]);
+        $wallet = $user->wallet()->create();
+        $wallet->forceFill(['invested' => 1000])->save();
+
+        $response = $this->actingAs($user)->postJson('/api/profile/delete', [
+            'password' => 'Password123!',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors('account');
+    }
+
+    public function test_delete_account_fails_with_remaining_balance(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => bcrypt('Password123!'),
+        ]);
+        $wallet = $user->wallet()->create();
+        $wallet->forceFill(['available' => 500])->save();
+
+        $response = $this->actingAs($user)->postJson('/api/profile/delete', [
+            'password' => 'Password123!',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors('account');
+    }
+
+    public function test_delete_account_preserves_transaction_history(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => bcrypt('Password123!'),
+        ]);
+        $user->wallet()->create();
+        \App\Models\Transaction::factory()->create(['user_id' => $user->id]);
+
+        $this->actingAs($user)->postJson('/api/profile/delete', [
+            'password' => 'Password123!',
+        ]);
+
+        // Transaction record preserved even after account deletion
+        $this->assertDatabaseHas('transactions', ['user_id' => $user->id]);
+    }
 }

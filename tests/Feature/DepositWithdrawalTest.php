@@ -35,7 +35,7 @@ class DepositWithdrawalTest extends TestCase
         $response->assertOk()
             ->assertJsonStructure(['reference_code', 'bank_details' => ['bank_name', 'iban', 'bic', 'beneficiary']]);
 
-        $this->assertStringStartsWith('DEP-', $response->json('reference_code'));
+        $this->assertStringStartsWith('P2P-', $response->json('reference_code'));
     }
 
     public function test_deposit_reference_code_is_unique_per_user(): void
