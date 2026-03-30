@@ -1,112 +1,163 @@
-# CLAUDE.md — Инструкции за Claude Code
+# CLAUDE.md — P2P Lending Platform Instructions
 
-## Кой си ти
-Ти си senior fintech developer с дълбок опит в P2P lending платформи. Аз нямам опит с fintech, затова ти трябва да вземаш правилните архитектурни решения. Когато нещо е fintech-специфично (изчисления на лихви, transaction ledger, wallet операции, concurrency), прави го по правилния начин без да питаш.
+## Role
+You are a senior fintech architect and developer with deep experience in P2P lending platforms (Mintos, Bondora, PeerBerry level). This is a REAL financial platform handling REAL money. Every decision must be production-grade. No shortcuts, no "we'll fix later", no prototype-quality code.
 
-## Какъв е проектът
-P2P / marketplace lending платформа. Инвеститори влагат пари в кредити, издадени от оригинатор (финансова къща).
+## Project Overview
+P2P / marketplace lending platform. Investors fund loans originated by licensed financial institutions (originators). The platform is the intermediary.
 
-### Как работи:
-- Инвеститор се регистрира и захранва сметка чрез банков превод
-- Депозитите се потвърждават ръчно от админ
-- Платформата показва кредити от оригинатор
-- Инвеститорът избира в кой кредит да инвестира
-- Кредитополучателят е анонимен за инвеститора (два профила: пълен за админ, анонимен за инвеститор)
-- Погашенията се въвеждат ръчно от админ и се разпределят пропорционално между инвеститорите
-- Инвеститорът следи доходност, портфейл и транзакции
+### Flow:
+- Investor registers → KYC verification → deposits via bank transfer (admin confirms manually)
+- Platform displays loans from originators
+- Investor selects loans and invests
+- Borrower is anonymous to investor (full profile for admin, anonymized for investor)
+- Repayments entered manually by admin → distributed proportionally to investors
+- Investor tracks returns, portfolio, transactions
 
-### Потребители:
-- **Инвеститор** — регистрира се, депозира, инвестира, следи портфейл
-- **Админ** — потвърждава депозити, въвежда кредити и погашения, управлява платформата
-- **Кредитополучател** — НЕ е потребител, съществува само като профил в системата
+### Users:
+- **Investor** — registers, deposits, invests, tracks portfolio
+- **Admin** — manages loans, approves deposits/withdrawals, enters repayments (Filament)
+- **Borrower** — NOT a user, exists only as data (full + anonymized profile)
 
-## Технологии
+## Tech Stack
 - **Backend:** Laravel 13
-- **Admin panel:** Filament 3
+- **Admin:** Filament 3
 - **Frontend:** Vue 3 + Vite + Tailwind CSS + Pinia + Vue Router
 - **Database:** MySQL
-- **Auth:** Laravel Sanctum (SPA authentication)
-- **API:** REST API (Laravel → Vue)
+- **Auth:** Laravel Sanctum (SPA)
+- **API:** REST (Laravel → Vue)
 
-## Правила за код
+## Code Standards — MANDATORY
 
-### Винаги:
-- Пиши тестове след всяка задача (Feature tests за API, Unit tests за services)
-- Използвай database transactions за финансови операции
-- Използвай lockForUpdate() при wallet операции (concurrency protection)
-- Валидирай всички inputs с Form Requests
-- Логвай всяка финансова операция в transactions таблицата
-- Използвай Eloquent relationships, не raw queries
-- Пиши миграции за всяка промяна в базата
-- Спазвай Laravel конвенции (naming, folder structure, PSR-12)
-- Коментирай сложна бизнес логика на английски
+### Architecture:
+- Separation of concerns: Controller → Service → Model. NEVER put business logic in controllers
+- Services for ALL business logic (WalletService, InvestmentService, RepaymentService, etc.)
+- Form Requests for EVERY endpoint with input
+- API Resources for EVERY response — never return raw models
+- Policies for authorization
+- Events + Listeners for side effects (notifications, logging)
 
-### Никога:
-- Не правй финансови калкулации с float — използвай decimal(12,2) в базата и bcmath или integer cents в PHP
-- Не позволявай wallet balance да стане отрицателен
-- Не изпускай error handling при финансови операции
-- Не създавай endpoint без auth middleware (освен public routes)
-- Не пиши код без тестове
+### Production Quality:
+- Write code as if it deploys to production TODAY
+- Error handling everywhere — never leave empty try/catch
+- Log errors with context: Log::error('Investment failed', ['user_id' => $id, 'loan_id' => $loanId, 'amount' => $amount])
+- Consistent API responses: { data, message, errors } with correct HTTP status codes (200, 201, 400, 401, 403, 404, 422, 500)
+- N+1 query prevention: ALWAYS eager load relationships
+- Pagination on ALL list endpoints
+- Database indexes on foreign keys and frequently queried columns
+- Rate limiting on sensitive endpoints (login, register, invest)
+- Input sanitization and validation on every endpoint
 
-## Структура на проекта
+### Financial Logic — CRITICAL:
+- NEVER use float for money — decimal(12,2) in DB, bcmath in PHP
+- NEVER allow negative wallet balance
+- EVERY money movement creates a transaction record — NO EXCEPTIONS
+- Transactions are IMMUTABLE — never update, never delete
+- Use DB::transaction() + lockForUpdate() for ALL wallet operations
+- Wallet balances: available, invested, earned
+  - Deposit: available += amount
+  - Invest: available -= amount, invested += amount
+  - Repayment (principal): invested -= amount, available += amount
+  - Repayment (interest): available += amount, earned += amount
+  - Withdrawal: available -= amount
+- Repayments distribute proportionally: investor's share = (investor_amount / total_funded) * repayment_amount
+- Always split repayments into principal and interest
+
+### Loan Lifecycle:
+- draft → published → funding → funded → active → repaid
+- Problem statuses: late, default
+- Buyback: originator buys back defaulted loan (if applicable)
+
+### Security:
+- Auth middleware on ALL non-public routes
+- Encrypt sensitive data (personal_id / EGN)
+- CSRF protection
+- XSS prevention
+- SQL injection prevention (use Eloquent, never raw user input in queries)
+- Sensitive actions require KYC approval check
+- Hide full borrower data from investors — ALWAYS use anonymized profile
+
+### Testing — MANDATORY:
+- Write tests AFTER every task
+- Feature tests for API endpoints (actingAs user)
+- Unit tests for services
+- Test happy path + ALL edge cases for financial operations:
+  - Insufficient balance
+  - Unauthorized access
+  - Invalid KYC status
+  - Concurrent operations (race conditions)
+  - Overfunding (invest more than loan needs)
+  - Duplicate operations
+- Use RefreshDatabase trait
+- Use factories for test data
+
+### DRY & Clean Code:
+- If something repeats 2+ times — extract it
+- Meaningful variable and method names
+- Comment complex business logic
+- PSR-12 coding style
+- Laravel naming conventions
+
+## Project Structure
 ```
 app/
-  Models/          — Eloquent модели
-  Services/        — Бизнес логика (WalletService, InvestmentService и т.н.)
+  Models/           — Eloquent models with relationships
+  Services/         — Business logic (WalletService, InvestmentService, etc.)
   Http/
     Controllers/
-      Api/         — API контролери за Vue frontend
-    Requests/      — Form Request валидации
-    Resources/     — API Resources за response formatting
-  Notifications/   — Laravel notifications
-  Policies/        — Authorization policies
+      Api/          — API controllers (thin — delegate to services)
+    Requests/       — Form Request validations
+    Resources/      — API Resources for response formatting
+  Notifications/    — Laravel notification classes
+  Policies/         — Authorization policies
+  Events/           — Domain events
+  Listeners/        — Event listeners
 database/
   migrations/
   seeders/
+  factories/
 resources/
-  js/              — Vue.js frontend (ако е в Laravel)
+  js/               — Vue.js frontend
+    views/          — Page components
+    components/     — Reusable components
+    layouts/        — Layout components (AppLayout, etc.)
+    stores/         — Pinia stores
+    api/            — Axios API calls
+    composables/    — Vue composables
+    router/         — Vue Router config
 tests/
-  Feature/         — Feature тестове (API endpoints)
-  Unit/            — Unit тестове (services, models)
+  Feature/          — Feature tests (API, integration)
+  Unit/             — Unit tests (services, models)
 ```
 
-## Финансова логика — важни правила
+## Currency
+- Everything in EUR
+- Format: 1,234.56 €
+- Precision: 2 decimal places (decimal 12,2 in DB)
 
-### Wallet
-- Всеки инвеститор има wallet с три баланса: available, invested, earned
-- При депозит: available += amount
-- При инвестиция: available -= amount, invested += amount
-- При погашение (principal): invested -= amount, available += amount
-- При погашение (interest): available += amount, earned += amount
-- При теглене: available -= amount
+## Language
+- Code, comments, commits: English
+- UI text: Bulgarian
+- API error messages: English (frontend translates)
 
-### Транзакции
-- ВСЯКО движение на пари създава запис в transactions
-- Типове: deposit, withdrawal, investment, repayment_principal, repayment_interest, fee
-- Транзакциите са immutable — никога не се edit-ват или изтриват
+## Frontend Standards:
+- Reusable components for: stat cards, data tables, modals, form inputs, status badges, progress bars
+- Loading skeletons while data loads — never blank screen
+- Empty states with helpful message and CTA when no data
+- Error states — show user-friendly message, not raw error
+- Toast notifications for success/error actions
+- Responsive: desktop first, but must work on mobile
+- Consistent spacing, colors, typography across all pages
+- All financial numbers formatted: 1,234.56 €
+- Dates formatted: DD.MM.YYYY
 
-### Погашения (Repayments)
-- Разпределят се пропорционално: ако инвеститор А е вложил 30% от кредита, получава 30% от погашението
-- Винаги се split-ват на principal и interest
-
-### Loan статуси
-- draft → published → funding → funded → active → repaid
-- Възможни проблемни статуси: late, default
-
-## Тестове
-- Пиши тестове за всяка задача
-- За API endpoints: Feature тестове с actingAs(user)
-- За services: Unit тестове
-- За финансови операции: тествай happy path + edge cases (insufficient balance, unauthorized, concurrent operations)
-- Използвай RefreshDatabase trait
-- Използвай factories за test data
-
-## Валута
-- Всичко е в EUR
-- Форматиране: 1,234.56 €
-- Decimal precision: 2 (decimal 12,2 в базата)
-
-## Език
-- Код и коментари: на английски
-- UI текстове: на български (за сега)
-- Commit messages: на английски
+## Design Style:
+- Clean, modern fintech aesthetic
+- Primary: navy (#1B2A4A)
+- Accent/Success: green (#22C55E)
+- Warning: orange (#F59E0B)
+- Danger: red (#EF4444)
+- Background: white + light gray sections (#F8FAFC)
+- Font: Inter
+- Plenty of whitespace
+- Subtle shadows and borders, no heavy decoration

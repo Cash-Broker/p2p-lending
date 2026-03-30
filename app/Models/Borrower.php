@@ -26,7 +26,12 @@ class Borrower extends Model
     protected function casts(): array
     {
         return [
+            // All PII encrypted at rest — GDPR Article 32.
+            // If the database is breached, attackers get ciphertext, not personal data.
             'personal_id' => 'encrypted',
+            'full_name' => 'encrypted',
+            'address' => 'encrypted',
+            'phone' => 'encrypted',
             'income' => 'decimal:2',
         ];
     }

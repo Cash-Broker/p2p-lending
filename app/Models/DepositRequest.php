@@ -11,7 +11,7 @@ use Illuminate\Support\Str;
 class DepositRequest extends Model
 {
     /** @use HasFactory<DepositRequestFactory> */
-    use HasFactory;
+    use HasFactory, \App\Traits\Auditable;
 
     protected $fillable = [
         'user_id',
@@ -20,6 +20,8 @@ class DepositRequest extends Model
         'status',
         'admin_note',
         'confirmed_at',
+        'ip_address',
+        'user_agent',
     ];
 
     protected function casts(): array

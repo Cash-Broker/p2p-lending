@@ -12,7 +12,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('user_id')->constrained();
             $table->decimal('amount', 12, 2);
-            $table->string('iban');
+            $table->text('iban'); // text() for encrypted cast — ciphertext exceeds 255 chars
             $table->string('status')->default('pending'); // pending, approved, rejected, processed
             $table->string('admin_note')->nullable();
             $table->timestamp('processed_at')->nullable();

@@ -12,7 +12,43 @@ use Illuminate\Database\Eloquent\Relations\HasOneThrough;
 class Loan extends Model
 {
     /** @use HasFactory<LoanFactory> */
-    use HasFactory;
+    use HasFactory, \App\Traits\Auditable;
+
+    const STATUS_DRAFT = 'draft';
+    const STATUS_PUBLISHED = 'published';
+    const STATUS_FUNDING = 'funding';
+    const STATUS_FUNDED = 'funded';
+    const STATUS_ACTIVE = 'active';
+    const STATUS_LATE = 'late';
+    const STATUS_DEFAULT = 'default';
+    const STATUS_REPAID = 'repaid';
+
+    const STATUSES = [
+        self::STATUS_DRAFT,
+        self::STATUS_PUBLISHED,
+        self::STATUS_FUNDING,
+        self::STATUS_FUNDED,
+        self::STATUS_ACTIVE,
+        self::STATUS_LATE,
+        self::STATUS_DEFAULT,
+        self::STATUS_REPAID,
+    ];
+
+    // Statuses visible to investors (excludes draft)
+    const INVESTOR_VISIBLE_STATUSES = [
+        self::STATUS_PUBLISHED,
+        self::STATUS_FUNDING,
+        self::STATUS_FUNDED,
+        self::STATUS_ACTIVE,
+        self::STATUS_LATE,
+        self::STATUS_REPAID,
+    ];
+
+    // Statuses where investment is possible
+    const FUNDABLE_STATUSES = [
+        self::STATUS_PUBLISHED,
+        self::STATUS_FUNDING,
+    ];
 
     protected $fillable = [
         'originator_id',
@@ -70,9 +106,14 @@ class Loan extends Model
         return $this->hasMany(AmortizationSchedule::class);
     }
 
+    public function favorites(): HasMany
+    {
+        return $this->hasMany(Favorite::class);
+    }
+
     public function isFundable(): bool
     {
-        return in_array($this->status, ['published', 'funding']);
+        return in_array($this->status, self::FUNDABLE_STATUSES);
     }
 
     public function isFullyFunded(): bool

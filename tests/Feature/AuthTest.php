@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\User;
-use App\Models\Wallet;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -11,16 +10,29 @@ class AuthTest extends TestCase
 {
     use RefreshDatabase;
 
-    // ── Registration ──
-
-    public function test_user_can_register_successfully(): void
+    protected function setUp(): void
     {
-        $response = $this->postJson('/api/register', [
+        parent::setUp();
+        // Clear rate limiter between tests — prevents cross-test poisoning
+        app(\Illuminate\Cache\RateLimiter::class)->clear('127.0.0.1');
+    }
+
+    private function validRegistrationData(array $overrides = []): array
+    {
+        return array_merge([
             'name' => 'Test User',
             'email' => 'test@example.com',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
-        ]);
+            'terms_accepted' => true,
+        ], $overrides);
+    }
+
+    // ── Registration ──
+
+    public function test_user_can_register_successfully(): void
+    {
+        $response = $this->postJson('/api/register', $this->validRegistrationData());
 
         $response->assertStatus(201)
             ->assertJson(['message' => 'Registration successful. Please verify your email.']);
@@ -30,15 +42,14 @@ class AuthTest extends TestCase
 
     public function test_wallet_is_created_on_registration(): void
     {
-        $this->postJson('/api/register', [
-            'name' => 'Wallet User',
+        $response = $this->postJson('/api/register', $this->validRegistrationData([
             'email' => 'wallet@example.com',
-            'password' => 'Password123!',
-            'password_confirmation' => 'Password123!',
-        ]);
+        ]));
+
+        $response->assertStatus(201);
 
         $user = User::where('email', 'wallet@example.com')->first();
-
+        $this->assertNotNull($user, 'User was not created');
         $this->assertNotNull($user->wallet);
         $this->assertEquals('0.00', $user->wallet->available);
         $this->assertEquals('0.00', $user->wallet->invested);
@@ -49,12 +60,9 @@ class AuthTest extends TestCase
     {
         User::factory()->create(['email' => 'taken@example.com']);
 
-        $response = $this->postJson('/api/register', [
-            'name' => 'Another User',
+        $response = $this->postJson('/api/register', $this->validRegistrationData([
             'email' => 'taken@example.com',
-            'password' => 'Password123!',
-            'password_confirmation' => 'Password123!',
-        ]);
+        ]));
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors('email');
@@ -62,12 +70,10 @@ class AuthTest extends TestCase
 
     public function test_register_fails_with_weak_password(): void
     {
-        $response = $this->postJson('/api/register', [
-            'name' => 'Weak User',
-            'email' => 'weak@example.com',
+        $response = $this->postJson('/api/register', $this->validRegistrationData([
             'password' => '123',
             'password_confirmation' => '123',
-        ]);
+        ]));
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors('password');
@@ -122,7 +128,7 @@ class AuthTest extends TestCase
     public function test_authenticated_user_can_get_their_profile(): void
     {
         $user = User::factory()->create();
-        $user->wallet()->create(['available' => 0, 'invested' => 0, 'earned' => 0]);
+        $user->wallet()->create();
 
         $response = $this->actingAs($user)->getJson('/api/user');
 

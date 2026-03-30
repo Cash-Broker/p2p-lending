@@ -10,10 +10,12 @@ return new class extends Migration
     {
         Schema::create('borrowers', function (Blueprint $table) {
             $table->id();
-            $table->string('full_name');
-            $table->text('personal_id'); // Encrypted at rest — GDPR compliance
-            $table->string('address');
-            $table->string('phone');
+            // PII fields use text() because Laravel's encrypted cast produces
+            // ciphertext longer than 255 chars (base64 + IV + MAC)
+            $table->text('full_name');  // Encrypted at rest
+            $table->text('personal_id'); // Encrypted at rest
+            $table->text('address');     // Encrypted at rest
+            $table->text('phone');       // Encrypted at rest
             $table->decimal('income', 12, 2);
             $table->integer('credit_score')->nullable();
             $table->text('notes')->nullable();
