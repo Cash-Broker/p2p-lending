@@ -11,19 +11,28 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use App\Traits\Auditable;
 use Illuminate\Notifications\Notifiable;
 
 class User extends Authenticatable implements FilamentUser, MustVerifyEmail
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory, Notifiable, Auditable;
 
     protected $fillable = [
         'name',
         'email',
         'password',
-        'role',
-        'kyc_status',
+        'phone',
+        'kyc_document_path',
+    ];
+
+    // role and kyc_status are intentionally NOT fillable —
+    // they must only change through admin actions, never from user input.
+    // Default values are set in the migration (investor, pending).
+    protected $attributes = [
+        'role' => 'investor',
+        'kyc_status' => 'pending',
     ];
 
     protected $hidden = [
@@ -87,5 +96,15 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
     public function favorites(): HasMany
     {
         return $this->hasMany(Favorite::class);
+    }
+
+    public function consentRecords(): HasMany
+    {
+        return $this->hasMany(ConsentRecord::class);
+    }
+
+    public function savedIbans(): HasMany
+    {
+        return $this->hasMany(SavedIban::class);
     }
 }

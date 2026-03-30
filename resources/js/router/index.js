@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import HomePage from '../views/HomePage.vue'
+import AppLayout from '../layouts/AppLayout.vue'
 
 const routes = [
   {
@@ -8,6 +9,8 @@ const routes = [
     name: 'home',
     component: HomePage,
   },
+
+  // Auth pages (no layout)
   {
     path: '/login',
     name: 'login',
@@ -37,11 +40,54 @@ const routes = [
     name: 'verify-email',
     component: () => import('../views/auth/EmailVerificationPage.vue'),
   },
+
+  // App pages (with sidebar layout)
   {
-    path: '/dashboard',
-    name: 'dashboard',
-    component: () => import('../views/DashboardPage.vue'),
+    path: '/',
+    component: AppLayout,
     meta: { auth: true },
+    children: [
+      {
+        path: 'dashboard',
+        name: 'dashboard',
+        component: () => import('../views/DashboardPage.vue'),
+      },
+      {
+        path: 'deposit',
+        name: 'deposit',
+        component: () => import('../views/DepositPage.vue'),
+      },
+      {
+        path: 'withdraw',
+        name: 'withdraw',
+        component: () => import('../views/WithdrawalPage.vue'),
+      },
+      {
+        path: 'invest',
+        name: 'invest',
+        component: () => import('../views/MarketplacePage.vue'),
+      },
+      {
+        path: 'invest/:id',
+        name: 'invest-detail',
+        component: () => import('../views/InvestmentDetailPage.vue'),
+      },
+      {
+        path: 'portfolio',
+        name: 'portfolio',
+        component: () => import('../views/PortfolioPage.vue'),
+      },
+      {
+        path: 'transactions',
+        name: 'transactions',
+        component: () => import('../views/TransactionsPage.vue'),
+      },
+      {
+        path: 'profile',
+        name: 'profile',
+        component: () => import('../views/ProfilePage.vue'),
+      },
+    ],
   },
 ]
 
@@ -53,17 +99,14 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  // Fetch user once per session if not loaded yet
   if (!auth.user) {
     await auth.fetchUser()
   }
 
-  // Protected route — redirect to login
   if (to.meta.auth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
 
-  // Guest-only route — redirect to dashboard if already logged in
   if (to.meta.guest && auth.isAuthenticated) {
     return { name: 'dashboard' }
   }

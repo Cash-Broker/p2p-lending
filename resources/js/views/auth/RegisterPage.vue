@@ -11,6 +11,7 @@ const form = ref({
   email: '',
   password: '',
   password_confirmation: '',
+  terms_accepted: false,
 })
 const errors = ref({})
 const loading = ref(false)
@@ -104,6 +105,25 @@ async function submit() {
               class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400 transition-colors"
               placeholder="Повтори паролата"
             />
+          </div>
+
+          <!-- Legal consent checkbox -->
+          <div>
+            <label class="flex items-start gap-2.5">
+              <input
+                v-model="form.terms_accepted"
+                type="checkbox"
+                class="mt-0.5 size-4 rounded border-gray-300 text-accent-400 focus:ring-accent-400/50"
+              />
+              <span class="text-xs text-gray-500 leading-relaxed">
+                Съгласявам се с
+                <a href="#" class="text-accent-500 hover:text-accent-600 underline">Условията за ползване</a>,
+                <a href="#" class="text-accent-500 hover:text-accent-600 underline">Политиката за поверителност</a>
+                и <a href="#" class="text-accent-500 hover:text-accent-600 underline">Предупреждението за риск</a>.
+                Разбирам, че инвестирането в кредити носи риск.
+              </span>
+            </label>
+            <p v-if="errors.terms_accepted" class="mt-1 text-xs text-red-500">{{ errors.terms_accepted[0] }}</p>
           </div>
 
           <button

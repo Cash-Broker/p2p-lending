@@ -27,14 +27,16 @@ class DatabaseSeeder extends Seeder
             'email' => 'ivan@test.com',
             'email_verified_at' => now(),
         ]);
-        $investor1->wallet()->create(['available' => 5000.00, 'invested' => 2000.00, 'earned' => 150.00]);
+        $wallet1 = $investor1->wallet()->create();
+        $wallet1->forceFill(['available' => 5000.00, 'invested' => 2000.00, 'earned' => 150.00])->save();
 
         $investor2 = User::factory()->kycApproved()->create([
             'name' => 'Мария Димитрова',
             'email' => 'maria@test.com',
             'email_verified_at' => now(),
         ]);
-        $investor2->wallet()->create(['available' => 12000.00, 'invested' => 8000.00, 'earned' => 620.00]);
+        $wallet2 = $investor2->wallet()->create();
+        $wallet2->forceFill(['available' => 12000.00, 'invested' => 8000.00, 'earned' => 620.00])->save();
 
         // ── Originators ──
         $finkredit = Originator::create([

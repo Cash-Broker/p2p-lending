@@ -14,7 +14,14 @@
       "Bash(php artisan:*)",
       "Bash(sed -i 's|^SESSION_DOMAIN=localhost$|SESSION_DOMAIN=p2p-lending.test|' .env)",
       "Bash(sed -i 's|^SANCTUM_STATEFUL_DOMAINS=localhost:8000$|SANCTUM_STATEFUL_DOMAINS=p2p-lending.test|' .env)",
-      "Bash(sed -i 's|^FRONTEND_URL=http://localhost:8000$|FRONTEND_URL=https://p2p-lending.test|' .env)"
+      "Bash(sed -i 's|^FRONTEND_URL=http://localhost:8000$|FRONTEND_URL=https://p2p-lending.test|' .env)",
+      "Bash(mysql -u root -e \"CREATE DATABASE IF NOT EXISTS p2p_lending_test;\")",
+      "Bash(where mysql:*)",
+      "Read(//c/laragon/bin/mysql/**)",
+      "Read(//c/xampp/mysql/bin/**)",
+      "Read(//c/herd/bin/**)",
+      "Read(//c/Program Files/MySQL/**)",
+      "Bash(\"C:/laragon/bin/mysql/mysql-8.4.3-winx64/bin/mysql.exe\" -u root -e \"CREATE DATABASE IF NOT EXISTS p2p_lending_test;\")"
     ]
   }
 }

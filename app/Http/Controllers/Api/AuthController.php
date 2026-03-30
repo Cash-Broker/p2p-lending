@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\RegisterRequest;
+use App\Http\Resources\UserResource;
+use App\Models\ConsentRecord;
 use App\Models\User;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Auth\Events\Registered;
@@ -20,12 +22,11 @@ use Illuminate\Validation\ValidationException;
 class AuthController extends Controller
 {
     /**
-     * Register a new user and create their wallet.
+     * Register a new investor and create their wallet atomically.
      *
      * Wallet creation is wrapped in the same DB transaction as user creation.
-     * In fintech, if the wallet fails to create, the user must not exist either —
-     * an account without a wallet would be in an invalid state where they can't
-     * deposit, invest, or do anything financial.
+     * An account without a wallet is an invalid state in a financial platform —
+     * the user can't deposit, invest, or do anything.
      */
     public function register(RegisterRequest $request): JsonResponse
     {
@@ -36,11 +37,28 @@ class AuthController extends Controller
                 'password' => $request->password,
             ]);
 
-            $user->wallet()->create([
-                'available' => 0,
-                'invested' => 0,
-                'earned' => 0,
-            ]);
+            $user->wallet()->create();
+
+            // Record legal consent — evidence that user accepted terms at this
+            // moment, from this IP, with this browser. Without this record,
+            // a user can claim "I never agreed" and we have no defense.
+            $consentData = [
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'accepted_at' => now(),
+            ];
+
+            foreach ([
+                [ConsentRecord::TYPE_TERMS, ConsentRecord::CURRENT_TERMS_VERSION],
+                [ConsentRecord::TYPE_PRIVACY, ConsentRecord::CURRENT_PRIVACY_VERSION],
+                [ConsentRecord::TYPE_RISK, ConsentRecord::CURRENT_RISK_VERSION],
+            ] as [$type, $version]) {
+                $user->consentRecords()->create([
+                    'type' => $type,
+                    'version' => $version,
+                    ...$consentData,
+                ]);
+            }
 
             return $user;
         });
@@ -56,15 +74,13 @@ class AuthController extends Controller
     {
         $request->authenticate();
 
-        // Regenerate session to prevent session fixation attacks —
-        // critical in fintech where a hijacked session means access to funds
         if ($request->hasSession()) {
             $request->session()->regenerate();
         }
 
         return response()->json([
             'message' => 'Login successful.',
-            'user' => $request->user(),
+            'user' => new UserResource($request->user()->load('wallet')),
         ]);
     }
 
@@ -84,7 +100,7 @@ class AuthController extends Controller
 
     public function user(Request $request): JsonResponse
     {
-        return response()->json($request->user()->load('wallet'));
+        return response()->json(new UserResource($request->user()->load('wallet')));
     }
 
     public function forgotPassword(Request $request): JsonResponse
@@ -101,9 +117,7 @@ class AuthController extends Controller
             ]);
         }
 
-        return response()->json([
-            'message' => __($status),
-        ]);
+        return response()->json(['message' => __($status)]);
     }
 
     public function resetPassword(Request $request): JsonResponse
@@ -133,9 +147,7 @@ class AuthController extends Controller
             ]);
         }
 
-        return response()->json([
-            'message' => __($status),
-        ]);
+        return response()->json(['message' => __($status)]);
     }
 
     public function verifyEmail(Request $request): JsonResponse

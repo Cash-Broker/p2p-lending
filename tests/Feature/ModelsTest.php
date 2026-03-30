@@ -49,6 +49,7 @@ class ModelsTest extends TestCase
             'email' => 'wallettest@example.com',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
+            'terms_accepted' => true,
         ]);
 
         $response->assertStatus(201);
