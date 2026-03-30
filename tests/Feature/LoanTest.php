@@ -176,14 +176,14 @@ class LoanTest extends TestCase
         $this->assertEquals(Loan::STATUS_FUNDING, $loan->fresh()->status);
     }
 
-    public function test_invest_transitions_loan_to_funded_when_full(): void
+    public function test_invest_transitions_loan_to_active_when_fully_funded(): void
     {
         $loan = Loan::factory()->funding()->create(['amount' => 1000, 'funded_amount' => 950]);
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
         $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 50]);
 
-        $this->assertEquals(Loan::STATUS_FUNDED, $loan->fresh()->status);
+        $this->assertEquals(Loan::STATUS_ACTIVE, $loan->fresh()->status);
     }
 
     public function test_invest_fails_insufficient_balance(): void

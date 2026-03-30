@@ -1,8 +1,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../api/axios'
 import { useAuthStore } from '../stores/auth'
 
+const router = useRouter()
 const auth = useAuthStore()
 const loading = ref(true)
 
@@ -29,6 +31,12 @@ const ibans = ref([])
 const ibanForm = ref({ iban: '', label: '' })
 const ibanErrors = ref({})
 const ibanLoading = ref(false)
+
+// Account deletion
+const deletePassword = ref('')
+const deleteErrors = ref({})
+const deleteLoading = ref(false)
+const showDeleteConfirm = ref(false)
 
 const kycStatus = computed(() => auth.user?.kyc_status ?? 'pending')
 const kycStatusLabels = { pending: 'Очаква верификация', submitted: 'Изпратен', approved: 'Верифициран', rejected: 'Отхвърлен' }
@@ -125,6 +133,22 @@ async function addIban() {
 async function removeIban(id) {
   await api.delete(`/profile/ibans/${id}`)
   ibans.value = ibans.value.filter(i => i.id !== id)
+}
+
+async function deleteAccount() {
+  deleteErrors.value = {}
+  deleteLoading.value = true
+  try {
+    await api.post('/profile/delete', { password: deletePassword.value })
+    auth.user = null
+    router.push('/login')
+  } catch (e) {
+    showDeleteConfirm.value = false
+    if (e.response?.status === 422) deleteErrors.value = e.response.data.errors || {}
+    else deleteErrors.value = { account: ['Грешка. Опитайте отново.'] }
+  } finally {
+    deleteLoading.value = false
+  }
 }
 
 onMounted(() => loadData())
@@ -267,6 +291,40 @@ onMounted(() => loadData())
           </form>
         </div>
       </div>
+
+      <!-- Danger zone -->
+      <div class="mt-8 rounded-2xl border border-red-200 bg-red-50/50 p-6">
+        <h2 class="text-base font-bold text-red-700 mb-2">Изтриване на акаунт</h2>
+        <p class="text-sm text-red-600/80 mb-4">
+          Тази операция е необратима. Личните ви данни ще бъдат анонимизирани. Финансовите записи се запазват за регулаторни цели.
+          За да изтриете акаунта си, трябва да нямате активни инвестиции, наличен баланс или чакащи заявки.
+        </p>
+
+        <div v-if="deleteErrors.account" class="rounded-xl bg-red-100 border border-red-300 p-3 text-sm text-red-700 mb-4">{{ deleteErrors.account[0] }}</div>
+        <div v-if="deleteErrors.password" class="rounded-xl bg-red-100 border border-red-300 p-3 text-sm text-red-700 mb-4">{{ deleteErrors.password[0] }}</div>
+
+        <button @click="showDeleteConfirm = true" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl transition-colors">
+          Изтрий акаунта ми
+        </button>
+      </div>
     </template>
+
+    <!-- Delete confirmation modal -->
+    <Teleport to="body">
+      <div v-if="showDeleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="fixed inset-0 bg-black/40" @click="showDeleteConfirm = false"></div>
+        <div class="relative bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+          <h3 class="text-lg font-bold text-red-700 mb-2">Изтриване на акаунт</h3>
+          <p class="text-sm text-gray-500 mb-4">Въведете паролата си за потвърждение. Тази операция е необратима.</p>
+          <input v-model="deletePassword" type="password" placeholder="Текуща парола" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-red-400/50 focus:border-red-400" />
+          <div class="flex gap-3">
+            <button @click="showDeleteConfirm = false" class="flex-1 py-2.5 border border-gray-200 text-sm font-medium text-gray-600 rounded-xl">Отказ</button>
+            <button @click="deleteAccount" :disabled="deleteLoading || !deletePassword" class="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+              {{ deleteLoading ? 'Изтриване...' : 'Изтрий' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

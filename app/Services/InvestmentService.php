@@ -75,9 +75,10 @@ class InvestmentService
 
             // Step 8: Auto-transition loan status
             if ($loan->isFullyFunded()) {
-                $loan->forceFill(['status' => Loan::STATUS_FUNDED])->save();
+                // Fully funded → directly active. No reason to wait —
+                // the money is collected, the borrower can receive it.
+                $loan->forceFill(['status' => Loan::STATUS_ACTIVE])->save();
             } elseif ($loan->status === Loan::STATUS_PUBLISHED) {
-                // First investment transitions from published → funding
                 $loan->forceFill(['status' => Loan::STATUS_FUNDING])->save();
             }
 

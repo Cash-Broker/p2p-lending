@@ -1,13 +1,54 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import ChatbotWidget from '../components/ChatbotWidget.vue'
+import api from '../api/axios'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const sidebarOpen = ref(false)
+
+// Notifications
+const notifications = ref([])
+const unreadCount = ref(0)
+const showNotifications = ref(false)
+
+async function loadNotifications() {
+  try {
+    const { data } = await api.get('/notifications')
+    notifications.value = data.notifications
+    unreadCount.value = data.unread_count
+  } catch { /* */ }
+}
+
+async function markAsRead(id) {
+  await api.post(`/notifications/${id}/read`)
+  const n = notifications.value.find(n => n.id === id)
+  if (n) n.read_at = new Date().toISOString()
+  unreadCount.value = Math.max(0, unreadCount.value - 1)
+}
+
+async function markAllRead() {
+  await api.post('/notifications/read-all')
+  notifications.value.forEach(n => n.read_at = new Date().toISOString())
+  unreadCount.value = 0
+}
+
+async function deleteNotification(id) {
+  await api.delete(`/notifications/${id}`)
+  notifications.value = notifications.value.filter(n => n.id !== id)
+  unreadCount.value = notifications.value.filter(n => !n.read_at).length
+}
+
+async function deleteAllNotifications() {
+  await api.delete('/notifications')
+  notifications.value = []
+  unreadCount.value = 0
+}
+
+onMounted(() => loadNotifications())
 
 const navigation = [
   { name: 'Начало', path: '/dashboard', icon: 'home' },
@@ -111,10 +152,37 @@ async function logout() {
         </div>
 
         <div class="flex items-center gap-4">
-          <!-- Notification bell -->
-          <button class="relative flex items-center justify-center size-9 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
-          </button>
+          <!-- Notification bell + dropdown -->
+          <div class="relative">
+            <button @click="showNotifications = !showNotifications; if(showNotifications) loadNotifications()" class="relative flex items-center justify-center size-9 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
+              <span v-if="unreadCount > 0" class="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
+            </button>
+            <!-- Dropdown -->
+            <div v-if="showNotifications" class="absolute right-0 top-11 w-80 rounded-2xl bg-white border border-gray-100 shadow-xl z-50 overflow-hidden">
+              <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                <p class="text-sm font-bold text-navy-700">Известия</p>
+                <div class="flex items-center gap-2">
+                  <button v-if="unreadCount > 0" @click="markAllRead" class="text-xs text-accent-500 font-medium">Прочетени</button>
+                  <button v-if="notifications.length" @click="deleteAllNotifications" class="text-xs text-red-500 font-medium">Изтрий всички</button>
+                </div>
+              </div>
+              <div class="max-h-80 overflow-y-auto divide-y divide-gray-50">
+                <div v-if="!notifications.length" class="px-4 py-8 text-center text-sm text-gray-400">Няма известия</div>
+                <div v-for="n in notifications.slice(0, 10)" :key="n.id" class="flex items-start gap-2 px-4 py-3 hover:bg-gray-50 transition-colors" :class="!n.read_at ? 'bg-accent-50/30' : ''">
+                  <button @click="markAsRead(n.id)" class="flex-1 text-left">
+                    <p class="text-sm text-navy-700">{{ { deposit_approved: 'Депозит одобрен', deposit_rejected: 'Депозит отхвърлен', withdrawal_approved: 'Теглене одобрено', withdrawal_rejected: 'Теглене отхвърлено', kyc_approved: 'KYC одобрен', kyc_rejected: 'KYC отхвърлен', loan_status_changed: 'Промяна на кредит' }[n.data?.type] || 'Известие' }}</p>
+                    <p v-if="n.data?.amount" class="text-xs text-accent-500 font-medium">{{ n.data.amount }} €</p>
+                    <p class="text-xs text-gray-400 mt-0.5">{{ new Date(n.created_at).toLocaleDateString('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</p>
+                  </button>
+                  <button @click.stop="deleteNotification(n.id)" class="text-gray-300 hover:text-red-500 mt-1 shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div v-if="showNotifications" class="fixed inset-0 z-40" @click="showNotifications = false"></div>
+          </div>
 
           <!-- User info -->
           <div class="flex items-center gap-3">

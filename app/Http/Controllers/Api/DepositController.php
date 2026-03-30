@@ -21,18 +21,12 @@ class DepositController extends Controller
     {
         $user = $request->user();
 
-        // Find or create a pending deposit request for the reference code
-        $pendingDeposit = DepositRequest::where('user_id', $user->id)
-            ->where('status', 'pending')
-            ->latest()
-            ->first();
-
-        if (! $pendingDeposit) {
-            $pendingDeposit = $this->depositService->createRequest($user->id, '0.00');
-        }
+        // Reference code is deterministic per user — no need to create a deposit request.
+        // The investor uses this code in their bank transfer description so admin can match it.
+        $referenceCode = 'P2P-' . str_pad($user->id, 6, '0', STR_PAD_LEFT);
 
         return response()->json([
-            'reference_code' => $pendingDeposit->reference_code,
+            'reference_code' => $referenceCode,
             'bank_details' => [
                 'bank_name' => 'P2P Invest Bank',
                 'iban' => 'BG80BNBG96611020345678',
