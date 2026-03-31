@@ -45,6 +45,7 @@ class DepositRequestResource extends Resource
                 Tables\Columns\TextColumn::make('amount')->label('Сума')->money('EUR'),
                 Tables\Columns\TextColumn::make('reference_code')->label('Reference')->copyable(),
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
+                    ->formatStateUsing(fn (string $state) => match ($state) { 'pending' => 'Чакащ', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен', default => $state })
                     ->colors(['warning' => 'pending', 'success' => 'approved', 'danger' => 'rejected']),
                 Tables\Columns\TextColumn::make('admin_note')->label('Бележка')->limit(30)->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('created_at')->label('Дата')->date('d.m.Y H:i'),

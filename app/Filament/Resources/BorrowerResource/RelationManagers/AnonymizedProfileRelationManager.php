@@ -37,7 +37,7 @@ class AnonymizedProfileRelationManager extends RelationManager
                 Tables\Columns\TextColumn::make('collateral_type')->label('Обезпечение'),
                 Tables\Columns\TextColumn::make('age_group')->label('Възраст'),
             ])
-            ->headerActions([\Filament\Actions\CreateAction::make()])
-            ->actions([\Filament\Actions\EditAction::make()]);
+            ->headerActions([\Filament\Actions\CreateAction::make()->label('Добави профил')])
+            ->actions([\Filament\Actions\EditAction::make()->label('Редактирай')]);
     }
 }

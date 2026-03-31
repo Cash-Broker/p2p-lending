@@ -32,7 +32,11 @@ class LoanResource extends Resource
                     ->options(fn () => Borrower::all()->pluck('full_name', 'id'))
                     ->required()->searchable(),
                 Forms\Components\Select::make('type')->label('Тип')->options(['consumer' => 'Потребителски', 'business' => 'Бизнес', 'mortgage' => 'Ипотечен', 'bridge' => 'Мостов'])->required(),
-                Forms\Components\Select::make('status')->label('Статус')->options(array_combine(Loan::STATUSES, Loan::STATUSES))->default('draft')->required(),
+                Forms\Components\Select::make('status')->label('Статус')->options([
+                    'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се',
+                    'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял',
+                    'default' => 'Просрочен', 'repaid' => 'Изплатен',
+                ])->default('draft')->required(),
             ])->columns(2),
             \Filament\Schemas\Components\Section::make('Финансови параметри')->schema([
                 Forms\Components\TextInput::make('amount')->label('Сума (€)')->numeric()->required()->minValue(100),
@@ -55,11 +59,16 @@ class LoanResource extends Resource
                 Tables\Columns\TextColumn::make('interest_rate')->label('Доходност')->suffix('%'),
                 Tables\Columns\TextColumn::make('term_months')->label('Срок')->suffix(' мес.'),
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
+                    ->formatStateUsing(fn (string $state) => match ($state) { 'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се', 'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял', 'default' => 'Просрочен', 'repaid' => 'Изплатен', default => $state })
                     ->colors(['secondary' => 'draft', 'primary' => 'published', 'info' => 'funding', 'success' => fn ($state) => in_array($state, ['funded', 'active']), 'warning' => 'late', 'danger' => 'default', 'gray' => 'repaid']),
             ])
             ->defaultSort('created_at', 'desc')
             ->filters([
-                Tables\Filters\SelectFilter::make('status')->options(array_combine(Loan::STATUSES, Loan::STATUSES)),
+                Tables\Filters\SelectFilter::make('status')->label('Статус')->options([
+                    'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се',
+                    'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял',
+                    'default' => 'Просрочен', 'repaid' => 'Изплатен',
+                ]),
                 Tables\Filters\SelectFilter::make('originator_id')->label('Оригинатор')->options(Originator::pluck('name', 'id')),
                 Tables\Filters\SelectFilter::make('type')->options(['consumer' => 'Потребителски', 'business' => 'Бизнес', 'mortgage' => 'Ипотечен', 'bridge' => 'Мостов']),
             ])

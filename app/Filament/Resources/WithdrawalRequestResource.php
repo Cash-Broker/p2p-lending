@@ -30,7 +30,9 @@ class WithdrawalRequestResource extends Resource
                 Tables\Columns\TextColumn::make('user.name')->label('Инвеститор')->searchable(),
                 Tables\Columns\TextColumn::make('amount')->label('Сума')->money('EUR'),
                 Tables\Columns\TextColumn::make('iban')->label('IBAN')->formatStateUsing(fn (WithdrawalRequest $r) => $r->maskedIban()),
-                Tables\Columns\BadgeColumn::make('status')->label('Статус')->colors(['warning' => 'pending', 'success' => 'approved', 'danger' => 'rejected', 'info' => 'processed']),
+                Tables\Columns\BadgeColumn::make('status')->label('Статус')
+                    ->formatStateUsing(fn (string $state) => match ($state) { 'pending' => 'Чакащо', 'approved' => 'Одобрено', 'rejected' => 'Отхвърлено', 'processed' => 'Обработено', default => $state })
+                    ->colors(['warning' => 'pending', 'success' => 'approved', 'danger' => 'rejected', 'info' => 'processed']),
                 Tables\Columns\TextColumn::make('created_at')->label('Дата')->date('d.m.Y H:i'),
             ])
             ->defaultSort('created_at', 'desc')

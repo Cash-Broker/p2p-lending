@@ -28,8 +28,12 @@ class UserResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('name')->label('Име')->searchable(),
                 Tables\Columns\TextColumn::make('email')->label('Имейл')->searchable(),
-                Tables\Columns\BadgeColumn::make('role')->label('Роля')->colors(['primary' => 'investor', 'danger' => 'admin']),
-                Tables\Columns\BadgeColumn::make('kyc_status')->label('KYC')->colors(['warning' => 'pending', 'info' => 'submitted', 'success' => 'approved', 'danger' => 'rejected']),
+                Tables\Columns\BadgeColumn::make('role')->label('Роля')
+                    ->formatStateUsing(fn (string $state) => match ($state) { 'investor' => 'Инвеститор', 'admin' => 'Админ', default => $state })
+                    ->colors(['primary' => 'investor', 'danger' => 'admin']),
+                Tables\Columns\BadgeColumn::make('kyc_status')->label('KYC')
+                    ->formatStateUsing(fn (string $state) => match ($state) { 'pending' => 'Очакващ', 'submitted' => 'Изпратен', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен', default => $state })
+                    ->colors(['warning' => 'pending', 'info' => 'submitted', 'success' => 'approved', 'danger' => 'rejected']),
                 Tables\Columns\TextColumn::make('wallet.available')->label('Баланс')->money('EUR'),
                 Tables\Columns\TextColumn::make('created_at')->label('Регистрация')->date('d.m.Y'),
             ])

@@ -35,11 +35,17 @@ class AmortizationSchedulesRelationManager extends RelationManager
                 Tables\Columns\TextColumn::make('interest')->label('Лихва')->money('EUR'),
                 Tables\Columns\TextColumn::make('total')->label('Общо')->money('EUR'),
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
+                    ->formatStateUsing(fn (string $state) => match ($state) {
+                        'pending' => 'Предстои', 'paid' => 'Платено', 'late' => 'Закъснение', 'default' => 'Просрочено', default => $state,
+                    })
                     ->colors(['warning' => 'pending', 'success' => 'paid', 'danger' => fn ($state) => in_array($state, ['late', 'default'])]),
                 Tables\Columns\TextColumn::make('paid_at')->label('Платено на')->date('d.m.Y'),
             ])
             ->defaultSort('due_date')
-            ->headerActions([\Filament\Actions\CreateAction::make()])
-            ->actions([\Filament\Actions\EditAction::make(), \Filament\Actions\DeleteAction::make()]);
+            ->headerActions([\Filament\Actions\CreateAction::make()->label('Добави вноска')])
+            ->actions([
+                \Filament\Actions\EditAction::make()->label('Редактирай'),
+                \Filament\Actions\DeleteAction::make()->label('Изтрий'),
+            ]);
     }
 }
