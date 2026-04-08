@@ -103,11 +103,22 @@ router.beforeEach(async (to) => {
     await auth.fetchUser()
   }
 
+  // Admin users should use /admin panel, not the investor frontend
+  if (auth.user?.role === 'admin' && to.meta.auth) {
+    window.location.href = '/admin'
+    return false
+  }
+
   if (to.meta.auth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
 
+  // Guest routes: redirect investors to dashboard, admins to admin panel
   if (to.meta.guest && auth.isAuthenticated) {
+    if (auth.user?.role === 'admin') {
+      window.location.href = '/admin'
+      return false
+    }
     return { name: 'dashboard' }
   }
 })
