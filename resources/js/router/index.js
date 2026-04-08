@@ -96,10 +96,14 @@ const router = createRouter({
   routes,
 })
 
+let userFetched = false
+
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  if (!auth.user) {
+  // Fetch user once per page load, not on every navigation
+  if (!userFetched) {
+    userFetched = true
     await auth.fetchUser()
   }
 
