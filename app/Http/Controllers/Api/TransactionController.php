@@ -3,14 +3,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\TransactionFilterRequest;
 use App\Http\Resources\TransactionResource;
 use App\Models\Transaction;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 class TransactionController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    public function index(TransactionFilterRequest $request): JsonResponse
     {
         $query = Transaction::where('user_id', $request->user()->id);
 

@@ -22,6 +22,7 @@ class Wallet extends Model
 
     protected $attributes = [
         'available' => '0.00',
+        'reserved' => '0.00',
         'invested' => '0.00',
         'earned' => '0.00',
     ];
@@ -30,6 +31,7 @@ class Wallet extends Model
     {
         return [
             'available' => 'decimal:2',
+            'reserved' => 'decimal:2',
             'invested' => 'decimal:2',
             'earned' => 'decimal:2',
         ];

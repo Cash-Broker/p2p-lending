@@ -63,6 +63,9 @@ class DepositRequestResource extends Resource
                     ->label('Захрани сметка')
                     ->icon('heroicon-o-plus-circle')
                     ->color('success')
+                    ->requiresConfirmation()
+                    ->modalHeading('Захрани сметка')
+                    ->modalDescription('Сигурни ли сте, че искате да захраните сметката?')
                     ->form([
                         Forms\Components\Select::make('user_id')->label('Инвеститор')
                             ->options(User::where('role', 'investor')->pluck('name', 'id'))

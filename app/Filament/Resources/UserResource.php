@@ -6,6 +6,7 @@ use App\Filament\Resources\UserResource\Pages;
 use App\Models\User;
 use App\Notifications\KycStatusNotification;
 use BackedEnum;
+use Illuminate\Support\Facades\DB;
 use Filament\Infolists;
 use Filament\Schemas\Schema;
 use Filament\Notifications\Notification;
@@ -46,15 +47,29 @@ class UserResource extends Resource
                 \Filament\Actions\Action::make('approve_kyc')->label('Одобри KYC')->icon('heroicon-o-check-circle')->color('success')
                     ->visible(fn (User $record) => $record->kyc_status === 'submitted')->requiresConfirmation()
                     ->action(function (User $record) {
-                        $record->forceFill(['kyc_status' => 'approved'])->save();
-                        $record->notify(new KycStatusNotification('approved'));
+                        DB::transaction(function () use ($record) {
+                            $user = User::where('id', $record->id)->lockForUpdate()->firstOrFail();
+                            if ($user->kyc_status !== 'submitted') {
+                                Notification::make()->title('KYC статусът вече е променен')->warning()->send();
+                                return;
+                            }
+                            $user->forceFill(['kyc_status' => 'approved'])->save();
+                            $user->notify(new KycStatusNotification('approved'));
+                        });
                         Notification::make()->title('KYC одобрен')->success()->send();
                     }),
                 \Filament\Actions\Action::make('reject_kyc')->label('Отхвърли KYC')->icon('heroicon-o-x-circle')->color('danger')
                     ->visible(fn (User $record) => $record->kyc_status === 'submitted')->requiresConfirmation()
                     ->action(function (User $record) {
-                        $record->forceFill(['kyc_status' => 'rejected'])->save();
-                        $record->notify(new KycStatusNotification('rejected'));
+                        DB::transaction(function () use ($record) {
+                            $user = User::where('id', $record->id)->lockForUpdate()->firstOrFail();
+                            if ($user->kyc_status !== 'submitted') {
+                                Notification::make()->title('KYC статусът вече е променен')->warning()->send();
+                                return;
+                            }
+                            $user->forceFill(['kyc_status' => 'rejected'])->save();
+                            $user->notify(new KycStatusNotification('rejected'));
+                        });
                         Notification::make()->title('KYC отхвърлен')->danger()->send();
                     }),
             ]);

@@ -42,6 +42,11 @@ class WithdrawalTest extends TestCase
             'amount' => 1000,
             'status' => 'pending',
         ]);
+
+        // Balance reservation: available reduced, reserved increased
+        $wallet = $user->wallet->fresh();
+        $this->assertEquals('4000.00', $wallet->available);
+        $this->assertEquals('1000.00', $wallet->reserved);
     }
 
     public function test_withdrawal_fails_insufficient_balance(): void
@@ -107,29 +112,31 @@ class WithdrawalTest extends TestCase
 
     public function test_approve_withdrawal_debits_wallet(): void
     {
+        \Illuminate\Support\Facades\Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
-        $withdrawal = WithdrawalRequest::factory()->create([
-            'user_id' => $user->id,
-            'amount' => 1000,
-            'iban' => 'BG80BNBG96611020345678',
-        ]);
-
         $service = app(WithdrawalService::class);
+
+        // Create via service to properly reserve balance
+        $withdrawal = $service->createRequest($user->id, '1000.00', 'BG80BNBG96611020345678');
+
+        $wallet = $user->wallet->fresh();
+        $this->assertEquals('4000.00', $wallet->available);
+        $this->assertEquals('1000.00', $wallet->reserved);
+
         $service->approve($withdrawal->id, 1);
 
-        $this->assertEquals('4000.00', $user->wallet->fresh()->available);
+        $wallet = $user->wallet->fresh();
+        $this->assertEquals('4000.00', $wallet->available); // unchanged — debited from reserved
+        $this->assertEquals('0.00', $wallet->reserved);
     }
 
     public function test_approve_withdrawal_creates_transaction(): void
     {
+        \Illuminate\Support\Facades\Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
-        $withdrawal = WithdrawalRequest::factory()->create([
-            'user_id' => $user->id,
-            'amount' => 500,
-            'iban' => 'BG80BNBG96611020345678',
-        ]);
-
         $service = app(WithdrawalService::class);
+
+        $withdrawal = $service->createRequest($user->id, '500.00', 'BG80BNBG96611020345678');
         $service->approve($withdrawal->id, 1);
 
         $this->assertDatabaseHas('transactions', [
@@ -141,14 +148,11 @@ class WithdrawalTest extends TestCase
 
     public function test_approve_withdrawal_updates_status(): void
     {
+        \Illuminate\Support\Facades\Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
-        $withdrawal = WithdrawalRequest::factory()->create([
-            'user_id' => $user->id,
-            'amount' => 500,
-            'iban' => 'BG80BNBG96611020345678',
-        ]);
-
         $service = app(WithdrawalService::class);
+
+        $withdrawal = $service->createRequest($user->id, '500.00', 'BG80BNBG96611020345678');
         $result = $service->approve($withdrawal->id, 1);
 
         $this->assertEquals('approved', $result->fresh()->status);
@@ -157,31 +161,34 @@ class WithdrawalTest extends TestCase
 
     // ── Service: reject ──
 
-    public function test_reject_withdrawal_does_not_change_wallet(): void
+    public function test_reject_withdrawal_restores_reserved_to_available(): void
     {
+        \Illuminate\Support\Facades\Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
-        $withdrawal = WithdrawalRequest::factory()->create([
-            'user_id' => $user->id,
-            'amount' => 500,
-            'iban' => 'BG80BNBG96611020345678',
-        ]);
-
         $service = app(WithdrawalService::class);
+
+        $withdrawal = $service->createRequest($user->id, '500.00', 'BG80BNBG96611020345678');
+
+        // After create: available=4500, reserved=500
+        $wallet = $user->wallet->fresh();
+        $this->assertEquals('4500.00', $wallet->available);
+        $this->assertEquals('500.00', $wallet->reserved);
+
         $service->reject($withdrawal->id, 1, 'Suspicious activity');
 
-        $this->assertEquals('5000.00', $user->wallet->fresh()->available);
+        // After reject: available=5000, reserved=0
+        $wallet = $user->wallet->fresh();
+        $this->assertEquals('5000.00', $wallet->available);
+        $this->assertEquals('0.00', $wallet->reserved);
     }
 
     public function test_reject_withdrawal_updates_status(): void
     {
+        \Illuminate\Support\Facades\Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
-        $withdrawal = WithdrawalRequest::factory()->create([
-            'user_id' => $user->id,
-            'amount' => 500,
-            'iban' => 'BG80BNBG96611020345678',
-        ]);
-
         $service = app(WithdrawalService::class);
+
+        $withdrawal = $service->createRequest($user->id, '500.00', 'BG80BNBG96611020345678');
         $result = $service->reject($withdrawal->id, 1, 'Suspicious activity');
 
         $this->assertEquals('rejected', $result->fresh()->status);

@@ -14,7 +14,7 @@ class InvestRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'amount' => ['required', 'numeric', 'min:50', 'max:999999.99'],
+            'amount' => ['required', 'numeric', 'min:50', 'max:999999.99', 'decimal:0,2'],
         ];
     }
 

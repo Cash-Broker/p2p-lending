@@ -11,9 +11,10 @@ class WalletResource extends JsonResource
     {
         return [
             'available' => $this->available,
+            'reserved' => $this->reserved,
             'invested' => $this->invested,
             'earned' => $this->earned,
-            'total' => bcadd($this->available, $this->invested, 2),
+            'total' => bcadd(bcadd($this->available, $this->reserved, 2), $this->invested, 2),
         ];
     }
 }

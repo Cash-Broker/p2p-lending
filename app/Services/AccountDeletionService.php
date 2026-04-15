@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\User;
+use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -16,14 +17,6 @@ use Illuminate\Validation\ValidationException;
  * 3. Audit logs reference the user — deleting would break the audit trail
  *
  * Solution: ANONYMIZATION instead of deletion.
- * - Replace all PII with non-identifying placeholders
- * - Keep financial records intact but de-linked from real identity
- * - Disable the account so it can't be used
- *
- * Pre-conditions for deletion:
- * - No active investments (invested balance must be 0)
- * - No pending deposits or withdrawals
- * - Available balance must be 0 (user must withdraw everything first)
  */
 class AccountDeletionService
 {
@@ -36,34 +29,40 @@ class AccountDeletionService
             ]);
         }
 
-        $wallet = $user->wallet;
-
-        // Cannot delete with active investments
-        if ($wallet && bccomp($wallet->invested, '0', 2) > 0) {
-            throw ValidationException::withMessages([
-                'account' => ['Не може да изтриете акаунта си докато имате активни инвестиции.'],
-            ]);
-        }
-
-        // Cannot delete with remaining balance
-        if ($wallet && bccomp($wallet->available, '0', 2) > 0) {
-            throw ValidationException::withMessages([
-                'account' => ['Моля, изтеглете наличния си баланс преди да изтриете акаунта.'],
-            ]);
-        }
-
-        // Cannot delete with pending requests
-        $pendingDeposits = $user->depositRequests()->where('status', 'pending')->where('amount', '>', 0)->count();
-        $pendingWithdrawals = $user->withdrawalRequests()->where('status', 'pending')->count();
-
-        if ($pendingDeposits > 0 || $pendingWithdrawals > 0) {
-            throw ValidationException::withMessages([
-                'account' => ['Имате чакащи заявки за депозит или теглене. Изчакайте да бъдат обработени.'],
-            ]);
-        }
-
         DB::transaction(function () use ($user) {
             $userId = $user->id;
+
+            // Lock wallet FIRST to prevent concurrent financial operations
+            $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->first();
+
+            // All balance checks inside transaction with lock — prevents race conditions
+            if ($wallet && bccomp($wallet->invested, '0', 2) > 0) {
+                throw ValidationException::withMessages([
+                    'account' => ['Не може да изтриете акаунта си докато имате активни инвестиции.'],
+                ]);
+            }
+
+            if ($wallet && bccomp($wallet->available, '0', 2) > 0) {
+                throw ValidationException::withMessages([
+                    'account' => ['Моля, изтеглете наличния си баланс преди да изтриете акаунта.'],
+                ]);
+            }
+
+            if ($wallet && bccomp($wallet->reserved, '0', 2) > 0) {
+                throw ValidationException::withMessages([
+                    'account' => ['Имате резервирани средства за чакащо теглене. Изчакайте да бъде обработено.'],
+                ]);
+            }
+
+            // Lock and check pending requests inside transaction
+            $pendingDeposits = $user->depositRequests()->where('status', 'pending')->where('amount', '>', 0)->lockForUpdate()->count();
+            $pendingWithdrawals = $user->withdrawalRequests()->where('status', 'pending')->lockForUpdate()->count();
+
+            if ($pendingDeposits > 0 || $pendingWithdrawals > 0) {
+                throw ValidationException::withMessages([
+                    'account' => ['Имате чакащи заявки за депозит или теглене. Изчакайте да бъдат обработени.'],
+                ]);
+            }
 
             Log::info('Account deletion requested', [
                 'user_id' => $userId,
@@ -76,29 +75,17 @@ class AccountDeletionService
                 'name' => "Изтрит потребител #{$userId}",
                 'email' => "deleted_{$userId}@removed.p2pinvest.bg",
                 'phone' => null,
-                'password' => \Hash::make(\Str::random(64)), // Unguessable password
+                'password' => \Hash::make(\Str::random(64)),
                 'remember_token' => null,
                 'email_verified_at' => null,
                 'kyc_status' => 'pending',
                 'kyc_document_path' => null,
             ])->save();
 
-            // Delete saved IBANs (PII)
             $user->savedIbans()->delete();
-
-            // Delete consent records (linked to identity)
             $user->consentRecords()->delete();
-
-            // Clear notifications
             $user->notifications()->delete();
-
-            // Delete wallet (balance is 0)
             $user->wallet()->delete();
-
-            // Note: transactions, investments, audit_logs are KEPT
-            // They reference user_id but the user is now "Изтрит потребител #X"
-            // This satisfies both GDPR (data is anonymized) and
-            // regulatory requirements (financial records preserved)
 
             Log::info('Account anonymized successfully', ['user_id' => $userId]);
         });

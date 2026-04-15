@@ -17,6 +17,7 @@ class Investment extends Model
         'loan_id',
         'amount',
         'invested_at',
+        'idempotency_key',
     ];
 
     protected function casts(): array

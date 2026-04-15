@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class WithdrawalRequest extends FormRequest
 {
@@ -14,10 +15,13 @@ class WithdrawalRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'amount' => ['required', 'numeric', 'min:10', 'max:999999.99'],
+            'amount' => ['required', 'numeric', 'min:10', 'max:999999.99', 'decimal:0,2'],
             // Either provide a raw IBAN or reference a saved one — not both
             'iban' => ['required_without:saved_iban_id', 'nullable', 'string', 'min:15', 'max:34', 'regex:/^[A-Z]{2}[0-9]{2}[A-Z0-9]{4,30}$/'],
-            'saved_iban_id' => ['required_without:iban', 'nullable', 'integer', 'exists:saved_ibans,id'],
+            'saved_iban_id' => [
+                'required_without:iban', 'nullable', 'integer',
+                Rule::exists('saved_ibans', 'id')->where('user_id', $this->user()->id),
+            ],
         ];
     }
 

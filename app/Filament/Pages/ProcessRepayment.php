@@ -54,6 +54,17 @@ class ProcessRepayment extends Page
     {
         $data = $this->form->getState();
 
+        // Duplicate guard — prevent double-posting same schedule
+        if (! empty($data['amortization_schedule_id'])) {
+            $schedule = \App\Models\AmortizationSchedule::find($data['amortization_schedule_id']);
+            if ($schedule && $schedule->status === 'paid') {
+                Notification::make()->title('Грешка')
+                    ->body('Тази вноска вече е платена.')
+                    ->danger()->send();
+                return;
+            }
+        }
+
         try {
             app(RepaymentService::class)->processRepayment(
                 (int) $data['loan_id'],

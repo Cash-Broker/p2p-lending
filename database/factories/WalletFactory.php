@@ -16,6 +16,7 @@ class WalletFactory extends Factory
         return [
             'user_id' => User::factory(),
             'available' => 0,
+            'reserved' => 0,
             'invested' => 0,
             'earned' => 0,
         ];

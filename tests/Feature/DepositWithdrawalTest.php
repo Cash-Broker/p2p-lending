@@ -191,16 +191,25 @@ class DepositWithdrawalTest extends TestCase
 
     // ── Withdrawal service (admin approve/reject) ──
 
-    public function test_withdrawal_approve_debits_wallet(): void
+    public function test_withdrawal_approve_debits_reserved(): void
     {
+        \Illuminate\Support\Facades\Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
         $service = app(WithdrawalService::class);
         $withdrawal = $service->createRequest($user->id, '1000.00', 'BG80BNBG96611020345678');
 
+        // After create: available=4000, reserved=1000
+        $wallet = $user->wallet->fresh();
+        $this->assertEquals('4000.00', $wallet->available);
+        $this->assertEquals('1000.00', $wallet->reserved);
+
         $service->approve($withdrawal->id, 1);
 
-        $this->assertEquals('4000.00', $user->wallet->fresh()->available);
+        // After approve: reserved debited to 0, available unchanged
+        $wallet = $user->wallet->fresh();
+        $this->assertEquals('4000.00', $wallet->available);
+        $this->assertEquals('0.00', $wallet->reserved);
         $this->assertEquals('approved', $withdrawal->fresh()->status);
         $this->assertDatabaseHas('transactions', [
             'user_id' => $user->id,
@@ -209,8 +218,9 @@ class DepositWithdrawalTest extends TestCase
         ]);
     }
 
-    public function test_withdrawal_reject_does_not_change_wallet(): void
+    public function test_withdrawal_reject_restores_available(): void
     {
+        \Illuminate\Support\Facades\Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
         $service = app(WithdrawalService::class);
@@ -218,7 +228,10 @@ class DepositWithdrawalTest extends TestCase
 
         $service->reject($withdrawal->id, 1, 'Suspicious activity');
 
-        $this->assertEquals('5000.00', $user->wallet->fresh()->available);
+        // After reject: reserved released back to available
+        $wallet = $user->wallet->fresh();
+        $this->assertEquals('5000.00', $wallet->available);
+        $this->assertEquals('0.00', $wallet->reserved);
         $this->assertEquals('rejected', $withdrawal->fresh()->status);
     }
 

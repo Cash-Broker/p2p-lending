@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\LoanResource\RelationManagers;
 
+use App\Models\Loan;
 use Filament\Forms;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
@@ -42,10 +43,17 @@ class AmortizationSchedulesRelationManager extends RelationManager
                 Tables\Columns\TextColumn::make('paid_at')->label('Платено на')->date('d.m.Y'),
             ])
             ->defaultSort('due_date')
-            ->headerActions([\Filament\Actions\CreateAction::make()->label('Добави вноска')])
+            ->headerActions([
+                \Filament\Actions\CreateAction::make()->label('Добави вноска')
+                    ->visible(fn () => in_array($this->getOwnerRecord()->status, [Loan::STATUS_DRAFT, Loan::STATUS_PUBLISHED])),
+            ])
             ->actions([
-                \Filament\Actions\EditAction::make()->label('Редактирай'),
-                \Filament\Actions\DeleteAction::make()->label('Изтрий'),
+                \Filament\Actions\EditAction::make()->label('Редактирай')
+                    ->visible(fn ($record) => $record->status !== 'paid'
+                        && in_array($this->getOwnerRecord()->status, [Loan::STATUS_DRAFT, Loan::STATUS_PUBLISHED])),
+                \Filament\Actions\DeleteAction::make()->label('Изтрий')
+                    ->visible(fn ($record) => $record->status === 'pending'
+                        && in_array($this->getOwnerRecord()->status, [Loan::STATUS_DRAFT, Loan::STATUS_PUBLISHED])),
             ]);
     }
 }

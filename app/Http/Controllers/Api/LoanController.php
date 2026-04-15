@@ -4,17 +4,19 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\InvestRequest;
+use App\Http\Requests\LoanFilterRequest;
 use App\Http\Resources\InvestmentResource;
 use App\Http\Resources\LoanResource;
 use App\Models\Favorite;
 use App\Models\Loan;
 use App\Services\InvestmentService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class LoanController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    public function index(LoanFilterRequest $request): JsonResponse
     {
         $query = Loan::with(['originator', 'anonymizedProfile'])
             ->whereIn('status', Loan::FUNDABLE_STATUSES);
@@ -56,7 +58,7 @@ class LoanController extends Controller
                 'highest_rate' => $q->orderByDesc('interest_rate'),
                 'shortest_term' => $q->orderBy('term_months'),
                 'most_funded' => $q->orderByRaw('funded_amount / amount DESC'),
-                default => $q->latest('published_at'), // newest
+                default => $q->latest('published_at'),
             };
         }, fn ($q) => $q->latest('published_at'));
 
@@ -73,8 +75,10 @@ class LoanController extends Controller
         ]);
     }
 
-    public function show(Loan $loan): JsonResponse
+    public function show(Request $request, Loan $loan): JsonResponse
     {
+        $this->authorize('view', $loan);
+
         $loan->load(['originator', 'anonymizedProfile', 'amortizationSchedules'])
             ->loadCount('investments');
 
@@ -83,10 +87,16 @@ class LoanController extends Controller
 
     public function invest(InvestRequest $request, Loan $loan, InvestmentService $service): JsonResponse
     {
+        $idempotencyKey = $request->header('X-Idempotency-Key');
+        if (empty($idempotencyKey)) {
+            return response()->json(['message' => 'X-Idempotency-Key header is required.'], 422);
+        }
+
         $investment = $service->invest(
             $request->user(),
             $loan,
-            number_format((float) $request->amount, 2, '.', '')
+            number_format((float) $request->amount, 2, '.', ''),
+            $idempotencyKey
         );
 
         return response()->json([
@@ -97,21 +107,26 @@ class LoanController extends Controller
 
     public function toggleFavorite(Request $request, Loan $loan): JsonResponse
     {
-        $existing = Favorite::where('user_id', $request->user()->id)
+        // Delete-first pattern avoids TOCTOU race condition
+        $deleted = Favorite::where('user_id', $request->user()->id)
             ->where('loan_id', $loan->id)
-            ->first();
+            ->delete();
 
-        if ($existing) {
-            $existing->delete();
+        if ($deleted > 0) {
             return response()->json(['favorited' => false]);
         }
 
-        Favorite::create([
-            'user_id' => $request->user()->id,
-            'loan_id' => $loan->id,
-        ]);
+        try {
+            Favorite::create([
+                'user_id' => $request->user()->id,
+                'loan_id' => $loan->id,
+            ]);
 
-        return response()->json(['favorited' => true], 201);
+            return response()->json(['favorited' => true], 201);
+        } catch (UniqueConstraintViolationException) {
+            // Concurrent request already created the favorite
+            return response()->json(['favorited' => true]);
+        }
     }
 
     public function favorites(Request $request): JsonResponse

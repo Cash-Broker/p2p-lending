@@ -134,7 +134,7 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 500,
-        ]);
+        ], ['X-Idempotency-Key' => 'invest-success-' . uniqid()]);
 
         $response->assertStatus(201)
             ->assertJson(['message' => 'Investment successful.']);
@@ -171,19 +171,21 @@ class LoanTest extends TestCase
         $loan = Loan::factory()->published()->create(['amount' => 10000, 'funded_amount' => 0]);
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
-        $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500]);
+        $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500], ['X-Idempotency-Key' => 'funding-' . uniqid()]);
 
         $this->assertEquals(Loan::STATUS_FUNDING, $loan->fresh()->status);
     }
 
-    public function test_invest_transitions_loan_to_active_when_fully_funded(): void
+    public function test_invest_transitions_loan_to_funded_when_fully_funded(): void
     {
         $loan = Loan::factory()->funding()->create(['amount' => 1000, 'funded_amount' => 950]);
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
-        $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 50]);
+        $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 50], ['X-Idempotency-Key' => 'funded-' . uniqid()]);
 
-        $this->assertEquals(Loan::STATUS_ACTIVE, $loan->fresh()->status);
+        // After audit fix: fully funded loans go to FUNDED, not ACTIVE
+        // Admin must manually activate via Filament
+        $this->assertEquals(Loan::STATUS_FUNDED, $loan->fresh()->status);
     }
 
     public function test_invest_fails_insufficient_balance(): void
@@ -193,7 +195,7 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 500,
-        ]);
+        ], ['X-Idempotency-Key' => 'insuf-' . uniqid()]);
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors('amount');
@@ -207,9 +209,8 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 500,
-        ]);
+        ], ['X-Idempotency-Key' => 'kyc-' . uniqid()]);
 
-        // User model uses $attributes defaults, factory uses forceCreate for kyc_status
         $response->assertStatus(403);
     }
 
@@ -220,7 +221,7 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 100,
-        ]);
+        ], ['X-Idempotency-Key' => 'funded-' . uniqid()]);
 
         $response->assertStatus(422);
     }
@@ -231,8 +232,8 @@ class LoanTest extends TestCase
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
-            'amount' => 300, // Only 200 remaining
-        ]);
+            'amount' => 300,
+        ], ['X-Idempotency-Key' => 'exceed-' . uniqid()]);
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors('amount');
@@ -245,9 +246,22 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 10,
-        ]);
+        ], ['X-Idempotency-Key' => 'min-' . uniqid()]);
 
         $response->assertStatus(422);
+    }
+
+    public function test_invest_requires_idempotency_key(): void
+    {
+        $loan = Loan::factory()->published()->create(['amount' => 10000]);
+        $user = $this->createVerifiedInvestor(['available' => 5000]);
+
+        $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
+            'amount' => 500,
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJson(['message' => 'X-Idempotency-Key header is required.']);
     }
 
     // ── Concurrency ──
@@ -260,8 +274,8 @@ class LoanTest extends TestCase
         $user2 = $this->createVerifiedInvestor(['available' => 5000]);
 
         // Simulate concurrent investments — both try to invest 500 (only 500 remaining)
-        $response1 = $this->actingAs($user1)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500]);
-        $response2 = $this->actingAs($user2)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500]);
+        $response1 = $this->actingAs($user1)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500], ['X-Idempotency-Key' => 'conc-1-' . uniqid()]);
+        $response2 = $this->actingAs($user2)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500], ['X-Idempotency-Key' => 'conc-2-' . uniqid()]);
 
         // One should succeed, one should fail (or both succeed but total can't exceed loan amount)
         $successCount = collect([$response1, $response2])->filter(fn ($r) => $r->status() === 201)->count();

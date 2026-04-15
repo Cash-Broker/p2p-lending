@@ -50,6 +50,65 @@ class Loan extends Model
         self::STATUS_FUNDING,
     ];
 
+    // Valid state machine transitions — anything not listed here is forbidden
+    const ALLOWED_TRANSITIONS = [
+        self::STATUS_DRAFT     => [self::STATUS_PUBLISHED],
+        self::STATUS_PUBLISHED => [self::STATUS_DRAFT, self::STATUS_FUNDING],
+        self::STATUS_FUNDING   => [self::STATUS_FUNDED],
+        self::STATUS_FUNDED    => [self::STATUS_ACTIVE],
+        self::STATUS_ACTIVE    => [self::STATUS_LATE, self::STATUS_REPAID],
+        self::STATUS_LATE      => [self::STATUS_ACTIVE, self::STATUS_DEFAULT, self::STATUS_REPAID],
+        self::STATUS_DEFAULT   => [self::STATUS_REPAID],
+        self::STATUS_REPAID    => [],
+    ];
+
+    // Fields that become immutable once the loan leaves draft status
+    const IMMUTABLE_AFTER_DRAFT = [
+        'amount', 'interest_rate', 'interest_rate_annual',
+        'term_months', 'originator_id', 'borrower_id', 'type',
+    ];
+
+    protected static function booted(): void
+    {
+        static::updating(function (Loan $loan) {
+            // Enforce term immutability after draft
+            if ($loan->getOriginal('status') !== self::STATUS_DRAFT) {
+                foreach (self::IMMUTABLE_AFTER_DRAFT as $field) {
+                    if ($loan->isDirty($field)) {
+                        throw new \LogicException("Cannot modify '{$field}' on a non-draft loan.");
+                    }
+                }
+            }
+
+            // Enforce valid status transitions
+            if ($loan->isDirty('status')) {
+                $from = $loan->getOriginal('status');
+                $to = $loan->status;
+                if (! $loan->canTransitionTo($to, $from)) {
+                    throw new \LogicException("Invalid loan status transition: {$from} → {$to}.");
+                }
+            }
+        });
+    }
+
+    public function canTransitionTo(string $newStatus, ?string $fromStatus = null): bool
+    {
+        $from = $fromStatus ?? $this->getOriginal('status') ?? $this->status;
+        $allowed = self::ALLOWED_TRANSITIONS[$from] ?? [];
+
+        return in_array($newStatus, $allowed);
+    }
+
+    public function transitionTo(string $newStatus): void
+    {
+        if (! $this->canTransitionTo($newStatus)) {
+            $from = $this->getOriginal('status') ?? $this->status;
+            throw new \InvalidArgumentException("Invalid loan status transition: {$from} → {$newStatus}.");
+        }
+
+        $this->forceFill(['status' => $newStatus])->save();
+    }
+
     protected $fillable = [
         'originator_id',
         'borrower_id',

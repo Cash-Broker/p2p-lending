@@ -240,19 +240,28 @@ class RepaymentTest extends TestCase
         }
 
         // Repay 100 principal + 10 interest
-        // Each investor should get: 33.33 principal + 3.33 interest (with rounding)
+        // With remainder-to-last-investor fix: first two get 33.33, last gets 33.34
         $this->service->processRepayment($loan->id, '100.00', '10.00');
+
+        // Verify total distributed equals exact total (no penny loss)
+        $totalPrincipal = Transaction::where('type', Transaction::TYPE_REPAYMENT_PRINCIPAL)->sum('amount');
+        $totalInterest = Transaction::where('type', Transaction::TYPE_REPAYMENT_INTEREST)->sum('amount');
+
+        $this->assertEquals(0, bccomp('100.00', number_format($totalPrincipal, 2, '.', ''), 2),
+            "Total principal distributed must equal 100.00, got {$totalPrincipal}");
+        $this->assertEquals(0, bccomp('10.00', number_format($totalInterest, 2, '.', ''), 2),
+            "Total interest distributed must equal 10.00, got {$totalInterest}");
 
         foreach ($investors as $inv) {
             $wallet = $inv->wallet->fresh();
 
-            // invested should decrease by ~33.33
+            // invested should decrease by ~33.33-33.34
             $this->assertTrue(
                 bccomp($wallet->invested, '966.00', 2) >= 0 && bccomp($wallet->invested, '967.00', 2) <= 0,
                 "Invested should be ~966.67, got: {$wallet->invested}"
             );
 
-            // earned should be ~3.33
+            // earned should be ~3.33-3.34
             $this->assertTrue(
                 bccomp($wallet->earned, '3.00', 2) >= 0 && bccomp($wallet->earned, '4.00', 2) <= 0,
                 "Earned should be ~3.33, got: {$wallet->earned}"

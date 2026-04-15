@@ -82,7 +82,7 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::get('/email/verify/{id}/{hash}', function (Request $request, string $id, string $hash) {
     $user = User::findOrFail($id);
 
-    if (! hash_equals(sha1($user->getEmailForVerification()), $hash)) {
+    if (! hash_equals(hash_hmac('sha256', $user->getEmailForVerification(), config('app.key')), $hash)) {
         abort(403, 'Invalid verification link.');
     }
 
