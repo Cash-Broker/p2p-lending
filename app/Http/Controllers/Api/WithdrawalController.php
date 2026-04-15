@@ -18,6 +18,7 @@ class WithdrawalController extends Controller
 
     public function store(WithdrawalFormRequest $request): JsonResponse
     {
+        $this->authorize('create', WithdrawalRequest::class);
         // Resolve IBAN: either from saved IBAN (server-side, never exposed) or raw input
         if ($request->filled('saved_iban_id')) {
             $savedIban = SavedIban::where('id', $request->saved_iban_id)
@@ -42,6 +43,8 @@ class WithdrawalController extends Controller
 
     public function history(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', WithdrawalRequest::class);
+
         $withdrawals = WithdrawalRequest::where('user_id', $request->user()->id)
             ->latest()
             ->paginate(15);
@@ -59,6 +62,8 @@ class WithdrawalController extends Controller
 
     public function wallet(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', \App\Models\Wallet::class);
+
         return response()->json(new WalletResource($request->user()->wallet));
     }
 }

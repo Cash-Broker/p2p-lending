@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\User;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -26,51 +27,57 @@ class InvestmentService
      */
     public function invest(User $user, Loan $loan, string $amount, ?string $idempotencyKey = null): Investment
     {
-        // Idempotency check — return existing investment if key was already used
-        if ($idempotencyKey) {
-            $existing = Investment::where('idempotency_key', $idempotencyKey)->first();
-            if ($existing) {
-                return $existing;
-            }
+        try {
+            return DB::transaction(function () use ($user, $loan, $amount, $idempotencyKey) {
+                // Idempotency check INSIDE transaction — prevents race condition
+                // where two concurrent requests both pass the check before either creates
+                if ($idempotencyKey) {
+                    $existing = Investment::where('idempotency_key', $idempotencyKey)->first();
+                    if ($existing) {
+                        return $existing;
+                    }
+                }
+
+                // Lock loan — prevents overfunding from concurrent investments
+                $loan = Loan::where('id', $loan->id)->lockForUpdate()->firstOrFail();
+
+                // Business rule validations (AFTER lock to prevent TOCTOU)
+                $this->validateInvestment($user, $loan, $amount);
+
+                // Create investment record
+                $investment = Investment::create([
+                    'user_id' => $user->id,
+                    'loan_id' => $loan->id,
+                    'amount' => $amount,
+                    'invested_at' => now(),
+                    'idempotency_key' => $idempotencyKey,
+                ]);
+
+                // Debit wallet via WalletService — the single source of truth
+                $this->walletService->invest(
+                    $user->id,
+                    $amount,
+                    "Investment in loan #{$loan->id}",
+                    "investment:{$investment->id}"
+                );
+
+                // Credit loan funded amount
+                $newFundedAmount = bcadd($loan->funded_amount, $amount, 2);
+                $loan->forceFill(['funded_amount' => $newFundedAmount])->save();
+
+                // Auto-transition loan status
+                if ($loan->isFullyFunded()) {
+                    $loan->transitionTo(Loan::STATUS_FUNDED);
+                } elseif ($loan->status === Loan::STATUS_PUBLISHED) {
+                    $loan->transitionTo(Loan::STATUS_FUNDING);
+                }
+
+                return $investment;
+            });
+        } catch (UniqueConstraintViolationException) {
+            // Concurrent request with same idempotency key — return existing
+            return Investment::where('idempotency_key', $idempotencyKey)->firstOrFail();
         }
-
-        return DB::transaction(function () use ($user, $loan, $amount, $idempotencyKey) {
-            // Lock loan — prevents overfunding from concurrent investments
-            $loan = Loan::where('id', $loan->id)->lockForUpdate()->firstOrFail();
-
-            // Business rule validations (AFTER lock to prevent TOCTOU)
-            $this->validateInvestment($user, $loan, $amount);
-
-            // Create investment record
-            $investment = Investment::create([
-                'user_id' => $user->id,
-                'loan_id' => $loan->id,
-                'amount' => $amount,
-                'invested_at' => now(),
-                'idempotency_key' => $idempotencyKey,
-            ]);
-
-            // Debit wallet via WalletService — the single source of truth
-            $this->walletService->invest(
-                $user->id,
-                $amount,
-                "Investment in loan #{$loan->id}",
-                "investment:{$investment->id}"
-            );
-
-            // Credit loan funded amount
-            $newFundedAmount = bcadd($loan->funded_amount, $amount, 2);
-            $loan->forceFill(['funded_amount' => $newFundedAmount])->save();
-
-            // Auto-transition loan status
-            if ($loan->isFullyFunded()) {
-                $loan->transitionTo(Loan::STATUS_FUNDED);
-            } elseif ($loan->status === Loan::STATUS_PUBLISHED) {
-                $loan->transitionTo(Loan::STATUS_FUNDING);
-            }
-
-            return $investment;
-        });
     }
 
     private function validateInvestment(User $user, Loan $loan, string $amount): void

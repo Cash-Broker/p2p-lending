@@ -33,7 +33,11 @@ class NotificationController extends Controller
 
     public function markAsRead(Request $request, string $id): JsonResponse
     {
-        $request->user()->notifications()->where('id', $id)->update(['read_at' => now()]);
+        $updated = $request->user()->notifications()->where('id', $id)->update(['read_at' => now()]);
+
+        if ($updated === 0) {
+            abort(404, 'Notification not found.');
+        }
 
         return response()->json(['message' => 'Marked as read.']);
     }
@@ -47,7 +51,11 @@ class NotificationController extends Controller
 
     public function destroy(Request $request, string $id): JsonResponse
     {
-        $request->user()->notifications()->where('id', $id)->delete();
+        $deleted = $request->user()->notifications()->where('id', $id)->delete();
+
+        if ($deleted === 0) {
+            abort(404, 'Notification not found.');
+        }
 
         return response()->json(['message' => 'Notification deleted.']);
     }

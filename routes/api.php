@@ -55,7 +55,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/profile', [ProfileController::class, 'show']);
         Route::put('/profile', [ProfileController::class, 'update']);
         Route::put('/profile/password', [ProfileController::class, 'changePassword']);
-        Route::post('/profile/kyc', [ProfileController::class, 'submitKyc']);
+        Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
+            ->middleware('throttle:3,1');
         Route::get('/profile/ibans', [ProfileController::class, 'ibans']);
         Route::post('/profile/ibans', [ProfileController::class, 'storeIban']);
         Route::delete('/profile/ibans/{iban}', [ProfileController::class, 'destroyIban']);
@@ -68,10 +69,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
         Route::delete('/notifications', [NotificationController::class, 'destroyAll']);
 
-        // Financial operations — KYC approval required
+        // Financial operations — KYC approval required + rate limited
         Route::middleware('kyc')->group(function () {
-            Route::post('/loans/{loan}/invest', [LoanController::class, 'invest']);
-            Route::post('/withdrawal', [WithdrawalController::class, 'store']);
+            Route::post('/loans/{loan}/invest', [LoanController::class, 'invest'])
+                ->middleware('throttle:10,1');
+            Route::post('/withdrawal', [WithdrawalController::class, 'store'])
+                ->middleware('throttle:5,1');
             Route::get('/withdrawal/history', [WithdrawalController::class, 'history']);
         });
     });
@@ -82,7 +85,11 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::get('/email/verify/{id}/{hash}', function (Request $request, string $id, string $hash) {
     $user = User::findOrFail($id);
 
-    if (! hash_equals(hash_hmac('sha256', $user->getEmailForVerification(), config('app.key')), $hash)) {
+    // Verify hash — try HMAC first (new), then sha1 fallback (legacy links)
+    $hmacHash = hash_hmac('sha256', $user->getEmailForVerification(), config('app.key'));
+    $sha1Hash = sha1($user->getEmailForVerification());
+
+    if (! hash_equals($hmacHash, $hash) && ! hash_equals($sha1Hash, $hash)) {
         abort(403, 'Invalid verification link.');
     }
 

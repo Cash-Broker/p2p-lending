@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\LoanResource;
 use App\Http\Resources\TransactionResource;
 use App\Http\Resources\WalletResource;
+use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\Transaction;
 use Illuminate\Http\JsonResponse;
@@ -16,6 +17,8 @@ class DashboardController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Investment::class);
+
         $user = $request->user();
         $wallet = $user->wallet;
 

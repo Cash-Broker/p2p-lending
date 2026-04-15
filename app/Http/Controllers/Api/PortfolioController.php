@@ -14,6 +14,8 @@ class PortfolioController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Investment::class);
+
         $investments = Investment::with(['loan.originator'])
             ->where('user_id', $request->user()->id)
             ->latest('invested_at')
@@ -32,6 +34,8 @@ class PortfolioController extends Controller
 
     public function summary(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Investment::class);
+
         $userId = $request->user()->id;
 
         $investments = Investment::where('user_id', $userId)

@@ -12,6 +12,8 @@ class TransactionController extends Controller
 {
     public function index(TransactionFilterRequest $request): JsonResponse
     {
+        $this->authorize('viewAny', Transaction::class);
+
         $query = Transaction::where('user_id', $request->user()->id);
 
         if ($request->filled('type')) {

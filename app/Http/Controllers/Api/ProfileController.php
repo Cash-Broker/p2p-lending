@@ -100,9 +100,7 @@ class ProfileController extends Controller
 
     public function destroyIban(Request $request, SavedIban $iban): JsonResponse
     {
-        if ($iban->user_id !== $request->user()->id) {
-            abort(403);
-        }
+        $this->authorize('delete', $iban);
 
         $iban->delete();
 
