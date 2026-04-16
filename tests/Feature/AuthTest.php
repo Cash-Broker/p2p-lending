@@ -143,4 +143,72 @@ class AuthTest extends TestCase
 
         $response->assertStatus(401);
     }
+
+    // ── Forgot password (no user enumeration) ──
+
+    public function test_forgot_password_returns_generic_response_for_existing_email(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        User::factory()->create(['email' => 'real@example.com']);
+
+        $response = $this->postJson('/api/forgot-password', ['email' => 'real@example.com']);
+
+        $response->assertOk()->assertJson([
+            'message' => 'Ако този имейл съществува в системата, ще получите линк за смяна на парола.',
+        ]);
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SendPasswordResetEmail::class);
+    }
+
+    public function test_forgot_password_returns_same_response_for_unknown_email(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+
+        $response = $this->postJson('/api/forgot-password', ['email' => 'unknown@example.com']);
+
+        $response->assertOk()->assertJson([
+            'message' => 'Ако този имейл съществува в системата, ще получите линк за смяна на парола.',
+        ]);
+        // Job IS dispatched even for unknown emails — keeps response time constant.
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SendPasswordResetEmail::class);
+    }
+
+    public function test_forgot_password_response_time_is_consistent_across_known_and_unknown_emails(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        User::factory()->create(['email' => 'real@example.com']);
+
+        // Warm up — first request always slower due to bootstrap.
+        $this->postJson('/api/forgot-password', ['email' => 'warmup@example.com']);
+
+        $samples = 5;
+        $knownTimes = [];
+        $unknownTimes = [];
+
+        for ($i = 0; $i < $samples; $i++) {
+            $start = microtime(true);
+            $this->postJson('/api/forgot-password', ['email' => 'real@example.com']);
+            $knownTimes[] = (microtime(true) - $start) * 1000;
+
+            $start = microtime(true);
+            $this->postJson('/api/forgot-password', ['email' => "unknown{$i}@example.com"]);
+            $unknownTimes[] = (microtime(true) - $start) * 1000;
+        }
+
+        $avgKnown = array_sum($knownTimes) / $samples;
+        $avgUnknown = array_sum($unknownTimes) / $samples;
+        $diff = abs($avgKnown - $avgUnknown);
+
+        // The fix queues all heavy work — both paths should be within 50ms of
+        // each other. Test environment has noise, so we allow 50ms slack;
+        // production with real SMTP would be even more uniform.
+        $this->assertLessThan(50, $diff,
+            "Avg timing diff was {$diff}ms (known={$avgKnown}, unknown={$avgUnknown}) — possible enumeration via timing.");
+    }
+
+    public function test_forgot_password_validates_email_format(): void
+    {
+        $response = $this->postJson('/api/forgot-password', ['email' => 'not-an-email']);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('email');
+    }
 }

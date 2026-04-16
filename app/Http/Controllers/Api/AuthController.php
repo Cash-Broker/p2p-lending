@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\RegisterRequest;
 use App\Http\Resources\UserResource;
+use App\Jobs\SendPasswordResetEmail;
 use App\Models\ConsentRecord;
 use App\Models\User;
 use Illuminate\Auth\Events\PasswordReset;
@@ -109,15 +110,15 @@ class AuthController extends Controller
             'email' => ['required', 'email'],
         ]);
 
-        $status = Password::sendResetLink($request->only('email'));
+        // The reset link generation (DB lookup, token persist, mail dispatch) is
+        // pushed to the queue. The HTTP response then takes the same time
+        // whether the email exists or not — preventing user enumeration via
+        // either response body OR response timing.
+        SendPasswordResetEmail::dispatch($request->string('email')->toString());
 
-        if ($status !== Password::RESET_LINK_SENT) {
-            throw ValidationException::withMessages([
-                'email' => [__($status)],
-            ]);
-        }
-
-        return response()->json(['message' => __($status)]);
+        return response()->json([
+            'message' => 'Ако този имейл съществува в системата, ще получите линк за смяна на парола.',
+        ]);
     }
 
     public function resetPassword(Request $request): JsonResponse
