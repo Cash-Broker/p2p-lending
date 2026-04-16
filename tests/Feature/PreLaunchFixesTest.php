@@ -194,16 +194,17 @@ class PreLaunchFixesTest extends TestCase
         $response->assertStatus(404);
     }
 
-    // ── Email verification backward compatibility ──
+    // ── Email verification ──
 
-    public function test_email_verification_works_with_legacy_sha1_hash(): void
+    public function test_email_verification_rejects_legacy_sha1_hash(): void
     {
+        // The sha1(email) fallback was dead code (removed — see LOW-2 fix).
+        // Even with a valid signed URL, a sha1-hashed link must now be rejected
+        // because the hash check is HMAC-SHA256 only.
         $user = User::factory()->create(['email_verified_at' => null]);
 
-        // Generate legacy sha1 hash (what old links would have)
         $sha1Hash = sha1($user->getEmailForVerification());
 
-        // Create a signed URL with sha1 hash
         $url = \Illuminate\Support\Facades\URL::temporarySignedRoute(
             'verification.verify',
             now()->addMinutes(60),
@@ -211,9 +212,9 @@ class PreLaunchFixesTest extends TestCase
         );
 
         $response = $this->get($url);
-        $response->assertRedirect();
+        $response->assertStatus(403);
 
-        $this->assertTrue($user->fresh()->hasVerifiedEmail());
+        $this->assertFalse($user->fresh()->hasVerifiedEmail());
     }
 
     public function test_email_verification_works_with_new_hmac_hash(): void

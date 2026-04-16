@@ -83,14 +83,18 @@ Route::middleware('auth:sanctum')->group(function () {
 
 // Email verification — stateless via signed URL.
 // User clicks from email without session, so we verify via hash, not auth.
+//
+// Hash check is HMAC-SHA256 with APP_KEY only. The previous sha1(email)
+// fallback was dead code — it was added in the same commit as the HMAC
+// migration, before any production deployment, so no real "legacy" links
+// were ever in user inboxes. Removing it eliminates a misleading branch
+// and reduces the surface that future readers might mistake for a real
+// fallback authentication path.
 Route::get('/email/verify/{id}/{hash}', function (Request $request, string $id, string $hash) {
     $user = User::findOrFail($id);
 
-    // Verify hash — try HMAC first (new), then sha1 fallback (legacy links)
-    $hmacHash = hash_hmac('sha256', $user->getEmailForVerification(), config('app.key'));
-    $sha1Hash = sha1($user->getEmailForVerification());
-
-    if (! hash_equals($hmacHash, $hash) && ! hash_equals($sha1Hash, $hash)) {
+    $expected = hash_hmac('sha256', $user->getEmailForVerification(), config('app.key'));
+    if (! hash_equals($expected, $hash)) {
         abort(403, 'Invalid verification link.');
     }
 
