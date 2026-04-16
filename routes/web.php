@@ -1,7 +1,28 @@
 <?php
 
+use App\Models\AdminTrustedIp;
+use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
+
+// Mark an IP as trusted for an admin user. Reached from the "trust this IP"
+// link in the admin login alert email. Signed URL gates access — the link is
+// authentication-equivalent, expires in 7 days, and can be sent only to the
+// admin who actually received the alert.
+Route::get('/admin/trust-ip/{user}/{ip}', function (Request $request, int $user, string $ip) {
+    $admin = User::where('id', $user)->where('role', 'admin')->firstOrFail();
+
+    AdminTrustedIp::firstOrCreate(
+        ['user_id' => $admin->id, 'ip_address' => $ip],
+        ['label' => 'Marked from email alert', 'first_seen_at' => now(), 'last_seen_at' => now()],
+    );
+
+    return response()->view('emails.admin-trust-ip-confirmed', [
+        'ip' => $ip,
+        'admin' => $admin,
+    ]);
+})->middleware('signed')->name('admin.trust-ip');
 
 // Serve private KYC documents — only accessible by admin
 Route::get('/admin/kyc-document/{path}', function (string $path) {

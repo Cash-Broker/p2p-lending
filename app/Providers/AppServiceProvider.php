@@ -2,6 +2,9 @@
 
 namespace App\Providers;
 
+use App\Listeners\SendAdminLoginAlert;
+use Illuminate\Auth\Events\Login;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
 
@@ -24,5 +27,9 @@ class AppServiceProvider extends ServiceProvider
                 ->numbers()
                 ->symbols();
         });
+
+        // Email alert on every successful admin login. Compensating control for
+        // the absence of 2FA — see DECISIONS.md.
+        Event::listen(Login::class, SendAdminLoginAlert::class);
     }
 }
