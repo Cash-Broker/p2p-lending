@@ -41,7 +41,10 @@ class ProfileController extends Controller
     public function submitKyc(Request $request): JsonResponse
     {
         $request->validate([
-            'document' => ['required', 'image', 'max:10240'], // Max 10MB
+            // Explicit MIME allow-list — Laravel's `image` rule includes SVG which
+            // can carry JavaScript and execute when admin views the document
+            // (admin session takeover). PDF added for ID-document scans.
+            'document' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
         ]);
 
         $user = $request->user();

@@ -124,6 +124,76 @@ class ProfileTest extends TestCase
             ->assertJsonValidationErrors('document');
     }
 
+    public function test_kyc_submit_rejects_svg_file(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // SVG with embedded XSS payload — must be rejected.
+        $svgContent = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" '
+                    . 'onload="alert(document.domain)"><script>alert(1)</script></svg>';
+        $svg = UploadedFile::fake()->createWithContent('id-card.svg', $svgContent);
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document' => $svg,
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('document');
+        $this->assertEquals('pending', $user->fresh()->kyc_status);
+        $this->assertNull($user->fresh()->kyc_document_path);
+    }
+
+    public function test_kyc_submit_rejects_php_file(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // PHP webshell — extension not in allow-list, must be rejected.
+        $php = UploadedFile::fake()->createWithContent('shell.php', '<?php phpinfo(); ?>');
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document' => $php,
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('document');
+    }
+
+    public function test_kyc_submit_rejects_html_file(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // HTML with embedded script — extension not in allow-list, must be rejected.
+        $html = UploadedFile::fake()->createWithContent('xss.html', '<script>alert(1)</script>');
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document' => $html,
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('document');
+    }
+
+    public function test_kyc_submit_accepts_pdf(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // Minimal valid PDF with proper magic bytes — Laravel's mimes: rule reads
+        // headers via finfo, dummy `create()` bytes won't pass.
+        $pdfContent = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+                    . "2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n"
+                    . "xref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n"
+                    . "trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n110\n%%EOF\n";
+        $pdf = UploadedFile::fake()->createWithContent('id-card.pdf', $pdfContent);
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document' => $pdf,
+        ]);
+
+        $response->assertOk();
+        $this->assertEquals('submitted', $user->fresh()->kyc_status);
+    }
+
     // ── IBANs ──
 
     public function test_list_saved_ibans(): void

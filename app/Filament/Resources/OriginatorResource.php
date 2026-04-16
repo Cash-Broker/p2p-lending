@@ -27,7 +27,14 @@ class OriginatorResource extends Resource
             Forms\Components\Textarea::make('description')->label('Описание')->required(),
             Forms\Components\TextInput::make('website')->label('Уебсайт')->url()->nullable(),
             Forms\Components\Toggle::make('buyback')->label('Buyback гаранция')->default(false),
-            Forms\Components\FileUpload::make('logo_path')->label('Лого')->image()->directory('originator-logos')->nullable(),
+            Forms\Components\FileUpload::make('logo_path')->label('Лого')
+                ->image()
+                // Explicit MIME allow-list — Filament's image() default permits SVG,
+                // which can carry JavaScript and run when investors view loan listings.
+                ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp'])
+                ->maxSize(2048) // 2MB cap
+                ->directory('originator-logos')
+                ->nullable(),
         ]);
     }
 
