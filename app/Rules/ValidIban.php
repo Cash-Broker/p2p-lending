@@ -3,7 +3,8 @@
 namespace App\Rules;
 
 use Closure;
-use IBAN\Core\IBAN;
+use Iban\Validation\Iban;
+use Iban\Validation\Validator as IbanValidator;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Translation\PotentiallyTranslatedString;
 
@@ -49,22 +50,24 @@ class ValidIban implements ValidationRule
             return;
         }
 
-        // Normalise — strip spaces and uppercase, mirroring jschaedl's internal handling.
+        // Normalise — strip spaces and uppercase. The Iban constructor also
+        // normalises but throws on garbage input.
         $normalised = strtoupper(preg_replace('/\s+/', '', $value));
 
         try {
-            $iban = new IBAN($normalised);
+            $iban = new Iban($normalised);
         } catch (\Throwable) {
             $fail('Невалиден IBAN.');
             return;
         }
 
-        if (! $iban->validate()) {
+        $validator = new IbanValidator;
+        if (! $validator->validate($iban)) {
             $fail('Невалиден IBAN (грешен формат, дължина или checksum).');
             return;
         }
 
-        $country = substr($normalised, 0, 2);
+        $country = $iban->countryCode();
         if (! in_array($country, self::SEPA_COUNTRIES, true)) {
             $fail("IBAN от държава {$country} не се поддържа. Платформата работи само със SEPA държави.");
             return;

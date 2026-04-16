@@ -34,9 +34,27 @@ No CRITICAL findings during static review (no SQLi, no auth bypass, no RCE, no o
 
 ---
 
+## Remediation status (updated 2026-04-16)
+
+| ID | Severity | Status | Commit |
+|---|---|---|---|
+| HIGH-1 | HIGH | **DEFERRED** (compensating control: email alerts) | `42aa178` (alerts), see [DECISIONS.md](DECISIONS.md) |
+| HIGH-2 | HIGH | **REMEDIATED** | `0ed1845` |
+| MED-1 | MEDIUM | **REMEDIATED** | `d83ec2e` |
+| MED-2 | MEDIUM | **REMEDIATED** | `f1add21` |
+| MED-3 | MEDIUM | **REMEDIATED** | `7188615` |
+| MED-4 | MEDIUM | **REMEDIATED** (Report-Only roll-out; promote to enforce after prod soak) | `367d9c8` |
+| LOW-1 | LOW | **REMEDIATED** | `86b9f0c` |
+| LOW-2 | LOW | **REMEDIATED** | `386245c` |
+| LOW-3 | LOW | open (KYC storage spam — not in this batch) | — |
+| LOW-4 | LOW | open (deterministic deposit reference codes) | — |
+| LOW-5 | LOW | open (PHP-level update/delete blockers) | — |
+
+---
+
 ## HIGH
 
-### [HIGH-1] No 2FA / MFA on Filament admin panel
+### [HIGH-1] No 2FA / MFA on Filament admin panel — DEFERRED, COMPENSATING CONTROL APPLIED
 - **Type:** Static
 - **Category:** Authentication
 - **File:** [app/Providers/Filament/AdminPanelProvider.php:54](app/Providers/Filament/AdminPanelProvider.php:54), [app/Models/User.php:51](app/Models/User.php:51)
@@ -51,7 +69,7 @@ No CRITICAL findings during static review (no SQLi, no auth bypass, no RCE, no o
 - **Recommendation:** Mandatory TOTP for any user with `role=admin`. Filament has community plugins (`stephenjude/filament-two-factor-authentication`, `jeffgreco13/filament-breezy`) or roll a Laravel Fortify 2FA flow. Block admin panel access until TOTP is set on first login.
 - **Priority:** Immediate
 
-### [HIGH-2] SVG files accepted as KYC documents → stored XSS against admin
+### [HIGH-2] SVG files accepted as KYC documents → stored XSS against admin — REMEDIATED (`0ed1845`)
 - **Type:** Static
 - **Category:** File Upload / XSS
 - **File:** [app/Http/Controllers/Api/ProfileController.php:43-44](app/Http/Controllers/Api/ProfileController.php:43), [routes/web.php:7-30](routes/web.php:7), [resources/views/filament/components/kyc-image.blade.php:2](resources/views/filament/components/kyc-image.blade.php:2)
@@ -81,7 +99,7 @@ No CRITICAL findings during static review (no SQLi, no auth bypass, no RCE, no o
 
 ## MEDIUM
 
-### [MED-1] Username enumeration via password-reset endpoint
+### [MED-1] Username enumeration via password-reset endpoint — REMEDIATED (`d83ec2e`)
 - **Type:** Static
 - **Category:** Authentication / Information Disclosure
 - **File:** [app/Http/Controllers/Api/AuthController.php:106-121](app/Http/Controllers/Api/AuthController.php:106)
@@ -97,7 +115,7 @@ No CRITICAL findings during static review (no SQLi, no auth bypass, no RCE, no o
 - **Recommendation:** Always return a generic 200 success ("If the email is registered you will receive a reset link.") regardless of `Password::sendResetLink` outcome. Same for `/login` (already partially uniform via `auth.failed`, verify under timing).
 - **Priority:** Next release
 
-### [MED-2] IBAN format validated but checksum (mod-97) not verified
+### [MED-2] IBAN format validated but checksum (mod-97) not verified — REMEDIATED (`f1add21`)
 - **Type:** Static
 - **Category:** Input Validation
 - **File:** [app/Http/Requests/WithdrawalRequest.php:20](app/Http/Requests/WithdrawalRequest.php:20), [app/Http/Controllers/Api/ProfileController.php:82](app/Http/Controllers/Api/ProfileController.php:82)
@@ -107,7 +125,7 @@ No CRITICAL findings during static review (no SQLi, no auth bypass, no RCE, no o
 - **Recommendation:** Use `php-iban` (intl extension provides `IntlChar`, but `Iban::isValid()` from a maintained package is cleaner). Validate per-country length: BG = 22.
 - **Priority:** Next release
 
-### [MED-3] Sanctum API tokens are never expired and not revoked on logout
+### [MED-3] Sanctum API tokens are never expired and not revoked on logout — REMEDIATED (`7188615`)
 - **Type:** Static
 - **Category:** Token lifecycle
 - **File:** [config/sanctum.php:50](config/sanctum.php:50), [app/Http/Controllers/Api/AuthController.php:87-99](app/Http/Controllers/Api/AuthController.php:87)
@@ -116,7 +134,7 @@ No CRITICAL findings during static review (no SQLi, no auth bypass, no RCE, no o
 - **Recommendation:** Set `'expiration' => 60 * 24 * 7` (7 days) or shorter. In `logout()`, also call `$request->user()?->currentAccessToken()?->delete()` (no-op for stateful, real deletion for token-mode requests). Add an admin action to "Revoke all tokens" per user.
 - **Priority:** Next release
 
-### [MED-4] No `Content-Security-Policy` header
+### [MED-4] No `Content-Security-Policy` header — REMEDIATED (`367d9c8`, Report-Only)
 - **Type:** Static
 - **Category:** Defense-in-depth / XSS
 - **File:** [app/Http/Middleware/SecurityHeaders.php](app/Http/Middleware/SecurityHeaders.php)
@@ -141,7 +159,7 @@ No CRITICAL findings during static review (no SQLi, no auth bypass, no RCE, no o
 
 ## LOW
 
-### [LOW-1] `Borrower` model is not `Auditable`
+### [LOW-1] `Borrower` model is not `Auditable` — REMEDIATED (`86b9f0c`)
 - **Type:** Static
 - **Category:** Audit / Compliance
 - **File:** [app/Models/Borrower.php](app/Models/Borrower.php) (no `use Auditable;`)
@@ -150,7 +168,7 @@ No CRITICAL findings during static review (no SQLi, no auth bypass, no RCE, no o
 - **Recommendation:** Add `use \App\Traits\Auditable;` to `Borrower`. Confirm `personal_id` stays in `Auditable::$sensitiveFields` redaction list (it already does).
 - **Priority:** Next release
 
-### [LOW-2] Email-verification SHA-1 fallback hash
+### [LOW-2] Email-verification SHA-1 fallback hash — REMEDIATED (`386245c`)
 - **Type:** Static
 - **Category:** Authentication / Cryptography
 - **File:** [routes/api.php:88-93](routes/api.php:88)

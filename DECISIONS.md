@@ -1,0 +1,93 @@
+# Security Decisions Log
+
+A running log of security-related architectural decisions, including
+deferrals, trade-offs, and the compensating controls put in place.
+Append new entries at the bottom; never edit prior entries (record
+remediations as a new entry that references the old one).
+
+---
+
+## 2FA on Filament admin panel — DEFERRED to v1.1
+
+- **Date:** 2026-04-16
+- **Decision:** 2FA / MFA will not be implemented for the admin panel in v1.
+- **Finding addressed:** [HIGH-1 in AUDIT_REPORT_PHASE1.md](AUDIT_REPORT_PHASE1.md)
+- **Rationale:**
+  - The admin team is currently very small (≤ 2 people).
+  - Picking and integrating a 2FA flow (TOTP via filament-breezy / a custom
+    Fortify integration / WebAuthn) cleanly with Filament 5.4 requires more
+    than a one-line config change — schema migration, recovery codes,
+    setup flow on first login, "trust this device" handling.
+  - The blast radius of a compromised admin account is mitigated by the
+    compensating controls below; a leaked password without the second
+    channel will trigger an email alert that the admin can act on.
+- **Compensating controls in place (v1):**
+  - **Email alert on every admin login** (`42aa178`): Subject distinguishes
+    known IP from new IP; new-IP emails carry a "trust this IP" signed link.
+    Failed logins do not generate alerts (attackers cannot inbox-spam).
+    Rate-limited so a legit burst of 11+ logins/hour from one IP collapses
+    to two emails (initial + consolidated). Listener in
+    `app/Listeners/SendAdminLoginAlert.php`.
+  - **Strong password policy** enforced via `Password::defaults()` in
+    `AppServiceProvider`: 8+ chars, mixed case, numbers, symbols.
+  - **Audit logging** of every admin action via the `Auditable` trait on
+    User, Wallet, Transaction, Investment, Loan, Borrower (all PII /
+    financial models). PII fields redacted in stored audit values.
+  - **Session hardening**: `SESSION_SECURE_COOKIE=true`, `SameSite=strict`,
+    encrypted (`SESSION_ENCRYPT=true`), JSON serialisation (no PHP gadget
+    chain risk).
+  - **Login throttle** (5 attempts per email+IP per minute via
+    `LoginRequest::ensureIsNotRateLimited`).
+- **Trigger conditions for revisiting (any of):**
+  - Admin team grows beyond 2 people.
+  - Any external pen-test or auditor finding flags 2FA absence.
+  - First reported security incident touching an admin account.
+  - Before the v1.1 release, regardless of the above.
+- **Owner of follow-up:** Backend lead.
+- **Effort estimate:** 1-2 day spike to evaluate
+  `stephenjude/filament-two-factor-authentication` vs. a Fortify-based
+  build, then 2-3 days to ship including recovery codes, setup flow,
+  and tests.
+
+---
+
+## CSP roll-out — Report-Only first, enforce after production soak
+
+- **Date:** 2026-04-16
+- **Decision:** Ship the CSP in `Content-Security-Policy-Report-Only`
+  mode (commit `367d9c8`) instead of enforcing immediately.
+- **Finding addressed:** [MED-4 in AUDIT_REPORT_PHASE1.md](AUDIT_REPORT_PHASE1.md)
+- **Rationale:** A strict policy that breaks Filament's inline-script
+  injection would lock admins out of the panel — operations disaster.
+  Report-Only lets browsers log violations to console + `report_uri`
+  (config: `CSP_REPORT_URI`) without breaking pages. Promotion to the
+  enforcing `presets` array happens once production logs show zero
+  legitimate violations across:
+  - login + logout
+  - Filament admin panel (every resource, every action)
+  - Vue SPA navigation, dashboard, portfolio
+  - KYC upload flow
+  - investment + withdrawal flows
+- **Promotion procedure:** Move `App\Support\CspPolicy::class` from
+  `report_only_presets` to `presets` in `config/csp.php` and redeploy.
+- **Owner of follow-up:** Frontend lead + backend lead jointly.
+- **Trigger:** After 7 consecutive days of zero CSP violation reports
+  in production logs.
+
+---
+
+## SEPA-only IBANs
+
+- **Date:** 2026-04-16
+- **Decision:** Reject IBANs from non-SEPA countries (US, AE, SA, TR, …)
+  at validation rather than at the bank rails.
+- **Finding addressed:** [MED-2 in AUDIT_REPORT_PHASE1.md](AUDIT_REPORT_PHASE1.md)
+- **Rationale:** The platform settles in EUR over SEPA. A non-SEPA
+  withdrawal is 99%+ either fraud (laundering routing) or a user error.
+  Bank-side rejection wastes operational time and clutters forensics;
+  failing fast at the API layer keeps the audit trail clean.
+- **Trigger to revisit:** New regulated jurisdiction expansion (e.g.
+  UK separately, US partnership), at which point the SEPA whitelist in
+  `App\Rules\ValidIban::SEPA_COUNTRIES` should be revisited.
+
+---
