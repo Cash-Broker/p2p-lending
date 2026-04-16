@@ -38,8 +38,14 @@ trait Auditable
 
     protected function logAudit(string $action, array $oldValues, array $newValues): void
     {
-        // Strip sensitive fields from audit log — we log THAT it changed, not the value
-        $sensitiveFields = ['password', 'remember_token', 'personal_id', 'iban'];
+        // Strip sensitive fields from audit log — we log THAT it changed, not the value.
+        // Borrower PII (full_name, address, phone) is encrypted at rest; redacting
+        // it from audit logs avoids re-exposure when auditors / support read logs.
+        $sensitiveFields = [
+            'password', 'remember_token',
+            'personal_id', 'iban',
+            'full_name', 'address', 'phone',
+        ];
         foreach ($sensitiveFields as $field) {
             if (isset($oldValues[$field])) {
                 $oldValues[$field] = '[REDACTED]';
