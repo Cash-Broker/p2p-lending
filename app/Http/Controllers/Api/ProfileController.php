@@ -7,6 +7,7 @@ use App\Http\Requests\ChangePasswordRequest;
 use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
 use App\Models\SavedIban;
+use App\Rules\ValidIban;
 use App\Services\AccountDeletionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -82,7 +83,8 @@ class ProfileController extends Controller
     public function storeIban(Request $request): JsonResponse
     {
         $request->validate([
-            'iban' => ['required', 'string', 'min:15', 'max:34', 'regex:/^[A-Z]{2}[0-9]{2}[A-Z0-9]{4,30}$/'],
+            // Format/checksum/SEPA-country validation in one rule.
+            'iban' => ['required', 'string', 'min:15', 'max:34', new ValidIban],
             'label' => ['nullable', 'string', 'max:100'],
         ]);
 
