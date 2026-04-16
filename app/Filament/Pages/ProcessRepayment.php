@@ -34,8 +34,8 @@ class ProcessRepayment extends Page
                 \Filament\Schemas\Components\Section::make('Въведете погашение')->schema([
                     Forms\Components\Select::make('loan_id')->label('Кредит')
                         ->options(Loan::where('status', Loan::STATUS_ACTIVE)->with('originator')->get()
-                            ->mapWithKeys(fn (Loan $loan) => [$loan->id => "#{$loan->id} — {$loan->originator->name} — {$loan->amount} € ({$loan->type})"]))
-                        ->searchable()->required(),
+                            ->mapWithKeys(fn(Loan $loan) => [$loan->id => "#{$loan->id} — {$loan->originator->name} — {$loan->amount} € ({$loan->type})"]))
+                        ->searchable()->required()->live(),
                     Forms\Components\TextInput::make('principal_amount')->label('Главница (€)')->numeric()->required()->minValue(0)->step(0.01),
                     Forms\Components\TextInput::make('interest_amount')->label('Лихва (€)')->numeric()->required()->minValue(0)->step(0.01),
                     Forms\Components\Select::make('amortization_schedule_id')->label('Ред от погасителен план')
@@ -43,7 +43,7 @@ class ProcessRepayment extends Page
                             $loanId = $get('loan_id');
                             if (! $loanId) return [];
                             return \App\Models\AmortizationSchedule::where('loan_id', $loanId)->where('status', 'pending')->get()
-                                ->mapWithKeys(fn ($s) => [$s->id => $s->due_date->format('d.m.Y') . " — {$s->total} €"]);
+                                ->mapWithKeys(fn($s) => [$s->id => $s->due_date->format('d.m.Y') . " — {$s->total} €"]);
                         })->nullable()->reactive(),
                 ])->columns(2),
             ])
