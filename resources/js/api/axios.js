@@ -1,5 +1,31 @@
 import axios from 'axios'
 
+/**
+ * Generate a UUID v4.
+ * Uses crypto.randomUUID() on modern browsers, with a fallback for older ones
+ * that still have crypto.getRandomValues (IE is not supported — we're modern only).
+ */
+function generateUUID() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16)
+    crypto.getRandomValues(bytes)
+    bytes[6] = (bytes[6] & 0x0f) | 0x40 // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80 // variant 10
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+
+  // Last-resort fallback — non-cryptographic but always available
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
+}
+
 const api = axios.create({
   baseURL: '/api',
   headers: {
@@ -9,6 +35,34 @@ const api = axios.create({
   },
   withCredentials: true,
   withXSRFToken: true,
+})
+
+/**
+ * Auto-inject X-Idempotency-Key on money-moving POST requests that require it.
+ *
+ * The backend rejects POST /loans/{id}/invest without this header (422).
+ * The header lets the backend deduplicate client retries — if a request is sent
+ * twice with the same key, the second call returns the original investment
+ * instead of creating a duplicate.
+ *
+ * A fresh UUID is generated per request unless the caller explicitly sets one.
+ * Callers that need true retry-safe semantics (same UUID across retries) should
+ * set the header themselves before the POST.
+ */
+api.interceptors.request.use((config) => {
+  const method = (config.method || '').toLowerCase()
+  const url = config.url || ''
+  const requiresIdempotencyKey = method === 'post' && /\/loans\/[^/]+\/invest$/.test(url)
+
+  if (requiresIdempotencyKey) {
+    const headers = config.headers || {}
+    const hasKey = !!(headers['X-Idempotency-Key'] || headers['x-idempotency-key'])
+    if (!hasKey) {
+      config.headers = { ...headers, 'X-Idempotency-Key': generateUUID() }
+    }
+  }
+
+  return config
 })
 
 export default api
