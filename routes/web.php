@@ -6,6 +6,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 
+// Stub `login` named route — Laravel's web `auth` middleware calls
+// `route('login')` to redirect unauthenticated users; without this stub
+// any unauthenticated request to a `web`+`auth` URL throws
+// RouteNotFoundException → 500. The Vue SPA's own router will render the
+// login page from the `app.blade.php` shell.
+Route::get('/login', fn () => view('app'))->name('login');
+
 // Mark an IP as trusted for an admin user. Reached from the "trust this IP"
 // link in the admin login alert email. Signed URL gates access — the link is
 // authentication-equivalent, expires in 7 days, and can be sent only to the
