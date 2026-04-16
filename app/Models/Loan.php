@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Services\AmortizationService;
 use Database\Factories\LoanFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOneThrough;
+use Illuminate\Support\Facades\DB;
 
 class Loan extends Model
 {
@@ -106,7 +108,20 @@ class Loan extends Model
             throw new \InvalidArgumentException("Invalid loan status transition: {$from} → {$newStatus}.");
         }
 
-        $this->forceFill(['status' => $newStatus])->save();
+        $fromStatus = $this->getOriginal('status') ?? $this->status;
+
+        // Wrap the status change and any side effects (e.g. schedule generation)
+        // in one transaction so they commit or roll back together.
+        DB::transaction(function () use ($newStatus, $fromStatus) {
+            $this->forceFill(['status' => $newStatus])->save();
+
+            // On first activation (funded → active), auto-generate the amortization
+            // schedule. LATE → ACTIVE is a return from delinquency; schedule already
+            // exists from the original activation.
+            if ($fromStatus === self::STATUS_FUNDED && $newStatus === self::STATUS_ACTIVE) {
+                app(AmortizationService::class)->generateSchedule($this);
+            }
+        });
     }
 
     protected $fillable = [
