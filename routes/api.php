@@ -26,6 +26,7 @@ Route::middleware('throttle:10,1')->group(function () {
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/logout-all', [AuthController::class, 'logoutAll']);
     Route::post('/email/verification-notification', [AuthController::class, 'verifyEmail'])
         ->middleware('throttle:6,1');
 

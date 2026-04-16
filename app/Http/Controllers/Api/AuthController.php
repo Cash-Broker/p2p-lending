@@ -87,6 +87,15 @@ class AuthController extends Controller
 
     public function logout(Request $request): JsonResponse
     {
+        // For Sanctum bearer-token clients (mobile, integrations) the session
+        // path below is a no-op — we must explicitly delete the access token
+        // so it cannot be reused. SPA cookie auth returns a TransientToken
+        // here which has no delete(), so we type-check first.
+        $token = $request->user()?->currentAccessToken();
+        if ($token instanceof \Laravel\Sanctum\PersonalAccessToken) {
+            $token->delete();
+        }
+
         auth()->guard('web')->logout();
 
         if ($request->hasSession()) {
@@ -96,6 +105,29 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Logged out successfully.',
+        ]);
+    }
+
+    /**
+     * Revoke ALL access tokens for the current user — "logout from all devices".
+     * Useful after suspected token leak or password change.
+     */
+    public function logoutAll(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($user) {
+            $user->tokens()->delete();
+        }
+
+        auth()->guard('web')->logout();
+
+        if ($request->hasSession()) {
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+        }
+
+        return response()->json([
+            'message' => 'Logged out from all devices.',
         ]);
     }
 

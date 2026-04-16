@@ -42,12 +42,18 @@ return [
     |--------------------------------------------------------------------------
     |
     | This value controls the number of minutes until an issued token will be
-    | considered expired. This will override any values set in the token's
-    | "expires_at" attribute, but first-party sessions are not affected.
+    | considered expired. First-party SPA sessions are NOT affected — they
+    | follow config/session.php (120 min by default). This applies only to
+    | personal access tokens (mobile / API integrations) where leaked tokens
+    | otherwise live forever.
+    |
+    | 7 days = 60 * 24 * 7 = 10080. Long enough to avoid friction in mobile
+    | UX, short enough that a leaked token has a finite blast window. Pair
+    | with token revocation on logout (AuthController::logout).
     |
     */
 
-    'expiration' => null,
+    'expiration' => 60 * 24 * 7,
 
     /*
     |--------------------------------------------------------------------------

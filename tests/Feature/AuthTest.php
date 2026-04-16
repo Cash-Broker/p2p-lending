@@ -211,4 +211,109 @@ class AuthTest extends TestCase
 
         $response->assertStatus(422)->assertJsonValidationErrors('email');
     }
+
+    // ── Sanctum token expiration + logout revocation ──
+
+    public function test_sanctum_expiration_is_one_week(): void
+    {
+        $this->assertSame(60 * 24 * 7, config('sanctum.expiration'));
+    }
+
+    public function test_logout_deletes_current_access_token(): void
+    {
+        $user = User::factory()->create();
+        $token = $user->createToken('test-device')->plainTextToken;
+
+        $this->assertDatabaseCount('personal_access_tokens', 1);
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->postJson('/api/logout');
+
+        $response->assertOk();
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+    }
+
+    public function test_logout_does_not_revoke_tokens_from_other_devices(): void
+    {
+        $user = User::factory()->create();
+        $tokenA = $user->createToken('device-A')->plainTextToken;
+        $tokenB = $user->createToken('device-B')->plainTextToken;
+
+        $this->assertDatabaseCount('personal_access_tokens', 2);
+
+        // Logout from device A only
+        $this->withHeader('Authorization', "Bearer {$tokenA}")
+            ->postJson('/api/logout')
+            ->assertOk();
+
+        // device-B token should still authorise
+        $this->assertDatabaseCount('personal_access_tokens', 1);
+        $this->withHeader('Authorization', "Bearer {$tokenB}")
+            ->getJson('/api/user')
+            ->assertOk();
+    }
+
+    public function test_revoked_token_is_rejected(): void
+    {
+        $user = User::factory()->create();
+        $user->wallet()->create();
+        $token = $user->createToken('test')->plainTextToken;
+
+        $this->withHeader('Authorization', "Bearer {$token}")->postJson('/api/logout')->assertOk();
+
+        // Token row is gone — a fresh request from another client (no session
+        // cookies) cannot use it. We use refreshApplication to drop cookies
+        // accumulated by the test client; an attacker with only the leaked
+        // token has no session.
+        $this->refreshApplication();
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->getJson('/api/user')
+            ->assertStatus(401);
+    }
+
+    public function test_logout_all_revokes_all_tokens(): void
+    {
+        $user = User::factory()->create();
+        $tokenA = $user->createToken('A')->plainTextToken;
+        $user->createToken('B');
+        $user->createToken('C');
+
+        $this->assertDatabaseCount('personal_access_tokens', 3);
+
+        $this->withHeader('Authorization', "Bearer {$tokenA}")
+            ->postJson('/api/logout-all')
+            ->assertOk();
+
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+    }
+
+    public function test_expired_token_is_rejected(): void
+    {
+        $user = User::factory()->create();
+        $user->wallet()->create();
+        $tokenInstance = $user->createToken('test');
+        $token = $tokenInstance->plainTextToken;
+
+        // Backdate the token past the 7-day window. created_at is not in
+        // PersonalAccessToken::$fillable, so use forceFill rather than update().
+        $row = \Laravel\Sanctum\PersonalAccessToken::find($tokenInstance->accessToken->id);
+        $row->forceFill(['created_at' => now()->subDays(8)])->save();
+
+        $response = $this->withHeader('Authorization', "Bearer {$token}")
+            ->getJson('/api/user');
+
+        $response->assertStatus(401);
+    }
+
+    public function test_cookie_logout_does_not_error_when_no_token(): void
+    {
+        $user = User::factory()->create();
+        $user->wallet()->create();
+
+        // SPA flow uses session cookies — currentAccessToken() returns
+        // a TransientToken without delete(); logout must still succeed.
+        $response = $this->actingAs($user)->postJson('/api/logout');
+        $response->assertOk();
+    }
 }
