@@ -22,6 +22,10 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+        // Spatie CSP — currently emits Report-Only header (config/csp.php).
+        // Promote App\Support\CspPolicy to `presets` for enforcement once
+        // production violations are clean.
+        $middleware->append(\Spatie\Csp\AddCspHeaders::class);
         $middleware->alias([
             'investor' => \App\Http\Middleware\EnsureIsInvestor::class,
             'kyc' => \App\Http\Middleware\EnsureKycApproved::class,
