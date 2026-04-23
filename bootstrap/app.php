@@ -12,6 +12,19 @@ return Application::configure(basePath: dirname(__DIR__))
             ->dailyAt('03:00')
             ->withoutOverlapping()
             ->runInBackground();
+
+        // Late-loan automation — daily at 03:30, after ledger reconciliation
+        // has finished and the DB is in a clean state. The 60-minute lock TTL
+        // matches a typical worst-case run duration; longer than the run
+        // would take in production but short enough that a stale lock from a
+        // crashed process clears before the next day's run.
+        // Output appended to its own log file so support can tail it
+        // separately and apply its own log-rotation rules.
+        $schedule->command('loans:process-late')
+            ->dailyAt('03:30')
+            ->withoutOverlapping(60)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/loans-process-late.log'));
     })
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

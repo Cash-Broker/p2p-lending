@@ -56,6 +56,11 @@ class SchedulerHealthController extends Controller
                 'schedules_marked_late' => $this->intMetric('last_late_check_schedules_marked'),
                 'loans_transitioned_to_late' => $this->intMetric('last_late_check_loans_to_late'),
                 'loans_recovered' => $this->intMetric('last_late_check_loans_recovered'),
+                // Loans that the auto-recovery safeguard refused because they
+                // had schedule items in 'default' status — operator must
+                // resolve manually. Visible in the dashboard so it doesn't
+                // hide in laravel.log.
+                'recovery_skipped_default' => $this->intMetric('last_late_check_recovery_skipped_default'),
                 'notifications_queued' => $this->intMetric('last_late_check_notifications_queued'),
             ],
         ], $status === 'critical' ? 503 : 200);

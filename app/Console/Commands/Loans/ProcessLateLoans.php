@@ -47,6 +47,7 @@ use Throwable;
  *   last_late_check_schedules_marked — int (newly-late)
  *   last_late_check_loans_to_late  — int
  *   last_late_check_loans_recovered — int (active + repaid combined)
+ *   last_late_check_recovery_skipped_default — int (loans skipped due to default schedules — manual review)
  *   last_late_check_notifications_queued — int
  *
  * Read these via /api/health/scheduler for external monitoring.
@@ -230,6 +231,9 @@ class ProcessLateLoans extends Command
             'last_late_check_schedules_marked' => (string) $newlyLateSchedules->count(),
             'last_late_check_loans_to_late' => (string) count($transitions['newly_late']),
             'last_late_check_loans_recovered' => (string) (count($transitions['recovered_to_active']) + count($transitions['recovered_to_repaid'])),
+            // Surfaces the safeguard hit count so support sees it in the
+            // dashboard without grepping logs (see LoanStatusUpdaterService).
+            'last_late_check_recovery_skipped_default' => (string) count($transitions['recovery_skipped_default']),
             'last_late_check_notifications_queued' => (string) $notificationsQueued,
         ];
         if (! $dryRun) {
