@@ -20,6 +20,8 @@ class AmortizationSchedule extends Model
         'total',
         'status',
         'paid_at',
+        'became_late_at',
+        'days_late',
     ];
 
     protected function casts(): array
@@ -30,6 +32,8 @@ class AmortizationSchedule extends Model
             'interest' => 'decimal:2',
             'total' => 'decimal:2',
             'paid_at' => 'datetime',
+            'became_late_at' => 'datetime',
+            'days_late' => 'integer',
         ];
     }
 

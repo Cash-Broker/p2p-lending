@@ -135,6 +135,8 @@ class Loan extends Model
         'type',
         'status',
         'published_at',
+        'last_late_check_at',
+        'became_late_at',
     ];
 
     protected function casts(): array
@@ -145,6 +147,8 @@ class Loan extends Model
             'interest_rate' => 'decimal:2',
             'interest_rate_annual' => 'decimal:2',
             'published_at' => 'datetime',
+            'last_late_check_at' => 'datetime',
+            'became_late_at' => 'datetime',
         ];
     }
 
