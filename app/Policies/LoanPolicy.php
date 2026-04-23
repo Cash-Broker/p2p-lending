@@ -33,4 +33,23 @@ class LoanPolicy
     {
         return $user->isAdmin();
     }
+
+    /**
+     * Investor may read the loan's lifecycle events ONLY if they have at
+     * least one investment in this loan (any amount, any time, even fully
+     * repaid). Admin sees everything via Filament; this guard is for the
+     * investor-side /loans/{loan}/events API endpoint.
+     *
+     * Rationale: events expose timeline data (loan went late, recovered)
+     * which is sensitive even though the LoanEventResource sanitises
+     * metadata. A non-investor browsing the marketplace shouldn't see
+     * the lifecycle history of every loan.
+     */
+    public function viewEvents(User $user, Loan $loan): bool
+    {
+        if ($user->isAdmin()) {
+            return true;
+        }
+        return $loan->investments()->where('user_id', $user->id)->exists();
+    }
 }

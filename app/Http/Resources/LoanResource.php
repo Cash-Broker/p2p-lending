@@ -30,6 +30,14 @@ class LoanResource extends JsonResource
                 : 0,
             'investors_count' => $this->whenCounted('investments', $this->investments_count),
             'amortization_schedule' => AmortizationScheduleResource::collection($this->whenLoaded('amortizationSchedules')),
+            // Late tracking — only meaningful when the loan is currently late.
+            // For active/repaid loans these are silently null, which the
+            // frontend treats as "no late state".
+            'became_late_at' => $this->when($this->status === 'late', $this->became_late_at),
+            // Snapshot from withMax() in PortfolioController. May be null if
+            // the loan was loaded without that withMax (e.g. loan detail
+            // endpoint) — frontend should treat null as "unknown".
+            'days_overdue_max' => $this->max_days_late_late_only ?? null,
         ];
     }
 }

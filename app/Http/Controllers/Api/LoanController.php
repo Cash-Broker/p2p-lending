@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\InvestRequest;
 use App\Http\Requests\LoanFilterRequest;
 use App\Http\Resources\InvestmentResource;
+use App\Http\Resources\LoanEventResource;
 use App\Http\Resources\LoanResource;
 use App\Models\Favorite;
 use App\Models\Loan;
@@ -142,6 +143,36 @@ class LoanController extends Controller
                 'last_page' => $loans->lastPage(),
                 'per_page' => $loans->perPage(),
                 'total' => $loans->total(),
+            ],
+        ]);
+    }
+
+    /**
+     * Investor-facing loan-event timeline. Returns paginated, anonymised
+     * lifecycle events for a loan the user has at least one investment in.
+     *
+     * Authorization: LoanPolicy::viewEvents — admin sees all loans;
+     * investor only sees events for loans they hold/held a position in.
+     *
+     * Sanitisation: LoanEventResource enforces a strict whitelist on
+     * metadata keys (see resource class). triggered_by_user_id never
+     * leaves the server.
+     */
+    public function events(Request $request, Loan $loan): JsonResponse
+    {
+        $this->authorize('viewEvents', $loan);
+
+        $events = $loan->events()
+            ->latest('occurred_at')
+            ->paginate(20);
+
+        return response()->json([
+            'data' => LoanEventResource::collection($events),
+            'meta' => [
+                'current_page' => $events->currentPage(),
+                'last_page' => $events->lastPage(),
+                'per_page' => $events->perPage(),
+                'total' => $events->total(),
             ],
         ]);
     }
