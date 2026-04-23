@@ -24,12 +24,20 @@ class Transaction extends Model
     const TYPE_REPAYMENT_INTEREST = 'repayment_interest';
     const TYPE_FEE = 'fee';
 
+    // F2 — buyback distribution types. Separate from TYPE_REPAYMENT_* so
+    // reconciliation and per-investor reporting can distinguish repayments
+    // (borrower paid) from buybacks (originator honoured guarantee).
+    const TYPE_BUYBACK_PRINCIPAL = 'buyback_principal';
+    const TYPE_BUYBACK_INTEREST = 'buyback_interest';
+
     const TYPES = [
         self::TYPE_DEPOSIT,
         self::TYPE_WITHDRAWAL,
         self::TYPE_INVESTMENT,
         self::TYPE_REPAYMENT_PRINCIPAL,
         self::TYPE_REPAYMENT_INTEREST,
+        self::TYPE_BUYBACK_PRINCIPAL,
+        self::TYPE_BUYBACK_INTEREST,
         self::TYPE_FEE,
     ];
 

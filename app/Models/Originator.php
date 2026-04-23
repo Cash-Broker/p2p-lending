@@ -17,6 +17,8 @@ class Originator extends Model
         'description',
         'website',
         'buyback',
+        'buyback_coverage',
+        'buyback_trigger_days',
         'logo_path',
     ];
 
@@ -24,6 +26,7 @@ class Originator extends Model
     {
         return [
             'buyback' => 'boolean',
+            'buyback_trigger_days' => 'integer',
         ];
     }
 

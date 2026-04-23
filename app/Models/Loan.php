@@ -24,6 +24,7 @@ class Loan extends Model
     const STATUS_LATE = 'late';
     const STATUS_DEFAULT = 'default';
     const STATUS_REPAID = 'repaid';
+    const STATUS_BOUGHT_BACK = 'bought_back';
 
     const STATUSES = [
         self::STATUS_DRAFT,
@@ -34,9 +35,12 @@ class Loan extends Model
         self::STATUS_LATE,
         self::STATUS_DEFAULT,
         self::STATUS_REPAID,
+        self::STATUS_BOUGHT_BACK,
     ];
 
-    // Statuses visible to investors (excludes draft)
+    // Statuses visible to investors (excludes draft).
+    // bought_back is visible so investors see the final outcome of a loan
+    // that was taken over by the originator.
     const INVESTOR_VISIBLE_STATUSES = [
         self::STATUS_PUBLISHED,
         self::STATUS_FUNDING,
@@ -44,6 +48,7 @@ class Loan extends Model
         self::STATUS_ACTIVE,
         self::STATUS_LATE,
         self::STATUS_REPAID,
+        self::STATUS_BOUGHT_BACK,
     ];
 
     // Statuses where investment is possible
@@ -52,16 +57,19 @@ class Loan extends Model
         self::STATUS_FUNDING,
     ];
 
-    // Valid state machine transitions — anything not listed here is forbidden
+    // Valid state machine transitions — anything not listed here is forbidden.
+    // bought_back is TERMINAL per F2 Q3 (investor already paid out; originator's
+    // post-buyback collection is off-platform).
     const ALLOWED_TRANSITIONS = [
         self::STATUS_DRAFT     => [self::STATUS_PUBLISHED],
         self::STATUS_PUBLISHED => [self::STATUS_DRAFT, self::STATUS_FUNDING],
         self::STATUS_FUNDING   => [self::STATUS_FUNDED],
         self::STATUS_FUNDED    => [self::STATUS_ACTIVE],
         self::STATUS_ACTIVE    => [self::STATUS_LATE, self::STATUS_REPAID],
-        self::STATUS_LATE      => [self::STATUS_ACTIVE, self::STATUS_DEFAULT, self::STATUS_REPAID],
-        self::STATUS_DEFAULT   => [self::STATUS_REPAID],
+        self::STATUS_LATE      => [self::STATUS_ACTIVE, self::STATUS_DEFAULT, self::STATUS_REPAID, self::STATUS_BOUGHT_BACK],
+        self::STATUS_DEFAULT   => [self::STATUS_REPAID, self::STATUS_BOUGHT_BACK],
         self::STATUS_REPAID    => [],
+        self::STATUS_BOUGHT_BACK => [],
     ];
 
     // Fields that become immutable once the loan leaves draft status
@@ -137,6 +145,11 @@ class Loan extends Model
         'published_at',
         'last_late_check_at',
         'became_late_at',
+        'buyback_eligible_at',
+        'bought_back_at',
+        'buyback_dismissed_at',
+        'buyback_dismissed_reason',
+        'buyback_dismissed_by',
     ];
 
     protected function casts(): array
@@ -149,6 +162,9 @@ class Loan extends Model
             'published_at' => 'datetime',
             'last_late_check_at' => 'datetime',
             'became_late_at' => 'datetime',
+            'buyback_eligible_at' => 'datetime',
+            'bought_back_at' => 'datetime',
+            'buyback_dismissed_at' => 'datetime',
         ];
     }
 

@@ -109,6 +109,38 @@ remediations as a new entry that references the old one).
 
 ---
 
+## F2: default → bought_back transition allowed
+
+- **Date:** 2026-04-23
+- **Decision:** `Loan::ALLOWED_TRANSITIONS` permits both `late → bought_back`
+  AND `default → bought_back`. `bought_back` itself is terminal (no outgoing
+  transitions).
+- **Rationale:** Manual admin model requires flexibility for late-stage
+  originator recovery agreements. An admin may have transitioned a loan
+  `late → default` (F1 limitation L1 — `default` is currently only reachable
+  via admin Filament action), then weeks later the originator signs a
+  buyback agreement. Forcing the admin to go `default → late → bought_back`
+  would be artificial and would require extending the state machine with
+  `default → late` (which doesn't make semantic sense). Instead, direct
+  `default → bought_back` is a rare but valid path.
+- **Compensating controls:**
+  - Both `default` and `bought_back` remain terminal for AUTOMATION
+    purposes — only admin-initiated transitions reach them. The daily
+    `loans:detect-buyback-eligible` cron only flags loans in `late` status
+    (per Q22); a loan in `default` must be executed manually from the
+    Buyback Queue if admin opens it explicitly.
+  - Every transition writes a `LoanEvent` row with `triggered_by='admin'`
+    + `triggered_by_user_id` pinpointing the admin who executed.
+  - Audit trail via `Auditable` trait on `Loan` captures the full diff.
+- **Trigger conditions for revisiting:**
+  - If the platform expands into markets where `default` status means
+    legal recovery only (buyback impossible by regulation).
+  - If compliance requires separating "delinquent" from "written off"
+    semantics more strictly.
+- **Owner of follow-up:** Backend lead (if the above conditions ever trigger).
+
+---
+
 ## SEPA-only IBANs
 
 - **Date:** 2026-04-16
