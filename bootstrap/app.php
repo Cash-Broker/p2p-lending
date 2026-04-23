@@ -25,6 +25,22 @@ return Application::configure(basePath: dirname(__DIR__))
             ->withoutOverlapping(60)
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/loans-process-late.log'));
+
+        // F2 — buyback-eligibility detection. Daily at 03:45, after the
+        // late-detection cron has transitioned loans into/out of 'late'
+        // status. Buyback detection READS loan.status, so it must run
+        // AFTER late detection.
+        //
+        // 15-minute gap: empirically F1 runs in << 5 min; 15 min is a
+        // comfortable safety buffer. If F1 ever exceeds 15 min consistently
+        // (growth, slow queue), move F2 to 04:00 — flag in CLAUDE.md.
+        //
+        // Separate log file — ops can tail independently.
+        $schedule->command('loans:detect-buyback-eligible')
+            ->dailyAt('03:45')
+            ->withoutOverlapping(60)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/loans-detect-buyback-eligible.log'));
     })
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

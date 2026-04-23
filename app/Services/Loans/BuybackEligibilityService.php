@@ -17,11 +17,14 @@ use Illuminate\Support\Collection;
  * also writes the `buyback_triggered` LoanEvent per Q22.
  *
  * Eligibility rule (all of):
- *   1. loan.status = 'late'  (buyback detection only for late loans;
- *      default loans can still be bought back but admin must initiate
- *      manually from the Queue per DECISIONS.md).
+ *   1. loan.status IN ('late', 'default')  (per client guidance — default
+ *      loans that still have a `became_late_at` history remain candidates
+ *      for buyback detection; admin then decides whether to execute).
  *   2. loan.became_late_at IS NOT NULL  (defense — F1 always sets this
- *      on active→late, but guard anyway).
+ *      on active→late, but guard anyway. A default loan that never went
+ *      through 'late' automation won't have became_late_at and is
+ *      excluded — admin handles it via direct Queue interaction if the
+ *      originator later honours it.)
  *   3. loan.buyback_eligible_at IS NULL  (not already flagged).
  *   4. loan.buyback_dismissed_at IS NULL  (admin hasn't dismissed).
  *   5. loan.bought_back_at IS NULL  (not already executed).
@@ -57,13 +60,14 @@ class BuybackEligibilityService
 
         $defaultTriggerDays = (int) PlatformSetting::get('buyback_default_trigger_days', 60);
 
-        $q = Loan::where('status', Loan::STATUS_LATE)
+        $q = Loan::whereIn('status', [Loan::STATUS_LATE, Loan::STATUS_DEFAULT])
             ->whereNotNull('became_late_at')
             ->whereNull('buyback_eligible_at')
             ->whereNull('buyback_dismissed_at')
             ->whereNull('bought_back_at')
             ->whereHas('originator', fn ($o) => $o->where('buyback', true))
-            ->with('originator');
+            ->with('originator')
+            ->orderBy('id');
 
         if ($loanIdsFilter !== null) {
             $q->whereIn('id', $loanIdsFilter);

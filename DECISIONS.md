@@ -124,11 +124,11 @@ remediations as a new entry that references the old one).
   `default → late` (which doesn't make semantic sense). Instead, direct
   `default → bought_back` is a rare but valid path.
 - **Compensating controls:**
-  - Both `default` and `bought_back` remain terminal for AUTOMATION
-    purposes — only admin-initiated transitions reach them. The daily
-    `loans:detect-buyback-eligible` cron only flags loans in `late` status
-    (per Q22); a loan in `default` must be executed manually from the
-    Buyback Queue if admin opens it explicitly.
+  - The daily `loans:detect-buyback-eligible` cron flags loans in `late`
+    AND `default` status (both are valid buyback candidates when they
+    have a `became_late_at` history). `bought_back` is reached ONLY via
+    admin-click Execute from the Buyback Queue — detection never
+    transitions; only surfaces eligibility for admin review.
   - Every transition writes a `LoanEvent` row with `triggered_by='admin'`
     + `triggered_by_user_id` pinpointing the admin who executed.
   - Audit trail via `Auditable` trait on `Loan` captures the full diff.

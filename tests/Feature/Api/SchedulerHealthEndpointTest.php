@@ -17,6 +17,7 @@ class SchedulerHealthEndpointTest extends TestCase
 
     private function recordRunAt(\Carbon\Carbon $when): void
     {
+        // --- Late-check metrics (F1) ---
         // PlatformMetric::record stamps measured_at = now(), so for the
         // "stale" tests we mutate the row directly afterward.
         PlatformMetric::record('last_late_check_run_at', $when->toIso8601String());
@@ -27,8 +28,19 @@ class SchedulerHealthEndpointTest extends TestCase
         PlatformMetric::record('last_late_check_loans_recovered', '0');
         PlatformMetric::record('last_late_check_recovery_skipped_default', '0');
         PlatformMetric::record('last_late_check_notifications_queued', '3');
-        // Backdate measured_at on the run timestamp row (used by health threshold).
         PlatformMetric::where('key', 'last_late_check_run_at')->update(['measured_at' => $when]);
+
+        // --- Buyback-check metrics (F2) ---
+        // Mirror the late-check timestamp so both schedulers share the same
+        // health tier in these F1 tests (the top-level status is the worst
+        // of the two). F2-specific tests in Step 7 exercise buyback-only
+        // states by writing these metrics independently.
+        PlatformMetric::record('last_buyback_check_run_at', $when->toIso8601String());
+        PlatformMetric::record('last_buyback_check_status', 'success');
+        PlatformMetric::record('last_buyback_check_loans_newly_eligible', '0');
+        PlatformMetric::record('last_buyback_check_notifications_queued', '0');
+        PlatformMetric::record('last_buyback_check_enabled', 'true');
+        PlatformMetric::where('key', 'last_buyback_check_run_at')->update(['measured_at' => $when]);
     }
 
     public function test_healthy_when_run_within_last_26_hours(): void
