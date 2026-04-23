@@ -249,9 +249,36 @@ class WalletService
     }
 
     /**
+     * F3 — borrower early-repayment principal: invested → available.
+     * Identical bucket math to repayPrincipal; separate type so
+     * reconciliation and per-investor reporting can distinguish
+     * scheduled repayments (monthly cadence) from full-close payoffs
+     * (borrower closed the loan early).
+     */
+    public function earlyRepayPrincipal(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        return $this->creditAvailableFromInvested(
+            $userId, $amount, Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL, $description, $reference,
+        );
+    }
+
+    /**
+     * F3 — borrower early-repayment interest: → available + earned.
+     * Same bucket math as repayInterest; investor's earned-view aggregate
+     * includes both scheduled and early-repayment interest (both are
+     * borrower-paid income to the investor).
+     */
+    public function earlyRepayInterest(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        return $this->creditAvailableAndEarned(
+            $userId, $amount, Transaction::TYPE_EARLY_REPAYMENT_INTEREST, $description, $reference,
+        );
+    }
+
+    /**
      * Shared helper: move funds from `invested` bucket to `available`.
-     * Used by repayPrincipal AND buybackPrincipal — same wallet-bucket
-     * arithmetic, different transaction type + description.
+     * Used by repayPrincipal, buybackPrincipal AND earlyRepayPrincipal —
+     * same wallet-bucket arithmetic, different transaction type + description.
      *
      * Does NOT validate `wallet.invested >= amount` at the app layer — the
      * wallets CHECK constraint (migration 2026_04_15_000001) enforces
