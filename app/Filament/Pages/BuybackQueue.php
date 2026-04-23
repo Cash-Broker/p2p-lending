@@ -5,6 +5,8 @@ namespace App\Filament\Pages;
 use App\Models\Loan;
 use App\Models\LoanEvent;
 use App\Models\PlatformSetting;
+use App\Models\User;
+use App\Notifications\LoanBoughtBackNotification;
 use App\Services\Loans\BuybackAlreadyExecutedException;
 use App\Services\Loans\BuybackCalculationService;
 use App\Services\Loans\BuybackExecutionService;
@@ -15,6 +17,7 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Support\Facades\Log;
 use UnitEnum;
 
 /**
@@ -193,22 +196,44 @@ class BuybackQueue extends Page implements Tables\Contracts\HasTable
                                 adminId: auth()->id(),
                             );
 
-                            // TODO Step 6: dispatch LoanBoughtBackNotification per investor
-                            // foreach ($result->distributions as $d) {
-                            //     $d['user']->notify(new LoanBoughtBackNotification(
-                            //         loan: $record,
-                            //         result: $result,
-                            //         distribution: $d,
-                            //     ));
-                            // }
+                            // Dispatch per-investor notification AFTER the
+                            // service's transaction committed. Failures here
+                            // do NOT undo the money movement (F1 "money
+                            // first, emails second" pattern) — each send is
+                            // wrapped in try/catch so one bad address can't
+                            // starve the rest.
+                            $notifiedCount = 0;
+                            foreach ($result->distributions as $d) {
+                                try {
+                                    $investor = $d['user'] ?? User::find($d['user_id']);
+                                    if (! $investor) {
+                                        continue;
+                                    }
+                                    $investor->notify(new LoanBoughtBackNotification(
+                                        loan: $record,
+                                        boughtBackAt: $result->executedAt,
+                                        investorPrincipal: $d['principal'],
+                                        investorInterest: $d['interest'],
+                                        totalReceived: $d['total'],
+                                        coverageType: $result->coverageType,
+                                    ));
+                                    $notifiedCount++;
+                                } catch (\Throwable $e) {
+                                    Log::warning('Failed to send LoanBoughtBackNotification', [
+                                        'loan_id' => $record->id,
+                                        'user_id' => $d['user_id'],
+                                        'error' => $e->getMessage(),
+                                    ]);
+                                }
+                            }
 
                             Notification::make()
                                 ->title('Buyback изпълнен')
                                 ->body(sprintf(
-                                    'Кредит #%d: разпределени %s € (гл.: %s, л.: %s) към %d инвеститор(и).',
+                                    'Кредит #%d: разпределени %s € (гл.: %s, л.: %s) към %d инвеститор(и). Инвеститорите ще получат уведомления (%d queued).',
                                     $result->loanId,
                                     $result->totalAmount, $result->totalPrincipal, $result->totalInterest,
-                                    $result->investorCount,
+                                    $result->investorCount, $notifiedCount,
                                 ))
                                 ->success()
                                 ->send();

@@ -51,7 +51,7 @@ const eventTypeLabels = {
   went_late: 'Стана закъснял',
   recovered_from_late: 'Възстановен от late',
   went_default: 'Просрочен',
-  buyback_triggered: 'Buyback eligible',
+  buyback_triggered: 'Готов за изкупуване',
   buyback_completed: 'Buyback изпълнен',
   early_repayment_requested: 'Поискано предсрочно',
   early_repayment_completed: 'Завършено предсрочно',
