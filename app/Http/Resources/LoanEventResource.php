@@ -26,11 +26,34 @@ class LoanEventResource extends JsonResource
      *
      * Add a new key here ONLY after auditing it for PII / internal-state
      * leakage. Never widen with `*` or remove the whitelist.
+     *
+     * DELIBERATELY NOT EXPOSED (stay admin-only):
+     *   - triggered_by_user_id        (admin identity)
+     *   - executed_by_admin_id        (admin identity — F2 buyback_completed)
+     *   - late_schedule_count / paid_schedule_count / total_schedule_count
+     *                                 (operations-internal counters)
+     *   - originator_id               (redundant with Loan.originator relation;
+     *                                  metadata doesn't need to duplicate)
      */
     private const PUBLIC_METADATA_KEYS = [
-        'previous_became_late_at',  // recovered_from_late: when did the loan first go late
-        'transitioned_to',          // recovered_from_late: target status (active or repaid)
-        'days_late_at_transition',  // went_late: max days_late at the moment of transition
+        // F1 — went_late
+        'days_late_at_transition',
+        // F1 — recovered_from_late
+        'previous_became_late_at',
+        'transitioned_to',
+
+        // F2 — buyback_triggered (cron detection snapshot)
+        'eligible_at',
+        'days_since_became_late',
+        'calculated_buyback_amount_at_detection',
+        'coverage_type',
+
+        // F2 — buyback_completed (execution aggregates)
+        'total_amount',
+        'total_principal',
+        'total_interest',
+        'investor_count',
+        'executed_at',
     ];
 
     public function toArray(Request $request): array

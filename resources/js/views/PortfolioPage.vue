@@ -12,13 +12,24 @@ const meta = ref({ current_page: 1, last_page: 1, total: 0 })
 const loading = ref(true)
 
 const typeLabels = { consumer: 'Потребителски', business: 'Бизнес', mortgage: 'Ипотечен', bridge: 'Мостов' }
-const statusLabels = { active: 'Активен', funding: 'Финансира се', funded: 'Финансиран', late: 'Закъснение', default: 'Просрочен', repaid: 'Изплатен' }
+const statusLabels = {
+  active: 'Активен',
+  funding: 'Финансира се',
+  funded: 'Финансиран',
+  late: 'Закъснение',
+  default: 'Просрочен',
+  // F2 — bought_back: terminal; originator honoured the buyback guarantee,
+  // investor's share distributed back to their wallet.
+  bought_back: 'Изкупен',
+  repaid: 'Изплатен',
+}
 const statusClasses = {
   active: 'bg-green-50 text-green-600',
   funding: 'bg-blue-50 text-blue-600',
   funded: 'bg-blue-50 text-blue-600',
   late: 'bg-amber-50 text-amber-600',
   default: 'bg-red-50 text-red-600',
+  bought_back: 'bg-blue-50 text-blue-600',
   repaid: 'bg-gray-100 text-gray-500',
 }
 
@@ -41,10 +52,17 @@ const statusChartData = computed(() => {
   if (!summary.value) return null
   const b = summary.value.breakdown_by_status
   return {
-    labels: ['Активни', 'Закъснели', 'Просрочени', 'Изплатени'],
+    labels: ['Активни', 'Закъснели', 'Просрочени', 'Изкупени', 'Изплатени'],
     datasets: [{
-      data: [parseFloat(b.active), parseFloat(b.late), parseFloat(b.default), parseFloat(b.repaid)],
-      backgroundColor: ['#22C55E', '#F59E0B', '#EF4444', '#9CA3AF'],
+      data: [
+        parseFloat(b.active),
+        parseFloat(b.late),
+        parseFloat(b.default),
+        parseFloat(b.bought_back ?? 0),
+        parseFloat(b.repaid),
+      ],
+      // bought_back: blue (info) — positive outcome distinct from active-green and repaid-gray
+      backgroundColor: ['#22C55E', '#F59E0B', '#EF4444', '#3B82F6', '#9CA3AF'],
       borderWidth: 0,
     }],
   }
@@ -108,9 +126,29 @@ onMounted(() => load())
                 <strong>Late</strong>: <span class="font-semibold">{{ summary.late_loans_count }}</span> кредит(а)
               </span>
               ·
-              <span title="Defaulted: кредити в buyback процес. Във v1 платформата няма автоматичен buyback — очаква се в следваща фаза.">
+              <span title="Defaulted: кредити в просрочено състояние. Ако оригинаторът предлага buyback, ще бъде изкупен след административно одобрение.">
                 <strong>Defaulted</strong>: <span class="font-semibold">{{ summary.default_loans_count }}</span> кредит(а)
               </span>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- F2 — positive banner for bought-back loans. Terminal state;
+           investor already received their share. Info/blue color —
+           distinct from the warning/danger late+default banner. -->
+      <div
+        v-if="summary && summary.bought_back_loans_count > 0"
+        class="rounded-2xl border border-blue-200 bg-blue-50 text-blue-700 p-4 mb-6"
+      >
+        <div class="flex items-start gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5 mt-0.5 shrink-0">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+          <div class="text-sm">
+            <p class="font-semibold mb-1">{{ summary.bought_back_loans_count }} {{ summary.bought_back_loans_count === 1 ? 'кредит е изкупен' : 'кредита са изкупени' }} от оригинаторите</p>
+            <p title="Изкупен кредит: оригинаторът плати съгласно buyback гаранцията. Средствата са във вашия свободен баланс.">
+              Вашата част е върната в портфейла и може да бъде инвестирана отново или изтеглена.
             </p>
           </div>
         </div>

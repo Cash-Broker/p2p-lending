@@ -35,10 +35,27 @@ class LoanHealthOverview extends BaseWidget
         $defaultCount = Loan::where('status', Loan::STATUS_DEFAULT)->count();
         $defaultAmount = Loan::where('status', Loan::STATUS_DEFAULT)->sum('funded_amount');
 
-        $lastRunAt = PlatformMetric::measuredAt('last_late_check_run_at');
-        $lastRunDescription = $lastRunAt
-            ? $lastRunAt->diffForHumans()
-            : 'никога';
+        // F2 — Buyback Queue pending: eligible + not dismissed + not executed.
+        $buybackPendingCount = Loan::whereNotNull('buyback_eligible_at')
+            ->whereNull('buyback_dismissed_at')
+            ->whereNull('bought_back_at')
+            ->count();
+        $buybackPendingAmount = Loan::whereNotNull('buyback_eligible_at')
+            ->whereNull('buyback_dismissed_at')
+            ->whereNull('bought_back_at')
+            ->sum('funded_amount');
+
+        // F2 — bought-back this calendar month (count + total funded amount).
+        $boughtBackMonthStart = now()->startOfMonth();
+        $boughtBackMonthCount = Loan::where('status', Loan::STATUS_BOUGHT_BACK)
+            ->where('bought_back_at', '>=', $boughtBackMonthStart)
+            ->count();
+        $boughtBackMonthAmount = Loan::where('status', Loan::STATUS_BOUGHT_BACK)
+            ->where('bought_back_at', '>=', $boughtBackMonthStart)
+            ->sum('funded_amount');
+
+        $lateLastRunAt = PlatformMetric::measuredAt('last_late_check_run_at');
+        $buybackLastRunAt = PlatformMetric::measuredAt('last_buyback_check_run_at');
 
         return [
             Stat::make('Закъснели кредити', $lateCount)
@@ -53,19 +70,34 @@ class LoanHealthOverview extends BaseWidget
                 ->icon('heroicon-o-x-circle')
                 ->color($defaultCount > 0 ? 'danger' : 'gray'),
 
-            // F2 placeholder — surfaces in the UI now so ops know the slot exists
-            // and the layout doesn't shift when the threshold is wired up.
-            Stat::make('Близо до просрочване', 0)
-                ->description('placeholder за Phase F2')
-                ->descriptionIcon('heroicon-o-clock')
+            // F2 — replaces the F1 "Близо до просрочване" placeholder.
+            Stat::make('Чакат buyback', $buybackPendingCount)
+                ->description(number_format($buybackPendingAmount, 2, ',', ' ') . ' € в queue-a')
+                ->descriptionIcon('heroicon-o-banknotes')
                 ->icon('heroicon-o-bell-alert')
-                ->color('gray'),
+                ->color($buybackPendingCount > 0 ? 'warning' : 'gray'),
 
-            Stat::make('Последна late-проверка', $lastRunDescription)
-                ->description($lastRunAt?->format('d.m.Y H:i') ?? '—')
+            // F2 — monthly buyback execution stat.
+            Stat::make('Изкупени този месец', $boughtBackMonthCount)
+                ->description(number_format($boughtBackMonthAmount, 2, ',', ' ') . ' € разпределени')
+                ->descriptionIcon('heroicon-o-banknotes')
+                ->icon('heroicon-o-check-badge')
+                ->color($boughtBackMonthCount > 0 ? 'success' : 'gray'),
+
+            Stat::make('Последна late-проверка', $lateLastRunAt
+                    ? $lateLastRunAt->diffForHumans() : 'никога')
+                ->description($lateLastRunAt?->format('d.m.Y H:i') ?? '—')
                 ->descriptionIcon('heroicon-o-arrow-path')
                 ->icon('heroicon-o-shield-check')
-                ->color($this->checkAgeColor($lastRunAt)),
+                ->color($this->checkAgeColor($lateLastRunAt)),
+
+            // F2 — buyback cron health stat, mirror of late-check above.
+            Stat::make('Последна buyback-проверка', $buybackLastRunAt
+                    ? $buybackLastRunAt->diffForHumans() : 'никога')
+                ->description($buybackLastRunAt?->format('d.m.Y H:i') ?? '—')
+                ->descriptionIcon('heroicon-o-arrow-path')
+                ->icon('heroicon-o-shield-check')
+                ->color($this->checkAgeColor($buybackLastRunAt)),
         ];
     }
 

@@ -51,8 +51,8 @@ const eventTypeLabels = {
   went_late: 'Стана закъснял',
   recovered_from_late: 'Възстановен от late',
   went_default: 'Просрочен',
-  buyback_triggered: 'Buyback стартиран',
-  buyback_completed: 'Buyback завършен',
+  buyback_triggered: 'Buyback eligible',
+  buyback_completed: 'Buyback изпълнен',
   early_repayment_requested: 'Поискано предсрочно',
   early_repayment_completed: 'Завършено предсрочно',
   fee_applied: 'Приложена такса',
@@ -62,6 +62,16 @@ const eventTypeClass = {
   went_late: 'bg-amber-50 text-amber-700 ring-amber-200',
   recovered_from_late: 'bg-green-50 text-green-700 ring-green-200',
   went_default: 'bg-red-50 text-red-700 ring-red-200',
+  // F2 — buyback_triggered is informational (cron flagged, awaiting admin);
+  // buyback_completed is a positive terminal outcome (investor received funds).
+  buyback_triggered: 'bg-blue-50 text-blue-700 ring-blue-200',
+  buyback_completed: 'bg-green-50 text-green-700 ring-green-200',
+}
+
+// Coverage-type labels for buyback event metadata rendering.
+const coverageLabels = {
+  principal_only: 'Само главница',
+  principal_plus_interest: 'Главница + лихва',
 }
 
 function formatDateTime(iso) {
@@ -181,8 +191,23 @@ async function confirmInvest() {
                 <p class="text-sm text-gray-500 mt-1">{{ loan.originator?.name }}</p>
               </div>
               <span class="px-3 py-1 rounded-full text-xs font-semibold"
-                :class="loan.status === 'funded' ? 'bg-gray-100 text-gray-500' : 'bg-accent-50 text-accent-500'">
-                {{ loan.status === 'published' ? 'Отворен' : loan.status === 'funding' ? 'Финансира се' : 'Финансиран' }}
+                :class="{
+                  'bg-accent-50 text-accent-500': ['published', 'funding', 'active'].includes(loan.status),
+                  'bg-gray-100 text-gray-500': ['funded', 'repaid'].includes(loan.status),
+                  'bg-amber-50 text-amber-600': loan.status === 'late',
+                  'bg-red-50 text-red-600': loan.status === 'default',
+                  'bg-blue-50 text-blue-600': loan.status === 'bought_back',
+                }">
+                {{ {
+                  published: 'Отворен',
+                  funding: 'Финансира се',
+                  funded: 'Финансиран',
+                  active: 'Активен',
+                  late: 'Закъснение',
+                  default: 'Просрочен',
+                  bought_back: 'Изкупен',
+                  repaid: 'Изплатен',
+                }[loan.status] || loan.status }}
               </span>
             </div>
 
@@ -243,6 +268,17 @@ async function confirmInvest() {
                 <div class="flex justify-between">
                   <span class="text-gray-400">Buyback</span>
                   <span :class="loan.originator.buyback ? 'text-accent-500' : 'text-gray-400'" class="font-medium">{{ loan.originator.buyback ? 'Да' : 'Не' }}</span>
+                </div>
+                <!-- F2 — coverage type surfaces only when originator supports buyback.
+                     Resolved server-side (originator override OR platform default). -->
+                <div v-if="loan.originator.buyback && loan.originator.buyback_coverage" class="flex justify-between">
+                  <span class="text-gray-400">Покритие</span>
+                  <span class="font-medium text-navy-700">{{ coverageLabels[loan.originator.buyback_coverage] || loan.originator.buyback_coverage }}</span>
+                </div>
+                <!-- F2 — terminal date for bought-back loans. -->
+                <div v-if="loan.bought_back_at" class="flex justify-between">
+                  <span class="text-gray-400">Изкупен на</span>
+                  <span class="font-medium text-blue-600">{{ formatDateTime(loan.bought_back_at) }}</span>
                 </div>
               </div>
             </div>
@@ -315,6 +351,7 @@ async function confirmInvest() {
                   </p>
                   <p class="text-xs text-gray-500 mt-0.5">{{ formatDateTime(evt.occurred_at) }}</p>
                   <!-- Sanitised metadata (whitelist enforced server-side). -->
+                  <!-- F1 — late / recovered metadata -->
                   <p v-if="evt.metadata?.days_late_at_transition != null" class="text-xs text-amber-600 mt-1">
                     Закъснение към момента: {{ evt.metadata.days_late_at_transition }} дни
                   </p>
@@ -323,6 +360,28 @@ async function confirmInvest() {
                   </p>
                   <p v-if="evt.metadata?.transitioned_to" class="text-xs text-gray-500 mt-1">
                     Възстановен в статус: <span class="font-semibold">{{ evt.metadata.transitioned_to }}</span>
+                  </p>
+
+                  <!-- F2 — buyback_triggered (cron detection) metadata -->
+                  <p v-if="evt.metadata?.coverage_type" class="text-xs text-gray-500 mt-1">
+                    Покритие: <span class="font-semibold">{{ coverageLabels[evt.metadata.coverage_type] || evt.metadata.coverage_type }}</span>
+                  </p>
+                  <p v-if="evt.metadata?.days_since_became_late != null" class="text-xs text-amber-600 mt-1">
+                    Дни закъснение: {{ evt.metadata.days_since_became_late }}
+                  </p>
+                  <p v-if="evt.metadata?.calculated_buyback_amount_at_detection" class="text-xs text-gray-500 mt-1">
+                    Прогнозна сума при откриване: <span class="font-semibold">{{ formatAmount(evt.metadata.calculated_buyback_amount_at_detection) }} €</span>
+                  </p>
+
+                  <!-- F2 — buyback_completed (execution) metadata -->
+                  <p v-if="evt.metadata?.total_amount" class="text-xs text-blue-700 mt-1">
+                    Изкупена сума: <span class="font-semibold">{{ formatAmount(evt.metadata.total_amount) }} €</span>
+                    <span v-if="evt.metadata.total_principal && evt.metadata.total_interest" class="text-gray-500">
+                      (главница: {{ formatAmount(evt.metadata.total_principal) }} €, лихва: {{ formatAmount(evt.metadata.total_interest) }} €)
+                    </span>
+                  </p>
+                  <p v-if="evt.metadata?.investor_count" class="text-xs text-gray-500 mt-1">
+                    Разпределена към {{ evt.metadata.investor_count }} инвеститор(и).
                   </p>
                 </div>
               </li>

@@ -50,8 +50,9 @@ class PortfolioController extends Controller
 
         // Aggregate amounts AND counts per status so the UI can show both
         // "5 closed loans" and "€1,234 in late loans" without a second query.
-        // The COUNT(DISTINCT loan_id) on late/default avoids double-counting
-        // when the investor has multiple investments in the same loan.
+        // The COUNT(DISTINCT loan_id) on late/default/bought_back avoids
+        // double-counting when the investor has multiple investments in
+        // the same loan.
         $investments = Investment::where('user_id', $userId)
             ->join('loans', 'investments.loan_id', '=', 'loans.id')
             ->select(
@@ -63,12 +64,22 @@ class PortfolioController extends Controller
                 DB::raw("COUNT(DISTINCT CASE WHEN loans.status = 'late' THEN loans.id END) as late_loans_count"),
                 DB::raw("SUM(CASE WHEN loans.status = 'default' THEN investments.amount ELSE 0 END) as default_amount"),
                 DB::raw("COUNT(DISTINCT CASE WHEN loans.status = 'default' THEN loans.id END) as default_loans_count"),
+                // F2 — bought_back aggregate (terminal state per Q3). Shown
+                // as a positive outcome in the investor portfolio UI.
+                DB::raw("SUM(CASE WHEN loans.status = 'bought_back' THEN investments.amount ELSE 0 END) as bought_back_amount"),
+                DB::raw("COUNT(DISTINCT CASE WHEN loans.status = 'bought_back' THEN loans.id END) as bought_back_loans_count"),
                 DB::raw("SUM(CASE WHEN loans.status = 'repaid' THEN investments.amount ELSE 0 END) as repaid_amount"),
             )
             ->first();
 
+        // F2 Q13 — investor's "earned" view aggregates BOTH repayment interest
+        // (borrower paid) AND buyback interest (originator honoured). From
+        // the investor's perspective it's a single income stream.
         $totalEarned = Transaction::where('user_id', $userId)
-            ->where('type', Transaction::TYPE_REPAYMENT_INTEREST)
+            ->whereIn('type', [
+                Transaction::TYPE_REPAYMENT_INTEREST,
+                Transaction::TYPE_BUYBACK_INTEREST,
+            ])
             ->sum('amount');
 
         // Breakdown by originator
@@ -87,14 +98,16 @@ class PortfolioController extends Controller
                 'active' => number_format((float) ($investments->active_amount ?? 0), 2, '.', ''),
                 'late' => number_format((float) ($investments->late_amount ?? 0), 2, '.', ''),
                 'default' => number_format((float) ($investments->default_amount ?? 0), 2, '.', ''),
+                // F2 — bought_back breakdown (terminal, positive outcome).
+                'bought_back' => number_format((float) ($investments->bought_back_amount ?? 0), 2, '.', ''),
                 'repaid' => number_format((float) ($investments->repaid_amount ?? 0), 2, '.', ''),
             ],
             // Loan-level counts (DISTINCT loan_id) — UI uses these for the
             // "5 закъснели кредита" badge separately from the EUR amount.
-            // default_loans_count is always 0 in F1; field kept for forward
-            // compatibility with F2's defaults automation.
             'late_loans_count' => (int) ($investments->late_loans_count ?? 0),
             'default_loans_count' => (int) ($investments->default_loans_count ?? 0),
+            // F2 — bought-back loan count for the positive-outcome UI banner.
+            'bought_back_loans_count' => (int) ($investments->bought_back_loans_count ?? 0),
             'breakdown_by_originator' => $byOriginator->map(fn ($o) => [
                 'name' => $o->name,
                 'amount' => number_format((float) $o->amount, 2, '.', ''),
