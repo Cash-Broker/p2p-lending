@@ -202,14 +202,76 @@ class WalletService
 
     /**
      * Process repayment principal: invested → available.
+     * Writes Transaction::TYPE_REPAYMENT_PRINCIPAL.
      */
     public function repayPrincipal(int $userId, string $amount, string $description, ?string $reference = null): Transaction
     {
+        return $this->creditAvailableFromInvested(
+            $userId, $amount, Transaction::TYPE_REPAYMENT_PRINCIPAL, $description, $reference,
+        );
+    }
+
+    /**
+     * Process repayment interest: → available + earned.
+     * Writes Transaction::TYPE_REPAYMENT_INTEREST.
+     */
+    public function repayInterest(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        return $this->creditAvailableAndEarned(
+            $userId, $amount, Transaction::TYPE_REPAYMENT_INTEREST, $description, $reference,
+        );
+    }
+
+    /**
+     * F2 — originator buyback principal: invested → available.
+     * Identical bucket math to repayPrincipal; separate type so
+     * reconciliation + per-investor reporting can distinguish borrower
+     * repayments from originator-honoured buybacks.
+     */
+    public function buybackPrincipal(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        return $this->creditAvailableFromInvested(
+            $userId, $amount, Transaction::TYPE_BUYBACK_PRINCIPAL, $description, $reference,
+        );
+    }
+
+    /**
+     * F2 — originator buyback interest: → available + earned.
+     * Identical bucket math to repayInterest; separate type per F2 Q13
+     * (investor's `total_earned` view aggregates both repayment and
+     * buyback interest — one income stream from the investor's POV).
+     */
+    public function buybackInterest(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        return $this->creditAvailableAndEarned(
+            $userId, $amount, Transaction::TYPE_BUYBACK_INTEREST, $description, $reference,
+        );
+    }
+
+    /**
+     * Shared helper: move funds from `invested` bucket to `available`.
+     * Used by repayPrincipal AND buybackPrincipal — same wallet-bucket
+     * arithmetic, different transaction type + description.
+     *
+     * Does NOT validate `wallet.invested >= amount` at the app layer — the
+     * wallets CHECK constraint (migration 2026_04_15_000001) enforces
+     * non-negative buckets at the DB layer, which is the source of truth.
+     * App-level validation would double-guard but also require reading
+     * wallet.invested before write (extra round trip); the DB guard is
+     * sufficient and atomic with the UPDATE.
+     */
+    private function creditAvailableFromInvested(
+        int $userId,
+        string $amount,
+        string $type,
+        string $description,
+        ?string $reference,
+    ): Transaction {
         if (bccomp($amount, '0', 2) <= 0) {
-            throw new InvalidArgumentException('Repayment amount must be positive.');
+            throw new InvalidArgumentException('Amount must be positive.');
         }
 
-        return DB::transaction(function () use ($userId, $amount, $description, $reference) {
+        return DB::transaction(function () use ($userId, $amount, $type, $description, $reference) {
             $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
 
             $wallet->forceFill([
@@ -219,7 +281,7 @@ class WalletService
 
             return Transaction::create([
                 'user_id' => $userId,
-                'type' => Transaction::TYPE_REPAYMENT_PRINCIPAL,
+                'type' => $type,
                 'amount' => $amount,
                 'description' => $description,
                 'reference' => $reference,
@@ -230,15 +292,22 @@ class WalletService
     }
 
     /**
-     * Process repayment interest: → available + earned.
+     * Shared helper: credit `available` AND `earned` buckets.
+     * Used by repayInterest AND buybackInterest — investor earnings view
+     * treats both as income (per F2 Q13).
      */
-    public function repayInterest(int $userId, string $amount, string $description, ?string $reference = null): Transaction
-    {
+    private function creditAvailableAndEarned(
+        int $userId,
+        string $amount,
+        string $type,
+        string $description,
+        ?string $reference,
+    ): Transaction {
         if (bccomp($amount, '0', 2) <= 0) {
-            throw new InvalidArgumentException('Repayment amount must be positive.');
+            throw new InvalidArgumentException('Amount must be positive.');
         }
 
-        return DB::transaction(function () use ($userId, $amount, $description, $reference) {
+        return DB::transaction(function () use ($userId, $amount, $type, $description, $reference) {
             $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
 
             $wallet->forceFill([
@@ -248,7 +317,7 @@ class WalletService
 
             return Transaction::create([
                 'user_id' => $userId,
-                'type' => Transaction::TYPE_REPAYMENT_INTEREST,
+                'type' => $type,
                 'amount' => $amount,
                 'description' => $description,
                 'reference' => $reference,
