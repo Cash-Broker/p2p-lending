@@ -41,8 +41,10 @@ class LateDetectionService
      * (today - grace_period_days) days past due_date and aren't already
      * marked late. Mark them, return the collection of NEWLY-late
      * schedules (eager-loaded with their loan).
+     *
+     * @param  ?array<int>  $loanIdsFilter  optional restriction (used by `--loan=ID` debug flag)
      */
-    public function detectNewlyLateSchedules(?Carbon $today = null): Collection
+    public function detectNewlyLateSchedules(?Carbon $today = null, ?array $loanIdsFilter = null): Collection
     {
         $today = $today ? $today->copy()->startOfDay() : Carbon::now(config('app.timezone'))->startOfDay();
         $gracePeriodDays = (int) PlatformSetting::get('grace_period_days', 10);
@@ -52,8 +54,11 @@ class LateDetectionService
 
         // Iterate per-loan so each loan's schedules get their own short
         // transaction — keeps locks small under contention.
-        $loanIds = Loan::whereIn('status', [Loan::STATUS_ACTIVE, Loan::STATUS_LATE])
-            ->pluck('id');
+        $loanQ = Loan::whereIn('status', [Loan::STATUS_ACTIVE, Loan::STATUS_LATE]);
+        if ($loanIdsFilter !== null) {
+            $loanQ->whereIn('id', $loanIdsFilter);
+        }
+        $loanIds = $loanQ->pluck('id');
 
         foreach ($loanIds as $loanId) {
             $found = DB::transaction(function () use ($loanId, $today, $threshold) {

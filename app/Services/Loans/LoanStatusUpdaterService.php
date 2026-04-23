@@ -5,6 +5,7 @@ namespace App\Services\Loans;
 use App\Models\Loan;
 use App\Models\LoanEvent;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Transitions loan statuses based on schedule state, after LateDetectionService
@@ -48,32 +49,39 @@ class LoanStatusUpdaterService
      * Run after LateDetectionService. Returns the loan ids in each transition
      * bucket so the caller (the cron command) can dispatch notifications.
      *
-     * @return array{newly_late: int[], recovered_to_active: int[], recovered_to_repaid: int[]}
+     * @param  ?array<int>  $loanIdsFilter  optional restriction to a subset (used by `--loan=ID` debug flag)
+     * @return array{newly_late: int[], recovered_to_active: int[], recovered_to_repaid: int[], recovery_skipped_default: int[]}
      */
-    public function transitionLoansAfterLateCheck(): array
+    public function transitionLoansAfterLateCheck(?array $loanIdsFilter = null): array
     {
         $result = [
             'newly_late' => [],
             'recovered_to_active' => [],
             'recovered_to_repaid' => [],
+            'recovery_skipped_default' => [],
         ];
 
         // active → late
-        $activeWithLate = Loan::where('status', Loan::STATUS_ACTIVE)
-            ->whereHas('amortizationSchedules', fn ($q) => $q->where('status', 'late'))
-            ->pluck('id');
+        $activeQ = Loan::where('status', Loan::STATUS_ACTIVE)
+            ->whereHas('amortizationSchedules', fn ($q) => $q->where('status', 'late'));
+        if ($loanIdsFilter !== null) {
+            $activeQ->whereIn('id', $loanIdsFilter);
+        }
 
-        foreach ($activeWithLate as $loanId) {
+        foreach ($activeQ->pluck('id') as $loanId) {
             if ($this->markLoanLate($loanId)) {
                 $result['newly_late'][] = $loanId;
             }
         }
 
         // late → active OR late → repaid (recovery)
-        $lateLoanIds = Loan::where('status', Loan::STATUS_LATE)->pluck('id');
+        $lateQ = Loan::where('status', Loan::STATUS_LATE);
+        if ($loanIdsFilter !== null) {
+            $lateQ->whereIn('id', $loanIdsFilter);
+        }
 
-        foreach ($lateLoanIds as $loanId) {
-            $newStatus = $this->maybeRecoverLoan($loanId);
+        foreach ($lateQ->pluck('id') as $loanId) {
+            $newStatus = $this->maybeRecoverLoan($loanId, $result);
             if ($newStatus === Loan::STATUS_ACTIVE) {
                 $result['recovered_to_active'][] = $loanId;
             } elseif ($newStatus === Loan::STATUS_REPAID) {
@@ -127,12 +135,31 @@ class LoanStatusUpdaterService
     /**
      * Try to recover a single late loan. Returns the new status if recovery
      * happened (active or repaid), null if conditions are not met.
+     *
+     * @param  array  &$result  caller's result bucket — we append to
+     *                          recovery_skipped_default when applicable so the
+     *                          command can surface the count for ops review.
      */
-    private function maybeRecoverLoan(int $loanId): ?string
+    private function maybeRecoverLoan(int $loanId, array &$result): ?string
     {
-        return DB::transaction(function () use ($loanId) {
+        return DB::transaction(function () use ($loanId, &$result) {
             $loan = Loan::lockForUpdate()->find($loanId);
             if (! $loan || $loan->status !== Loan::STATUS_LATE) {
+                return null;
+            }
+
+            // SAFEGUARD: loans with any 'default' schedule are out of scope for
+            // F1 auto-recovery. F1 doesn't auto-mark schedules as default, but
+            // an admin or a future phase (F2 buyback) could. If we silently
+            // recovered such a loan we'd undo their decision — instead, skip
+            // and warn for manual review.
+            $hasDefault = $loan->amortizationSchedules()->where('status', 'default')->exists();
+            if ($hasDefault) {
+                Log::warning('loans:process-late skipped recovery of loan with default schedule items — manual review required', [
+                    'loan_id' => $loanId,
+                    'default_schedule_count' => $loan->amortizationSchedules()->where('status', 'default')->count(),
+                ]);
+                $result['recovery_skipped_default'][] = $loanId;
                 return null;
             }
 

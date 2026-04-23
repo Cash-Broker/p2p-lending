@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\LoanController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PortfolioController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\SchedulerHealthController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\WithdrawalController;
 use App\Models\User;
@@ -21,6 +22,11 @@ Route::middleware('throttle:10,1')->group(function () {
     Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
     Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 });
+
+// Public health endpoint for external monitoring of the loans:process-late
+// scheduler. No auth — exposes only operational metrics, never PII or
+// financial data. Rate-limited to deflect abuse.
+Route::middleware('throttle:60,1')->get('/health/scheduler', SchedulerHealthController::class);
 
 // Protected routes — authenticated users
 Route::middleware('auth:sanctum')->group(function () {
