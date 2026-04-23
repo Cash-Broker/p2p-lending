@@ -3,8 +3,11 @@
 namespace App\Console\Commands\Loans;
 
 use App\Models\Loan;
+use App\Models\LoanEvent;
 use App\Models\PlatformMetric;
 use App\Models\PlatformSetting;
+use App\Models\User;
+use App\Notifications\LoanWentLateNotification;
 use App\Services\Loans\LateDetectionService;
 use App\Services\Loans\LoanStatusUpdaterService;
 use Carbon\Carbon;
@@ -181,33 +184,91 @@ class ProcessLateLoans extends Command
             }
         }
 
-        // 4. Notifications (placeholder — wired in Step 6)
+        // 4. Notifications — dispatch LoanWentLateNotification to every
+        //    investor with a position in each newly-late loan.
+        //
+        //    Per Q2 (future-proof for secondary market): we read positions
+        //    from the investments table at THIS moment of late transition,
+        //    not a stale cached list. An investor with multiple positions
+        //    in the same loan gets ONE notification with their summed amount.
+        //
+        //    Notifications are queued (LoanWentLateNotification implements
+        //    ShouldQueue) so the command's wall-clock time stays bounded
+        //    regardless of investor count.
+        //
+        //    The notification class' via() does its own per-(user, loan,
+        //    became_late_at) deduplication so a manual --force re-run
+        //    inside the same late period won't spam the inbox.
+        //
+        //    --dry-run: skipped entirely (the outer DB transaction would
+        //    roll back the queue insert anyway, but logging "would notify"
+        //    is clearer for debugging).
         $notificationsQueued = 0;
         foreach ($transitions['newly_late'] as $loanId) {
             $loan = Loan::find($loanId);
             if (! $loan) {
                 continue;
             }
-            // TODO Step 6: dispatch real notifications.
-            //   - Per Q2: notify investors with ACTIVE position in this loan
-            //     at the moment of late transition (future-proof for secondary
-            //     market).
-            //   - Use LoanWentLateNotification (Notification class to be added in Step 6).
-            //   - Idempotency: don't queue twice for same loan-day.
-            $investors = $loan->investments()
-                ->select('user_id')
-                ->distinct()
-                ->pluck('user_id');
-            $count = $investors->count();
-            $notificationsQueued += $count;
-            Log::info(sprintf(
-                '%sWould notify %d investor(s) of loan #%d going late',
-                $dryRun ? '[DRY-RUN] ' : '[F1-PLACEHOLDER] ',
-                $count,
-                $loanId,
-            ));
+
+            // Snapshot from the just-written went_late event so the email's
+            // "X days late" matches what was logged at transition time
+            // (rather than today's value, which could differ if the queue
+            // worker processes the job hours later).
+            $event = LoanEvent::where('loan_id', $loanId)
+                ->where('event_type', LoanEvent::TYPE_WENT_LATE)
+                ->latest('id')
+                ->first();
+            $daysLateAtTransition = (int) ($event?->metadata['days_late_at_transition'] ?? 0);
+
+            // Outstanding loan principal = scheduled total − already paid.
+            $totalPrincipal = (string) $loan->amortizationSchedules()->sum('principal');
+            $paidPrincipal = (string) $loan->amortizationSchedules()->where('status', 'paid')->sum('principal');
+            $loanOutstandingPrincipal = bcsub($totalPrincipal, $paidPrincipal, 2);
+
+            // Per-investor totals: sum amounts for investors with multiple
+            // positions in this loan so each receives exactly one
+            // notification with their aggregate.
+            $investorTotals = $loan->investments()
+                ->select('user_id', DB::raw('SUM(amount) as total_amount'))
+                ->groupBy('user_id')
+                ->get()
+                ->keyBy('user_id');
+
+            if ($investorTotals->isEmpty()) {
+                continue;
+            }
+
+            $users = User::whereIn('id', $investorTotals->keys())->get();
+            $loanFundedAmount = (string) $loan->funded_amount;
+
+            foreach ($users as $user) {
+                $investorAmount = (string) $investorTotals[$user->id]->total_amount;
+
+                // Investor's pro-rata share of the outstanding principal —
+                // their slice of what the borrower still owes the loan as
+                // a whole. bcdiv at scale 10 then rounded to 2 for display.
+                if (bccomp($loanFundedAmount, '0', 2) > 0) {
+                    $share = bcdiv($investorAmount, $loanFundedAmount, 10);
+                    $investorOutstandingPrincipal = bcmul($loanOutstandingPrincipal, $share, 2);
+                } else {
+                    $investorOutstandingPrincipal = '0.00';
+                }
+
+                if ($dryRun) {
+                    Log::info("[DRY-RUN] Would notify user #{$user->id} of loan #{$loanId} going late (investment={$investorAmount} EUR, outstanding={$investorOutstandingPrincipal} EUR)");
+                } else {
+                    $user->notify(new LoanWentLateNotification(
+                        loan: $loan,
+                        becameLateAt: $loan->became_late_at,
+                        daysLateAtTransition: $daysLateAtTransition,
+                        investorTotalAmount: $investorAmount,
+                        investorOutstandingPrincipal: $investorOutstandingPrincipal,
+                    ));
+                }
+                $notificationsQueued++;
+            }
         }
-        $this->line(sprintf('  notifications: %d queued (placeholder — Step 6)', $notificationsQueued));
+        $this->line(sprintf('  notifications: %d %s', $notificationsQueued, $dryRun ? 'logged (dry-run)' : 'queued'));
 
         // 5. Stamp loans.last_late_check_at on every scanned loan (skipped in dry-run
         //    since the wrapper would roll it back anyway).
