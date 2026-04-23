@@ -6,6 +6,9 @@ use App\Filament\Resources\LoanResource\Pages;
 use App\Models\Borrower;
 use App\Models\Loan;
 use App\Models\Originator;
+use App\Services\Loans\EarlyRepaymentAlreadyExecutedException;
+use App\Services\Loans\EarlyRepaymentCalculationService;
+use App\Services\Loans\EarlyRepaymentExecutionService;
 use BackedEnum;
 use Filament\Forms;
 use Filament\Schemas\Schema;
@@ -14,6 +17,8 @@ use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 
 class LoanResource extends Resource
 {
@@ -145,6 +150,111 @@ class LoanResource extends Resource
                             $loan->transitionTo(Loan::STATUS_ACTIVE);
                         });
                         Notification::make()->title('Кредитът е активиран')->success()->send();
+                    }),
+
+                // F3 — early repayment: admin-triggered full loan close-out.
+                // Visible only for mid-life statuses (active/late/default) that
+                // have not yet been closed via ANY terminal path (not already
+                // early-repaid, not bought-back). Fresh calc at modal open.
+                //
+                // Visibility intentionally does NOT query amortization_schedules
+                // (per-row DB hit = N+1 on large tables). If a loan passes the
+                // simple status/flag filter but has no unpaid schedules, the
+                // modal's error panel surfaces that cleanly.
+                \Filament\Actions\Action::make('execute_early_repayment')
+                    ->label('Предсрочно погасяване')
+                    ->icon('heroicon-o-forward')
+                    ->color('success')
+                    ->visible(fn (Loan $r) => in_array($r->status, [
+                            Loan::STATUS_ACTIVE,
+                            Loan::STATUS_LATE,
+                            Loan::STATUS_DEFAULT,
+                        ], true)
+                        && $r->early_repaid_at === null
+                        && $r->bought_back_at === null)
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (Loan $record) => "Предсрочно погасяване на кредит #{$record->id}")
+                    ->modalContent(function (Loan $record) {
+                        // Fresh calc at modal open time — matches F2 buyback pattern.
+                        // On calculator exception (no unpaid schedules, etc.) the
+                        // Blade view renders an error panel instead of the breakdown.
+                        try {
+                            $calc = app(EarlyRepaymentCalculationService::class)
+                                ->calculateTotal($record);
+                            $investorCount = $record->investments()
+                                ->select('user_id')
+                                ->distinct()
+                                ->count('user_id');
+
+                            return view('filament.modals.early-repayment-preview', [
+                                'loan'          => $record,
+                                'calc'          => $calc,
+                                'investorCount' => $investorCount,
+                                'error'         => null,
+                            ]);
+                        } catch (InvalidArgumentException $e) {
+                            return view('filament.modals.early-repayment-preview', [
+                                'loan'          => $record,
+                                'calc'          => null,
+                                'investorCount' => 0,
+                                'error'         => $e->getMessage(),
+                            ]);
+                        }
+                    })
+                    ->modalSubmitActionLabel('Изпълни погасяване')
+                    ->action(function (Loan $record) {
+                        // Triple catches — specific → generic. Order matters:
+                        //   1. EarlyRepaymentAlreadyExecutedException — idempotency
+                        //      hit; benign "already done" → warning toast.
+                        //   2. InvalidArgumentException — wrong status / zero total /
+                        //      (future: dismissed) → danger toast with service message.
+                        //   3. Throwable — unexpected; log + generic danger toast.
+                        try {
+                            $result = app(EarlyRepaymentExecutionService::class)->execute(
+                                loanId: $record->id,
+                                adminId: auth()->id(),
+                            );
+
+                            // TODO Step 5 (new numbering): dispatch per-investor
+                            // EarlyRepaymentReceivedNotification using
+                            // $result->distributions. Money already moved; only
+                            // email channel remains to wire up.
+
+                            Notification::make()
+                                ->title('Предсрочно погасяване изпълнено')
+                                ->body(sprintf(
+                                    'Разпределени %s € към %d %s. Кредитът е маркиран като погасен.',
+                                    $result->totalAmount,
+                                    $result->investorCount,
+                                    $result->investorCount === 1 ? 'инвеститор' : 'инвеститори',
+                                ))
+                                ->success()
+                                ->send();
+                        } catch (EarlyRepaymentAlreadyExecutedException $e) {
+                            Notification::make()
+                                ->title('Вече изпълнено')
+                                ->body($e->getMessage())
+                                ->warning()
+                                ->send();
+                        } catch (InvalidArgumentException $e) {
+                            Notification::make()
+                                ->title('Невалидна операция')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        } catch (\Throwable $e) {
+                            Log::error('Early repayment execute failed unexpectedly', [
+                                'loan_id'   => $record->id,
+                                'admin_id'  => auth()->id(),
+                                'exception' => $e::class,
+                                'message'   => $e->getMessage(),
+                            ]);
+                            Notification::make()
+                                ->title('Грешка')
+                                ->body('Неочаквана грешка. Моля проверете логовете.')
+                                ->danger()
+                                ->send();
+                        }
                     }),
             ]);
     }
