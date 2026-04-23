@@ -88,6 +88,34 @@ onMounted(() => load())
     </div>
 
     <template v-else>
+      <!-- Late / Default banner — visible only when there is something to flag.
+           Educational tooltips (title attr) explain Late vs Defaulted per spec. -->
+      <div
+        v-if="summary && (summary.late_loans_count > 0 || summary.default_loans_count > 0)"
+        class="rounded-2xl border p-4 mb-6"
+        :class="summary.default_loans_count > 0
+          ? 'border-red-200 bg-red-50 text-red-700'
+          : 'border-amber-200 bg-amber-50 text-amber-700'"
+      >
+        <div class="flex items-start gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5 mt-0.5 shrink-0">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+          </svg>
+          <div class="text-sm">
+            <p class="font-semibold mb-1">Внимание: проблеми с някои инвестиции</p>
+            <p>
+              <span title="Late: кредити със забавени плащания (10+ дни след падежа). Оригинаторът работи по събирането.">
+                <strong>Late</strong>: <span class="font-semibold">{{ summary.late_loans_count }}</span> кредит(а)
+              </span>
+              ·
+              <span title="Defaulted: кредити в buyback процес. Във v1 платформата няма автоматичен buyback — очаква се в следваща фаза.">
+                <strong>Defaulted</strong>: <span class="font-semibold">{{ summary.default_loans_count }}</span> кредит(а)
+              </span>
+            </p>
+          </div>
+        </div>
+      </div>
+
       <!-- Stat cards -->
       <div class="grid grid-cols-3 gap-4 mb-6" v-if="summary">
         <div class="rounded-2xl border border-gray-100 bg-white p-5">
@@ -157,6 +185,16 @@ onMounted(() => load())
                 <td class="px-6 py-3">
                   <span class="px-2.5 py-1 rounded-full text-xs font-medium" :class="statusClasses[inv.loan?.status]">
                     {{ statusLabels[inv.loan?.status] || inv.loan?.status }}
+                  </span>
+                  <!-- Days overdue badge — only when the loan is currently late
+                       AND days_overdue_max is populated by the API (PortfolioController
+                       eager-loads via withMax). -->
+                  <span
+                    v-if="inv.loan?.status === 'late' && inv.loan?.days_overdue_max != null"
+                    class="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700"
+                    :title="`Най-старата непогасена вноска е забавена с ${inv.loan.days_overdue_max} дни`"
+                  >
+                    {{ inv.loan.days_overdue_max }}д закъснение
                   </span>
                 </td>
                 <td class="px-6 py-3">

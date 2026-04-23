@@ -76,6 +76,39 @@ remediations as a new entry that references the old one).
 
 ---
 
+## Admin role consolidation for v1 (Phase F1)
+
+- **Date:** 2026-04-23
+- **Decision:** All admin-side capabilities (Filament panel access,
+  PlatformSettingResource read/write, loan operations, KYC approval,
+  withdrawal approval, repayment posting) are gated on a single
+  `users.role = 'admin'` value. No "super admin" / "support" / "viewer"
+  separation in v1.
+- **Why:** The Phase F1 spec asked for "Edit-ваемо за super admin" on
+  the Settings page. We do not have a super-admin role in the schema,
+  and adding one in F1 would have meant: a new role enum value, new
+  policy methods on every Resource, role assignment UI, migration of
+  existing admin users — all unrelated to the late-detection feature
+  being built.
+- **Compensating controls in place:**
+  - Every PlatformSetting save creates an `audit_logs` row via the
+    Auditable trait — who, what, when, IP, user-agent.
+  - Email-on-admin-login alert (Phase 1 fix `42aa178`) — every Filament
+    login fires an email with known/new IP distinction; settings changes
+    by an unexpected admin are visible the same day.
+  - Settings have minimal range — `grace_period_days ∈ 0..30` is enforced
+    at form, model, AND DB CHECK levels; toggling `late_check_enabled`
+    only pauses automation (manual override available via
+    `php artisan loans:process-late --force`).
+- **Trigger conditions for revisiting (any of):**
+  - Admin team grows beyond 3 people.
+  - Compliance asks for a "support read-only" role.
+  - Before v1.1 release, regardless of the above.
+- **Effort estimate:** 1 day (enum + migration + Resource gates) once
+  the role taxonomy is decided.
+
+---
+
 ## SEPA-only IBANs
 
 - **Date:** 2026-04-16

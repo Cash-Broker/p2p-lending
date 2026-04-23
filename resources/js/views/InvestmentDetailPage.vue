@@ -12,6 +12,13 @@ const loan = ref(null)
 const loading = ref(true)
 const error = ref(null)
 
+// Loan-event timeline — fetched lazily after the loan loads. Empty array means
+// either no events OR the user has no investment in this loan (API returns
+// 403; we silently treat as "no timeline available" so non-investors can still
+// view the loan card).
+const events = ref([])
+const eventsLoading = ref(false)
+
 // Invest form
 const investAmount = ref('')
 const investLoading = ref(false)
@@ -37,6 +44,31 @@ const riskLabels = {
   E: 'Висок риск',
 }
 
+// Map event_type → human-readable BG label. Mirrors the constants in
+// app/Models/LoanEvent.php; F2/F3/F4 placeholders included so unknown types
+// from a future backend don't render as raw enum strings.
+const eventTypeLabels = {
+  went_late: 'Стана закъснял',
+  recovered_from_late: 'Възстановен от late',
+  went_default: 'Просрочен',
+  buyback_triggered: 'Buyback стартиран',
+  buyback_completed: 'Buyback завършен',
+  early_repayment_requested: 'Поискано предсрочно',
+  early_repayment_completed: 'Завършено предсрочно',
+  fee_applied: 'Приложена такса',
+  status_changed: 'Статус променен',
+}
+const eventTypeClass = {
+  went_late: 'bg-amber-50 text-amber-700 ring-amber-200',
+  recovered_from_late: 'bg-green-50 text-green-700 ring-green-200',
+  went_default: 'bg-red-50 text-red-700 ring-red-200',
+}
+
+function formatDateTime(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('bg-BG', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
 onMounted(async () => {
   try {
     const { data } = await api.get(`/loans/${route.params.id}`)
@@ -45,6 +77,19 @@ onMounted(async () => {
     error.value = e.response?.status === 404 ? 'Кредитът не е намерен.' : 'Грешка при зареждане.'
   } finally {
     loading.value = false
+  }
+
+  // Fetch lifecycle events. The endpoint enforces LoanPolicy::viewEvents —
+  // a 403 just means "user has no position in this loan" which is normal
+  // for marketplace browsing; treat silently.
+  eventsLoading.value = true
+  try {
+    const { data } = await api.get(`/loans/${route.params.id}/events`)
+    events.value = data.data
+  } catch {
+    events.value = []
+  } finally {
+    eventsLoading.value = false
   }
 })
 
@@ -235,11 +280,53 @@ async function confirmInvest() {
                         }">
                         {{ scheduleStatusLabels[row.status] }}
                       </span>
+                      <!-- days_late visible only for late rows; the field is
+                           always present but only meaningful when status='late'. -->
+                      <span v-if="row.status === 'late' && row.days_late > 0" class="ml-1 text-xs text-amber-600">
+                        +{{ row.days_late }}д
+                      </span>
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <!-- Lifecycle timeline — only rendered when there are visible events
+               (LoanPolicy::viewEvents gate hides this for users without a
+               position in the loan). All copy is anonymised by design:
+               investor sees WHAT happened and WHEN, never WHO triggered it. -->
+          <div v-if="events.length" class="rounded-2xl border border-gray-100 bg-white overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-100">
+              <h3 class="text-sm font-bold text-navy-700">Timeline на събития</h3>
+              <p class="text-xs text-gray-400 mt-0.5">Хронология на статус-промените на този кредит</p>
+            </div>
+            <ul class="divide-y divide-gray-100">
+              <li v-for="evt in events" :key="evt.id" class="px-5 py-3 flex items-start gap-3">
+                <span
+                  class="px-2 py-0.5 rounded-full text-xs font-semibold ring-1 shrink-0"
+                  :class="eventTypeClass[evt.event_type] || 'bg-gray-50 text-gray-700 ring-gray-200'"
+                >{{ eventTypeLabels[evt.event_type] || evt.event_type }}</span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm text-navy-700">
+                    <span v-if="evt.from_status && evt.to_status">{{ evt.from_status }} → {{ evt.to_status }}</span>
+                    <span v-else class="text-gray-400">—</span>
+                    <span class="text-xs text-gray-400 ml-2">({{ evt.triggered_by === 'system' ? 'автоматично' : 'администратор' }})</span>
+                  </p>
+                  <p class="text-xs text-gray-500 mt-0.5">{{ formatDateTime(evt.occurred_at) }}</p>
+                  <!-- Sanitised metadata (whitelist enforced server-side). -->
+                  <p v-if="evt.metadata?.days_late_at_transition != null" class="text-xs text-amber-600 mt-1">
+                    Закъснение към момента: {{ evt.metadata.days_late_at_transition }} дни
+                  </p>
+                  <p v-if="evt.metadata?.previous_became_late_at" class="text-xs text-gray-500 mt-1">
+                    Предишно станал late на {{ formatDateTime(evt.metadata.previous_became_late_at) }}
+                  </p>
+                  <p v-if="evt.metadata?.transitioned_to" class="text-xs text-gray-500 mt-1">
+                    Възстановен в статус: <span class="font-semibold">{{ evt.metadata.transitioned_to }}</span>
+                  </p>
+                </div>
+              </li>
+            </ul>
           </div>
         </div>
 
