@@ -30,6 +30,13 @@ class Transaction extends Model
     const TYPE_BUYBACK_PRINCIPAL = 'buyback_principal';
     const TYPE_BUYBACK_INTEREST = 'buyback_interest';
 
+    // F3 — early repayment distribution types. Separate from TYPE_REPAYMENT_*
+    // so reconciliation can distinguish full-close payoffs (borrower paid
+    // early) from scheduled monthly repayments, AND from TYPE_BUYBACK_*
+    // (originator paid on behalf of borrower).
+    const TYPE_EARLY_REPAYMENT_PRINCIPAL = 'early_repayment_principal';
+    const TYPE_EARLY_REPAYMENT_INTEREST = 'early_repayment_interest';
+
     const TYPES = [
         self::TYPE_DEPOSIT,
         self::TYPE_WITHDRAWAL,
@@ -38,6 +45,8 @@ class Transaction extends Model
         self::TYPE_REPAYMENT_INTEREST,
         self::TYPE_BUYBACK_PRINCIPAL,
         self::TYPE_BUYBACK_INTEREST,
+        self::TYPE_EARLY_REPAYMENT_PRINCIPAL,
+        self::TYPE_EARLY_REPAYMENT_INTEREST,
         self::TYPE_FEE,
     ];
 

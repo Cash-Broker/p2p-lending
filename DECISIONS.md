@@ -109,6 +109,60 @@ remediations as a new entry that references the old one).
 
 ---
 
+## F3: Early repayment — schedule-boundary interest (NO day-count accrual)
+
+- **Date:** 2026-04-23
+- **Decision:** Early-repayment total is computed as
+  `outstanding_principal + sum(unpaid scheduled.interest through the
+  current installment boundary)`. No mid-month day-count accrual, no
+  precision beyond scheduled-installment granularity.
+  Borrower pays via a single admin-triggered action; amount is
+  computed fresh at Execute-click.
+- **Rationale:**
+  - Consistency: mirrors F2 buyback's "scheduled interest only"
+    calculation. Same `Σ unpaid schedule.interest` pattern; shared
+    code paths via parallel service structure.
+  - Codebase has zero day-count math today (no deposits/savings with
+    daily accrual, amortization is 30-day-month schedule-based).
+    Introducing day-count for one feature = new math domain + new
+    risk surface + new tests.
+  - Risk minimisation: familiar math > precise math for v1. Avoids
+    leap-year, DST, time-zone edge cases.
+  - Borrower overpayment vs "ideal" day-count is at worst ~half a
+    scheduled installment's interest (~5 EUR average per case).
+    Overpayment flows through to investors as extra distribution —
+    not lost, not retained by the platform.
+  - v1.1 upgrade path is clean: adding day-count later would not
+    require architectural rewrite, just a new calc strategy + migration
+    for an `interest_policy` column if per-loan config is desired.
+- **Business-facing T&C language:**
+  > "При предсрочно погасяване, кредитополучателят плаща главница
+  > + цялата лихва до следващата планирана вноска."
+- **Compensating controls:**
+  - Admin verifies the amount in the Filament confirmation modal
+    BEFORE clicking Execute (fresh calc at modal open, not cached).
+  - `loan_events(early_repayment_completed)` metadata records the
+    exact calculation inputs (outstanding_principal, scheduled_interest_
+    through_boundary) for audit replay.
+  - `loans.early_repayment_amount` denormalised column stores the
+    total at execution time — supports admin reports without joining
+    event metadata.
+  - Tests cover: on-time close (happy path), late-loan close (past
+    unpaid installment interest included), default-status close
+    (rare but state-machine-allowed — no-op from F3 perspective,
+    same calc as active).
+- **Trigger conditions for revisiting (any of):**
+  - Regulators require daily interest accrual precision.
+  - Per-loan `interest_policy` becomes a product requirement.
+  - Significant complaint volume from borrowers about the
+    "installment-boundary overpayment".
+- **Effort estimate to switch to day-count:** 2-3 days —
+  `EarlyRepaymentCalculationService` becomes strategy-pattern,
+  add `30/360` (or `actual/365`) strategy, one platform_settings
+  row for convention choice, test coverage extension.
+
+---
+
 ## F2: bought_back is a TERMINAL state
 
 - **Date:** 2026-04-23

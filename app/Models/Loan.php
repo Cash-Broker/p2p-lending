@@ -150,6 +150,8 @@ class Loan extends Model
         'buyback_dismissed_at',
         'buyback_dismissed_reason',
         'buyback_dismissed_by',
+        'early_repaid_at',
+        'early_repayment_amount',
     ];
 
     protected function casts(): array
@@ -165,6 +167,8 @@ class Loan extends Model
             'buyback_eligible_at' => 'datetime',
             'bought_back_at' => 'datetime',
             'buyback_dismissed_at' => 'datetime',
+            'early_repaid_at' => 'datetime',
+            'early_repayment_amount' => 'decimal:2',
         ];
     }
 
