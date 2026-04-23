@@ -101,4 +101,144 @@ class SchedulerHealthEndpointTest extends TestCase
             ->assertOk()
             ->assertJsonPath('late_check_enabled', false);
     }
+
+    // ═════════════════════════════════════════════════════════════════
+    // F2 EXTENSIONS — dual-scheduler worst-of-two semantics + disabled-
+    // ignored rule. Each test exercises ONE axis of the new behaviour.
+    // ═════════════════════════════════════════════════════════════════
+
+    /** Helper — record only the late-check metrics at a specific time. */
+    private function recordLateOnly(\Carbon\Carbon $when): void
+    {
+        PlatformMetric::record('last_late_check_run_at', $when->toIso8601String());
+        PlatformMetric::record('last_late_check_status', 'success');
+        PlatformMetric::where('key', 'last_late_check_run_at')->update(['measured_at' => $when]);
+    }
+
+    /** Helper — record only the buyback-check metrics at a specific time. */
+    private function recordBuybackOnly(\Carbon\Carbon $when): void
+    {
+        PlatformMetric::record('last_buyback_check_run_at', $when->toIso8601String());
+        PlatformMetric::record('last_buyback_check_status', 'success');
+        PlatformMetric::record('last_buyback_check_loans_newly_eligible', '0');
+        PlatformMetric::record('last_buyback_check_notifications_queued', '0');
+        PlatformMetric::where('key', 'last_buyback_check_run_at')->update(['measured_at' => $when]);
+    }
+
+    public function test_late_healthy_and_buyback_critical_returns_overall_critical_503(): void
+    {
+        // Late ran 1 h ago (healthy). Buyback never ran (critical).
+        // Both schedulers enabled. Overall = critical; HTTP 503.
+        $when = now()->subHours(1);
+        $this->recordLateOnly($when);
+        // NO buyback metric at all → buyback status = critical.
+
+        $this->getJson('/api/health/scheduler')
+            ->assertStatus(503)
+            ->assertJsonPath('status', 'critical')
+            ->assertJsonPath('last_run_at', $when->toIso8601String())  // late field still populated
+            ->assertJsonPath('buyback.last_run_at', null);
+    }
+
+    public function test_late_critical_and_buyback_healthy_returns_overall_critical_503(): void
+    {
+        $this->recordBuybackOnly(now()->subHours(1));
+        // NO late metric → late status = critical.
+
+        $this->getJson('/api/health/scheduler')
+            ->assertStatus(503)
+            ->assertJsonPath('status', 'critical')
+            ->assertJsonPath('last_run_at', null)
+            ->assertJsonPath('buyback.status', 'healthy');
+    }
+
+    public function test_both_healthy_returns_overall_healthy_200(): void
+    {
+        $this->recordRunAt(now()->subHours(1));  // seeds both late AND buyback
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonPath('status', 'healthy')
+            ->assertJsonPath('buyback.status', 'healthy');
+    }
+
+    public function test_late_disabled_and_buyback_healthy_returns_overall_healthy_200(): void
+    {
+        // Late disabled via platform_settings. Buyback ran 1 h ago.
+        // Per ops rule, disabled schedulers are EXCLUDED from worst-of-two
+        // — overall = buyback status = healthy.
+        PlatformSetting::where('key', 'late_check_enabled')->update(['value' => 'false']);
+        $this->recordBuybackOnly(now()->subHours(1));
+        // Intentionally NO late metric — scheduler off.
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonPath('status', 'healthy')
+            ->assertJsonPath('late_check_enabled', false)
+            ->assertJsonPath('buyback.enabled', true);
+    }
+
+    public function test_both_disabled_returns_overall_healthy_ops_decision(): void
+    {
+        // Both schedulers toggled off deliberately. No metric rows at all.
+        // Ops rule: no active schedulers = nothing to fail = healthy.
+        PlatformSetting::where('key', 'late_check_enabled')->update(['value' => 'false']);
+        PlatformSetting::where('key', 'buyback_check_enabled')->update(['value' => 'false']);
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonPath('status', 'healthy')
+            ->assertJsonPath('late_check_enabled', false)
+            ->assertJsonPath('buyback.enabled', false);
+    }
+
+    public function test_buyback_block_structure_present(): void
+    {
+        $this->recordRunAt(now()->subHours(1));
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonStructure([
+                'status',
+                'buyback' => [
+                    'status',
+                    'last_run_at',
+                    'minutes_since_last_run',
+                    'expected_interval_minutes',
+                    'enabled',
+                    'last_run_stats' => [
+                        'status',
+                        'loans_newly_eligible',
+                        'notifications_queued',
+                    ],
+                ],
+            ]);
+    }
+
+    public function test_backwards_compat_legacy_flat_fields_still_populated(): void
+    {
+        // F1-era monitors parse the flat top-level fields — the F2
+        // extension must NOT break these. Pin their presence explicitly.
+        $this->recordRunAt(now()->subHours(1));
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonStructure([
+                'status',
+                'last_run_at',
+                'minutes_since_last_run',
+                'expected_interval_minutes',
+                'late_check_enabled',
+                'last_run_stats' => [
+                    'status',
+                    'loans_scanned',
+                    'schedules_marked_late',
+                    'loans_transitioned_to_late',
+                    'loans_recovered',
+                    'recovery_skipped_default',
+                    'notifications_queued',
+                ],
+            ])
+            ->assertJsonPath('last_run_stats.loans_scanned', 5);  // value from recordRunAt helper
+    }
 }

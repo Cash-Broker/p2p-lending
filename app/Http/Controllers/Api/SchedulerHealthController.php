@@ -24,7 +24,15 @@ use Illuminate\Http\JsonResponse;
  *   critical  — never run, OR last run > 48 h ago. Two missed windows —
  *               automation is effectively down.
  *
- * The top-level `status` is the WORST of the two schedulers' statuses.
+ * The top-level `status` is the WORST of the two schedulers' statuses,
+ * but **DISABLED schedulers are excluded** from the worst-of computation
+ * (per ops rule): if an operator deliberately toggled a scheduler off via
+ * its `*_check_enabled` platform setting, that absence is intentional and
+ * should not raise an alert. Edge cases:
+ *   - Both disabled  → overall 'healthy' (nothing runs; nothing to fail).
+ *   - One disabled, other healthy → overall 'healthy' (ignored-disabled).
+ *   - One disabled, other critical → overall 'critical' (non-disabled dominates).
+ *
  * HTTP 503 iff top-level == 'critical'. This means an external monitor
  * configured against this endpoint pages on EITHER scheduler going down
  * — a single-URL pane for both cron jobs.
@@ -57,8 +65,20 @@ class SchedulerHealthController extends Controller
         $buybackStatus = $this->statusFromMinutes($buybackMinutesSince);
         $buybackCheckEnabled = (bool) PlatformSetting::get('buyback_check_enabled', true);
 
-        // Top-level = WORST of the two.
-        $overall = $this->worstStatus($lateStatus, $buybackStatus);
+        // Top-level = WORST of the two, but DISABLED schedulers are
+        // excluded from the computation (ops rule: a deliberately-toggled-off
+        // scheduler mustn't trigger a critical alert).
+        // If both are disabled, overall is 'healthy' — nothing to fail.
+        $statuses = [];
+        if ($lateCheckEnabled) {
+            $statuses[] = $lateStatus;
+        }
+        if ($buybackCheckEnabled) {
+            $statuses[] = $buybackStatus;
+        }
+        $overall = $statuses === []
+            ? 'healthy'
+            : array_reduce($statuses, fn ($carry, $s) => $this->worstStatus($carry, $s), 'healthy');
 
         return response()->json([
             'status' => $overall,
