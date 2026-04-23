@@ -52,17 +52,25 @@ In order to ensure that the Laravel community is welcoming to all, please review
 ## Operations
 
 ### System cron (required)
-The Laravel scheduler (`bootstrap/app.php` `withSchedule`) requires an OS-level cron entry to fire. Without it, `ledger:reconcile` and `loans:process-late` will silently never run.
+The Laravel scheduler (`bootstrap/app.php` `withSchedule`) requires a single OS-level cron entry. Laravel dispatches all registered commands (`ledger:reconcile`, `loans:process-late`, `loans:detect-buyback-eligible`) from this one line — no per-command cron entries needed.
 
 ```cron
 * * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1
 ```
 
+Scheduled commands (in execution order):
+- `03:00` `ledger:reconcile --notify` → `storage/logs/ledger-reconcile.log` (if configured)
+- `03:30` `loans:process-late` → `storage/logs/loans-process-late.log`
+- `03:45` `loans:detect-buyback-eligible` → `storage/logs/loans-detect-buyback-eligible.log`
+
+The 03:30 → 03:45 dependency: buyback detection reads `loan.status` that late detection maintains. 15-min gap is a comfortable buffer over the typical < 5-min runtime; if F1 ever grows past 15 min consistently, move F2 to 04:00.
+
 Verify:
 ```sh
 crontab -l | grep schedule:run
-php artisan schedule:list
+php artisan schedule:list              # should show all 3 commands
 tail -f storage/logs/loans-process-late.log
+tail -f storage/logs/loans-detect-buyback-eligible.log
 ```
 
 ### Queue worker (required)
@@ -83,13 +91,21 @@ stdout_logfile=/path/to/app/storage/logs/queue-worker.log
 Or systemd: standard `[Service] ExecStart=/usr/bin/php /path/to/app/artisan queue:work --tries=3` unit.
 
 ### Health monitoring
-Public endpoint for external uptime monitors:
+Public endpoint covers BOTH `loans:process-late` (F1) and `loans:detect-buyback-eligible` (F2) via a single URL:
 
 ```
 GET /api/health/scheduler
-→ 200 healthy / warning   (last run ≤ 48 h ago)
-→ 503 critical            (last run > 48 h, or never)
+→ 200 healthy / warning   (both schedulers last run ≤ 48 h ago)
+→ 503 critical            (either scheduler > 48 h stale, or never run)
 ```
+
+Response shape:
+- Top-level flat fields describe the late scheduler (F1 backwards compat).
+- Nested `buyback` block describes the F2 scheduler (same field names).
+- Top-level `status` = WORST of the two, with **disabled schedulers
+  excluded** (ops rule — a deliberately-toggled-off scheduler via its
+  `*_check_enabled` platform setting does not trigger a critical alert).
+  If both are disabled, overall status is `healthy`.
 
 No auth, throttled 60/min. Configure UptimeRobot / Healthchecks.io / Pingdom against this URL.
 

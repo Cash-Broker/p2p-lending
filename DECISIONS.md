@@ -109,6 +109,181 @@ remediations as a new entry that references the old one).
 
 ---
 
+## F2: bought_back is a TERMINAL state
+
+- **Date:** 2026-04-23
+- **Decision:** `Loan::STATUS_BOUGHT_BACK` has ZERO outgoing transitions
+  in `Loan::ALLOWED_TRANSITIONS`. Once a loan is bought back, it cannot
+  return to `repaid`, `active`, or any other state.
+- **Rationale:**
+  - Investors have been paid out in full (principal + whatever interest
+    the coverage type covers); the platform owes them nothing further.
+  - The originator's post-buyback collection effort — whether the
+    borrower ultimately pays, restructures, or defaults externally — is
+    OFF-PLATFORM. Any funds recovered by the originator after buyback
+    stay with the originator; investors have already received their
+    compensation.
+  - A `bought_back → repaid` path would blur the semantic for investors
+    reading loan history ("did the originator or the borrower pay me?"),
+    and would require splitting already-distributed funds into
+    "buyback advance" vs "final repayment" — out of scope for v1.
+- **Compensating controls:**
+  - `INVESTOR_VISIBLE_STATUSES` includes `bought_back` so the terminal
+    outcome surfaces in portfolio views.
+  - `LoanBoughtBackNotification` tells the investor explicitly that
+    the originator honoured buyback, distinguishing from
+    `RepaymentReceivedNotification` (borrower paid).
+- **Trigger conditions for revisiting:**
+  - If regulators require treating originator-sourced repayments as
+    a separate accounting category requiring reversal paths.
+  - If a secondary market feature needs to model "bought-back shares
+    being resold".
+
+---
+
+## F2: Manual admin execution model (not automatic buyback)
+
+- **Date:** 2026-04-23
+- **Decision:** The daily cron only DETECTS eligibility and alerts
+  admins. Actual buyback execution is triggered manually by admin
+  click on the Filament Buyback Queue page. No cron-driven money
+  movement.
+- **Rationale:**
+  - Originators are metadata on the platform — no balance tracking,
+    no API integration. Admin verifies the originator has actually
+    paid (off-platform bank transfer) BEFORE executing.
+  - Adding automation would require an `originator_balances` table
+    + top-up workflow + reconciliation. Large scope increase for v1.
+    The admin-in-the-loop model defers this to v1.1+.
+  - The cron's role is to make sure eligible loans don't slip
+    through the cracks of manual oversight — it nudges admin with
+    a daily digest.
+- **Compensating controls:**
+  - Daily `loans:detect-buyback-eligible` cron at 03:45 with admin
+    email digest keeps the queue visible.
+  - Filament Buyback Queue navigation badge surfaces the pending
+    count at-a-glance on every admin panel visit.
+  - `BuybackExecutionService::execute(int $loanId, int $adminId)`
+    records the executing admin in `loan_events.triggered_by_user_id`
+    AND in the event metadata as `executed_by_admin_id` —
+    accountability trail.
+  - Every buyback is wrapped in `DB::transaction` with
+    `Loan::lockForUpdate()` — no race condition between two admins
+    clicking Execute on the same loan.
+- **Trigger conditions for revisiting:**
+  - If admin team grows to 5+ and operational overhead becomes
+    material, or if originator count grows past ~10.
+  - If regulators require SLA on buyback execution time.
+- **Effort estimate:** 3-5 days to ship full automation —
+  originator_balances schema + admin top-up UI + automated
+  balance-check at execution + buyback_check_enabled auto-mode
+  toggle.
+
+---
+
+## F2: Buyback coverage — 2 options only (no day-count accrued interest in v1)
+
+- **Date:** 2026-04-23
+- **Decision:** `originators.buyback_coverage` enum permits exactly
+  two values: `principal_only` or `principal_plus_interest`. No third
+  `principal_plus_accrued_interest` option.
+- **Rationale:**
+  - "Principal + interest" sums the SCHEDULED interest of unpaid
+    installments — predictable, deterministic, easy to explain to
+    investors.
+  - A third option would add day-count accrued interest from last
+    payment date to execution date. Requires picking a day-count
+    convention (30/360, actual/365, actual/actual — a business
+    decision with regulatory implications that has not been made).
+  - Fewer code paths to test, simpler calculation service,
+    unambiguous coverage labels in investor-facing copy.
+- **Compensating controls:**
+  - DB CHECK constraint on `originators.buyback_coverage` enforces
+    the two-value enum (defense-in-depth against future SQL-injection
+    or careless seed edits).
+  - Whitelist in `LoanEventResource` exposes `coverage_type` to
+    investors so they know exactly which formula was applied.
+- **Trigger conditions for revisiting:**
+  - If client expands into a jurisdiction where borrower payments
+    accrue interest daily and investors demand that precision.
+  - If a competitor offers the third option and it becomes a
+    marketing differentiator.
+- **Effort estimate:** 1 day to add the third option — new enum
+  value in migration, calculator branch using a picked day-count
+  convention, test coverage.
+
+---
+
+## F2: Dismiss accountability — buyback_dismissed_by FK required
+
+- **Date:** 2026-04-23
+- **Decision:** When admin dismisses a loan from the Buyback Queue,
+  THREE columns are stamped: `buyback_dismissed_at` (timestamp),
+  `buyback_dismissed_reason` (required textarea, 5-255 chars at the
+  Filament form level), AND `buyback_dismissed_by` (FK to users.id,
+  RESTRICT on delete). All three are cleared on Reactivate.
+- **Rationale:**
+  - Multiple admins may eventually share the platform. Without a
+    dismissed_by signature, a bad-dismiss decision leaves no
+    attribution — "anonymous admin action" is unacceptable in a
+    financial platform.
+  - Requiring a reason forces the admin to think before dismissing
+    and leaves a plain-text audit note for the next reviewer.
+  - Three columns (not just one flag) lets the UI render a full
+    "dismissed on DATE by ADMIN — reason: TEXT" summary without
+    cross-table joins.
+- **Compensating controls:**
+  - FK RESTRICT on delete mirrors `loan_events.triggered_by_user_id`
+    — AccountDeletionService anonymises rather than hard-deletes,
+    so RESTRICT never trips in normal flow.
+  - Auditable trait on Loan captures the full diff on each
+    dismiss/reactivate.
+  - Reactivate is idempotent — clearing all three columns returns
+    the loan to the active queue; the dismiss history lives in
+    `audit_logs` for forensic replay.
+- **Trigger conditions for revisiting:**
+  - If compliance requires a soft-delete audit trail where dismissed
+    rows persist (instead of being cleared on Reactivate).
+
+---
+
+## F2: Scheduler health — worst-of-two with disabled-ignored semantic
+
+- **Date:** 2026-04-23
+- **Decision:** `/api/health/scheduler` top-level `status` is the
+  WORST of `late_check.status` + `buyback_check.status`, but a
+  scheduler with its `*_check_enabled` platform setting set to
+  `false` is EXCLUDED from the computation. Both disabled → overall
+  `healthy`.
+- **Rationale:**
+  - Ops may deliberately disable one or both schedulers during data
+    fix-ups or during known maintenance windows. A critical status
+    during a deliberate pause would generate false-positive pages
+    for on-call and erode trust in the monitor.
+  - A single-URL single-`status` contract is what UptimeRobot /
+    Healthchecks.io / Pingdom expect; splitting into per-scheduler
+    endpoints would multiply monitor configs.
+  - Preserving F1's flat top-level fields (instead of restructuring
+    under a `late` block) means F1-era monitors keep working
+    without reconfiguration — backwards-compatible extension.
+- **Compensating controls:**
+  - Dashboard widget (`LoanHealthOverview`) surfaces BOTH
+    `Последна late-проверка` AND `Последна buyback-проверка`
+    independently with their own staleness colours, so admins see
+    the per-scheduler state at a glance even when the overall is
+    healthy-due-to-disabled.
+  - 7 test cases in `SchedulerHealthEndpointTest` pin the
+    worst-of-two + disabled-ignored behaviour (healthy+critical,
+    critical+healthy, both healthy, disabled+healthy, both disabled,
+    buyback block structure, backwards-compat flat fields).
+- **Trigger conditions for revisiting:**
+  - If ops notice "silent disabled scheduler" incidents (someone
+    toggled off and forgot), consider adding a separate "disabled"
+    status as warning-level for dashboards while keeping the
+    healthy signal for pagers.
+
+---
+
 ## F2: default → bought_back transition allowed
 
 - **Date:** 2026-04-23

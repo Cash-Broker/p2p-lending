@@ -50,8 +50,8 @@ New test files:
 
 | # | Limitation | Hook for future phase |
 |---|---|---|
-| L1 | No auto `late → default` transition. Admin must manually transition via Filament. | F2 will consume `recovery_skipped_default` metric and the `loan_events.event_type IN ('went_default', 'buyback_triggered', 'buyback_completed')` enum slots (already migrated in F1). |
-| L2 | `originators.buyback` boolean has no honour-flow. Investors see "Buyback гаранция: Yes" with no mechanism. | F2 buyback automation. Email template intentionally omits buyback promises. |
+| L1 | No auto `late → default` transition. Admin must manually transition via Filament. | **PARTIALLY ADDRESSED in F2** — buyback provides a parallel exit path (`late → bought_back` or, if admin does escalate, `default → bought_back`). Auto escalation from late to default itself is still manual and stays in this limitation list. See [AUDIT_REPORT_PHASE_F2.md](AUDIT_REPORT_PHASE_F2.md) F2-L1 for the carry-forward. |
+| L2 | `originators.buyback` boolean has no honour-flow. Investors see "Buyback гаранция: Yes" with no mechanism. | **RESOLVED in F2 (commit `eda4045`).** F2 adds the full detect-then-execute honour flow: daily cron flags eligible loans, admin executes manually from the Buyback Queue, investors receive pro-rata distribution + email. Email copy updated to describe the mechanism. See [AUDIT_REPORT_PHASE_F2.md](AUDIT_REPORT_PHASE_F2.md). |
 | L3 | No penalty interest. Per client decision (recorded in CLAUDE.md). | Out of scope for v1. |
 | L4 | No early-repayment rebate. Admin can input arbitrary repayment amounts; no auto-recompute of remaining schedule. | F3 (`early_repayment_*` enum slots reserved). |
 | L5 | No origination/service/early-repayment fees. `Transaction::TYPE_FEE` enum exists, never written. | F4 (`fee_applied` enum slot reserved). |

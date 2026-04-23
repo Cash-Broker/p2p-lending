@@ -300,6 +300,252 @@ Status thresholds:
 - If you change `APP_TIMEZONE`, run `loans:process-late --dry-run`
   the same day to see what would be re-evaluated.
 
+## Phase F2 — Buyback Guarantee
+
+F2 adds the originator buyback honour flow on top of F1's late detection.
+**Human-in-the-loop** model: cron detects eligibility, admin executes
+from a Filament queue page. No automatic money movement from cron.
+
+### Tables (F2 migrations)
+
+- `originators` — two nullable config columns:
+  - `buyback_coverage` VARCHAR(32) — enum-as-string, CHECK enforces
+    `principal_only | principal_plus_interest`. NULL → falls back to
+    `platform_settings.buyback_default_coverage`.
+  - `buyback_trigger_days` SMALLINT UNSIGNED — CHECK enforces `0..365`.
+    NULL → falls back to `platform_settings.buyback_default_trigger_days`.
+    `0` is a valid value (immediate eligibility); explicit `??`
+    coalescing throughout the service code (NOT `?:` or `isset`).
+  - The existing `buyback` boolean stays as the master switch —
+    eligibility service filters `buyback = true` first.
+- `loans` — 5 nullable columns:
+  - `buyback_eligible_at` — set by `loans:detect-buyback-eligible`
+    cron when a loan crosses its trigger threshold. Cleared by admin
+    "Reactivate" (un-dismiss) action. Index for cron + Queue filter.
+  - `bought_back_at` — set by `BuybackExecutionService::execute()`
+    at admin Execute click. Terminal (never cleared).
+  - `buyback_dismissed_at` — set when admin dismisses from the Queue.
+    Cron SKIPS dismissed rows (unless `--force`).
+  - `buyback_dismissed_reason` VARCHAR(255) — admin note.
+  - `buyback_dismissed_by` FK → `users.id`, RESTRICT on delete
+    (accountability; mirror of `loan_events.triggered_by_user_id`).
+- `platform_settings` — 3 seed rows + 2 CHECKs:
+  - `buyback_default_coverage` = `principal_plus_interest`
+  - `buyback_default_trigger_days` = `60` (CHECK 0..365 range)
+  - `buyback_check_enabled` = `true` (kill switch for the cron only;
+    admin can still Execute manually when false)
+- `loan_events` — event-type enum ALREADY pre-expanded in F1 migration
+  with `buyback_triggered` + `buyback_completed`. No F2 schema change.
+- `transactions` — `type` column has NO DB CHECK (string only). F2
+  adds `Transaction::TYPE_BUYBACK_PRINCIPAL` + `TYPE_BUYBACK_INTEREST`
+  as app-level constants. Transaction immutability triggers from F1
+  cover these automatically.
+
+### State machine additions
+
+- `Loan::STATUS_BOUGHT_BACK = 'bought_back'` — **TERMINAL** per Q3
+  (investors already paid out; originator's post-buyback collection
+  is off-platform, out-of-scope for the platform).
+- `ALLOWED_TRANSITIONS` extended:
+  - `late    → [active, default, repaid, bought_back]`
+  - `default → [repaid, bought_back]` (per DECISIONS.md — rare but
+    valid; an admin who manually escalated late→default can still
+    receive a buyback agreement)
+  - `bought_back → []` (terminal)
+- `INVESTOR_VISIBLE_STATUSES` includes `bought_back` so investors see
+  the terminal outcome in their portfolio.
+
+### Detection mechanism
+
+Command `loans:detect-buyback-eligible` runs daily at **03:45** via
+`bootstrap/app.php` schedule, **AFTER** `loans:process-late` at 03:30.
+15-minute gap is a comfortable buffer over F1's typical < 5-min runtime.
+If F1 ever grows past 15 min consistently, move F2 to 04:00.
+
+Eligibility query (`BuybackEligibilityService::detectNewlyEligible`):
+```sql
+WHERE loan.status IN ('late', 'default')
+  AND loan.became_late_at IS NOT NULL
+  AND loan.buyback_eligible_at IS NULL   -- idempotency key
+  AND loan.buyback_dismissed_at IS NULL
+  AND loan.bought_back_at IS NULL
+  AND originator.buyback = true
+  AND loan.became_late_at <= today - resolved(trigger_days)
+```
+Per-originator trigger override wins; NULL falls back to the platform
+default via explicit `??` coalescing.
+
+Pipeline per run:
+1. Service returns newly-eligible loans.
+2. For each: `BuybackCalculationService::calculateTotal()` computes the
+   at-detection snapshot amount. Inside a per-loan transaction with
+   `Loan::lockForUpdate()`:
+   - Set `buyback_eligible_at = now()`.
+   - Write `LoanEvent(buyback_triggered)` with metadata
+     `{eligible_at, days_since_became_late, calculated_buyback_amount
+     _at_detection, coverage_type, originator_id}`. `from_status` and
+     `to_status` are both NULL (both-null branch of the
+     `chk_loan_events_status_pair` CHECK — pure decision event, no
+     loan transition at detection time).
+3. Count loans aging > 3 days still in queue (for the digest's age
+   breakdown). Runs AFTER flagging so newly-flagged rows don't leak
+   into the "older" bucket.
+4. If `newly + older > 0`: dispatch `BuybackEligibleAdminNotification`
+   to every `User::role='admin'`. Skipped entirely when both counts
+   are 0 (Q21 "no empty daily spam").
+5. Metrics to `platform_metrics`:
+   `last_buyback_check_{run_at, status, loans_newly_eligible,
+   notifications_queued, enabled}`.
+
+### Execution mechanism — admin-triggered only
+
+Admin opens **Финанси → Buyback Queue** (Filament page
+`App\Filament\Pages\BuybackQueue`). Navigation badge shows pending
+count, `warning` color when > 0, invisible when 0. Default sort:
+oldest `buyback_eligible_at` first (urgency).
+
+Row actions per loan:
+- **Execute** — confirmation modal recomputes the buyback total
+  fresh (NOT from the at-detection snapshot in the event — the
+  loan's schedule may have changed since cron flagged it). Calls
+  `BuybackExecutionService::execute($loanId, auth()->id())`. On
+  success, dispatches `LoanBoughtBackNotification` per investor
+  (outside the DB transaction — money first, emails second).
+- **Dismiss** — required reason textarea, stamps `dismissed_at`,
+  `dismissed_reason`, `dismissed_by`. Reversible.
+- **Reactivate** — clears the three dismissed_* fields; cron can
+  re-flag the loan on the next run.
+
+`BuybackExecutionService::execute()` wraps everything in one
+`DB::transaction(function () { ... })`:
+1. `Loan::lockForUpdate()` on the target.
+2. Idempotency check — `status === 'bought_back'` → throw
+   `BuybackAlreadyExecutedException` (Filament catches, surfaces
+   a friendly `warning` toast).
+3. State machine validation — only `late` or `default` allowed.
+4. Dismissed check — `buyback_dismissed_at !== null` rejects with
+   a "Reactivate first" message.
+5. `BuybackCalculationService::calculateTotal()` — fresh amount.
+6. `::distribute()` — pro-rata across investors; mirror of
+   RepaymentService "last-investor-remainder" pattern (penny-precise;
+   `Σ(investor_share) == total` exactly even for `100/3` → `33.33 +
+   33.33 + 33.34`).
+7. For each investor: `WalletService::buybackPrincipal()` (invested
+   → available, TYPE_BUYBACK_PRINCIPAL transaction) and
+   `::buybackInterest()` (available += + earned +=,
+   TYPE_BUYBACK_INTEREST transaction).
+8. Stamp `bought_back_at` + transition via `transitionTo('bought_back')`.
+   **Empirically verified** to emit ONE UPDATE covering both fields
+   (single audit_logs row, single state snapshot) — pinned by
+   `BuybackExecutionServiceTest::test_single_update_query_for_bought
+   _back_at_and_status`.
+9. Write `LoanEvent(buyback_completed, late|default → bought_back)`
+   with AGGREGATE metadata only — **no per-investor breakdown**
+   (privacy: other investors' shares must not leak through the
+   public loan timeline API).
+
+Service returns `BuybackResult` (read-only DTO) containing
+aggregates + per-investor `distributions` array. The Filament
+action uses `distributions` to dispatch investor notifications
+AFTER the `DB::transaction` has committed.
+
+### Notifications
+
+**Investor** — `LoanBoughtBackNotification`:
+- `implements ShouldQueue`, channels `mail + database`.
+- Dedupe: per `(user, loan, bought_back_at)` via
+  `whereJsonContains('data->bought_back_at', ISO)`. Since
+  `bought_back_at` is terminal-once, this effectively collapses to
+  per-`(user, loan)` but the explicit timestamp key is retained for
+  F1-pattern symmetry and admin-backfill defense.
+- `toArray()` contract pinned: `bought_back_at` MUST be an ISO-8601
+  string. Two contract-guard tests (one for ISO format, one for
+  null — the null one marked SKIPPED with rationale because the
+  constructor type hint forbids null).
+- Email template `resources/views/emails/loan-bought-back.blade.php`:
+  BG copy, positive framing, 7-row data table (loan id, originator,
+  coverage type, received principal, received interest, total bold,
+  bought_back_at), CTA to portfolio, educational reassurance
+  paragraph. **NO borrower PII**; originator name IS included (public
+  marketplace data).
+
+**Admin digest** — `BuybackEligibleAdminNotification`:
+- One per cron run (NOT per eligible loan). Dispatched only when
+  `newly_eligible_count > 0 OR waiting_more_than_3_days_count > 0`.
+- Dedupe: exact `data->run_at` ISO match — protects against queue
+  worker retries re-delivering the same job; independent cron runs
+  have distinct `run_at` values and both deliver normally.
+- Email subject: `[P2P Invest] N нови buyback-eligible кредита —
+  Buyback Queue`. Body shows age breakdown + loan IDs of newly-flagged
+  + CTA to Queue + workflow reminder paragraph.
+
+### Commands
+
+```sh
+# Daily cron (registered in bootstrap/app.php at 03:45).
+php artisan loans:detect-buyback-eligible
+
+# Flags (mirror F1 loans:process-late):
+--dry-run      # TRULY read-only (DB::beginTransaction + rollBack wrapper).
+               # No flags written, no events, no metrics, no emails.
+--loan=ID      # Scope to one loan id (debug).
+--detail       # Per-loan progress logging. (Renamed from --verbose.)
+--force        # Bypass buyback_check_enabled platform setting.
+```
+
+Cache lock key `loans:detect-buyback-eligible` (10-min TTL) prevents
+two manual runs from overlapping. Scheduler uses
+`->withoutOverlapping(60)` separately.
+
+### Health endpoint extension
+
+`GET /api/health/scheduler` now covers BOTH schedulers:
+
+- Legacy F1 flat fields preserved (`last_run_at`, `minutes_since_last_run`,
+  `expected_interval_minutes`, `late_check_enabled`, `last_run_stats`).
+- New nested `buyback` block with the same shape for the F2 scheduler.
+- Top-level `status` = WORST of `late` + `buyback`, with **DISABLED
+  schedulers excluded from the computation** (ops rule). Edge cases:
+  - Both disabled → overall `healthy` (nothing active; nothing to fail).
+  - One disabled + other critical → overall `critical` (the active one
+    dominates).
+  - Both enabled → normal worst-of-two.
+- HTTP 503 iff top-level `status == 'critical'`.
+
+### Dismiss mechanism + accountability
+
+Three columns on `loans` carry the dismissal state:
+- `buyback_dismissed_at` timestamp
+- `buyback_dismissed_reason` string(255) — required by Filament form
+  (not DB) so admins must justify
+- `buyback_dismissed_by` FK → users.id, RESTRICT on delete
+
+Cron skips dismissed rows. Reactivate clears all three. The admin
+audit is implicit via the FK + Auditable trait on `Loan`.
+
+### Scheduler dependency note
+
+`loans:detect-buyback-eligible` READS `loan.status` that
+`loans:process-late` maintains. The 03:30 → 03:45 ordering plus
+`->withoutOverlapping(60)` on each command handles serialisation.
+If F1 ever runs > 15 min consistently (growth, queue backlog),
+move F2 to 04:00 and update this note.
+
+### Idempotency layers
+
+1. **Detection** — `buyback_eligible_at IS NULL` in the eligibility
+   query PLUS a TOCTOU re-check inside the per-loan `lockForUpdate`
+   in `DetectBuybackEligible::flagLoanAtomically`. A second manual
+   run on the same loan no-ops.
+2. **Execution** — `Loan::lockForUpdate()` + `status === 'bought_back'`
+   check inside `BuybackExecutionService::execute`. A second call
+   throws `BuybackAlreadyExecutedException`; the Filament action
+   surfaces a friendly "already executed" toast.
+3. **Admin digest** — per-`run_at` dedupe in
+   `BuybackEligibleAdminNotification::wasRecentlyNotified` — queue
+   worker retries of the SAME job don't double-insert into the
+   admin inbox.
+
 ## Currency
 - Everything in EUR
 - Format: 1,234.56 €
