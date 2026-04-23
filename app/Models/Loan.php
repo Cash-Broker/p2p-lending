@@ -189,6 +189,11 @@ class Loan extends Model
         return $this->hasMany(Favorite::class);
     }
 
+    public function events(): HasMany
+    {
+        return $this->hasMany(LoanEvent::class);
+    }
+
     public function isFundable(): bool
     {
         return in_array($this->status, self::FUNDABLE_STATUSES);

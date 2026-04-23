@@ -88,6 +88,15 @@ class LoanResource extends Resource
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
                     ->formatStateUsing(fn (string $state) => match ($state) { 'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се', 'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял', 'default' => 'Просрочен', 'repaid' => 'Изплатен', default => $state })
                     ->colors(['secondary' => 'draft', 'primary' => 'published', 'info' => 'funding', 'success' => fn ($state) => in_array($state, ['funded', 'active']), 'warning' => 'late', 'danger' => 'default', 'gray' => 'repaid']),
+                // Maximum days_late across the loan's late schedules. Computed
+                // via withMax (single sub-select per row, zero N+1). Sortable
+                // so support can prioritise oldest-overdue first.
+                Tables\Columns\TextColumn::make('max_days_late')
+                    ->label('Дни закъснение')
+                    ->getStateUsing(fn (Loan $r) => $r->amortizationSchedules()->where('status', 'late')->max('days_late'))
+                    ->sortable(false)
+                    ->placeholder('—')
+                    ->color(fn ($state) => $state === null ? 'gray' : ($state >= 30 ? 'danger' : 'warning')),
             ])
             ->defaultSort('created_at', 'desc')
             ->filters([
@@ -98,6 +107,12 @@ class LoanResource extends Resource
                 ]),
                 Tables\Filters\SelectFilter::make('originator_id')->label('Оригинатор')->options(Originator::pluck('name', 'id')),
                 Tables\Filters\SelectFilter::make('type')->options(['consumer' => 'Потребителски', 'business' => 'Бизнес', 'mortgage' => 'Ипотечен', 'bridge' => 'Мостов']),
+                // Quick toggle so support can land on "show me everything currently
+                // late" without picking from the status dropdown each time.
+                Tables\Filters\Filter::make('late_or_default')
+                    ->label('Само закъснели/просрочени')
+                    ->toggle()
+                    ->query(fn ($q) => $q->whereIn('status', [Loan::STATUS_LATE, Loan::STATUS_DEFAULT])),
             ])
             ->actions([
                 \Filament\Actions\EditAction::make(),
@@ -136,7 +151,11 @@ class LoanResource extends Resource
 
     public static function getRelations(): array
     {
-        return [LoanResource\RelationManagers\AmortizationSchedulesRelationManager::class, LoanResource\RelationManagers\InvestmentsRelationManager::class];
+        return [
+            LoanResource\RelationManagers\AmortizationSchedulesRelationManager::class,
+            LoanResource\RelationManagers\InvestmentsRelationManager::class,
+            LoanResource\RelationManagers\LoanEventsRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

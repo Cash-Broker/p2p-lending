@@ -40,6 +40,16 @@ class AmortizationSchedulesRelationManager extends RelationManager
                         'pending' => 'Предстои', 'paid' => 'Платено', 'late' => 'Закъснение', 'default' => 'Просрочено', default => $state,
                     })
                     ->colors(['warning' => 'pending', 'success' => 'paid', 'danger' => fn ($state) => in_array($state, ['late', 'default'])]),
+                Tables\Columns\TextColumn::make('days_late')
+                    ->label('Дни закъснение')
+                    ->formatStateUsing(fn ($state, $record) => $record->status === 'late' ? $state : '—')
+                    ->color(fn ($state, $record) => $record->status === 'late' && $state >= 30 ? 'danger' : 'warning')
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('became_late_at')
+                    ->label('От кога е late')
+                    ->dateTime('d.m.Y H:i')
+                    ->placeholder('—')
+                    ->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('paid_at')->label('Платено на')->date('d.m.Y'),
             ])
             ->defaultSort('due_date')

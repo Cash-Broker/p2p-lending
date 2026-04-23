@@ -106,10 +106,19 @@ class LoanStatusUpdaterService
                 return false;
             }
 
-            $lateScheduleCount = $loan->amortizationSchedules()->where('status', 'late')->count();
+            // Snapshot the late schedules at transition time. We grab id+days_late
+            // so the LoanEvent metadata captures both the count and the MAX
+            // days_late — useful for "your loan went 15 days late" UX in the
+            // investor-side timeline (the API sanitisation whitelist exposes
+            // days_late_at_transition; late_schedule_count stays admin-only).
+            $lateSchedules = $loan->amortizationSchedules()
+                ->where('status', 'late')
+                ->get(['id', 'days_late']);
+            $lateScheduleCount = $lateSchedules->count();
             if ($lateScheduleCount === 0) {
                 return false; // schedules paid between detection and update — nothing to do
             }
+            $maxDaysLate = (int) ($lateSchedules->max('days_late') ?? 0);
 
             $loan->transitionTo(Loan::STATUS_LATE);
             // Re-fetch to get updated status, then stamp became_late_at
@@ -124,7 +133,10 @@ class LoanStatusUpdaterService
                 'to_status' => Loan::STATUS_LATE,
                 'triggered_by' => LoanEvent::TRIGGERED_BY_SYSTEM,
                 'triggered_by_user_id' => null,
-                'metadata' => ['late_schedule_count' => $lateScheduleCount],
+                'metadata' => [
+                    'late_schedule_count' => $lateScheduleCount,
+                    'days_late_at_transition' => $maxDaysLate,
+                ],
                 'occurred_at' => now(),
             ]);
 
