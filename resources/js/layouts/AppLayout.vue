@@ -20,7 +20,10 @@ async function loadNotifications() {
     const { data } = await api.get('/notifications')
     notifications.value = data.notifications
     unreadCount.value = data.unread_count
-  } catch { /* */ }
+  } catch {
+    // Intentional: notifications are secondary UI.
+    // Silent fail preserves main app flow.
+  }
 }
 
 async function markAsRead(id) {

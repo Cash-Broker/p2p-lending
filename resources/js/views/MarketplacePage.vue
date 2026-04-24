@@ -6,6 +6,14 @@ const loans = ref([])
 const meta = ref({ current_page: 1, last_page: 1, total: 0 })
 const loading = ref(true)
 const activeTab = ref('active') // active, favorites
+const toastMessage = ref('')
+let toastTimer = null
+
+function showToast(msg) {
+  toastMessage.value = msg
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastMessage.value = '' }, 4000)
+}
 
 const filters = reactive({
   type: [],
@@ -78,7 +86,9 @@ async function toggleFavorite(loan) {
     if (activeTab.value === 'favorites' && !data.favorited) {
       loans.value = loans.value.filter(l => l.id !== loan.id)
     }
-  } catch { /* silent */ }
+  } catch {
+    showToast('Неуспешно запазване на любим. Моля, опитайте отново.')
+  }
 }
 
 function goToPage(page) {
@@ -107,12 +117,7 @@ function formatAmount(val) {
 
 watch(activeTab, () => loadLoans())
 
-onMounted(async () => {
-  // Load originators for filter
-  try {
-    const { data } = await api.get('/loans', { params: { per_page: 1 } })
-    // Extract unique originators from future endpoint; for now use loans
-  } catch { /* */ }
+onMounted(() => {
   loadLoans()
 })
 </script>
@@ -311,6 +316,15 @@ onMounted(async () => {
       <button @click="goToPage(meta.current_page - 1)" :disabled="meta.current_page === 1" class="px-3 py-1.5 rounded-lg border border-gray-200 text-sm disabled:opacity-30">Назад</button>
       <span class="text-sm text-gray-500">{{ meta.current_page }} / {{ meta.last_page }}</span>
       <button @click="goToPage(meta.current_page + 1)" :disabled="meta.current_page === meta.last_page" class="px-3 py-1.5 rounded-lg border border-gray-200 text-sm disabled:opacity-30">Напред</button>
+    </div>
+
+    <div
+      v-if="toastMessage"
+      role="alert"
+      aria-live="polite"
+      class="fixed bottom-4 right-4 max-w-sm px-4 py-3 bg-red-500 text-white text-sm rounded-xl shadow-lg z-50"
+    >
+      {{ toastMessage }}
     </div>
   </div>
 </template>

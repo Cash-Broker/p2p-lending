@@ -9,6 +9,7 @@ const depositInfo = ref(null)
 const deposits = ref([])
 const meta = ref({ current_page: 1, last_page: 1, total: 0 })
 const copied = ref(false)
+const error = ref(null)
 
 const isKycApproved = computed(() => auth.user?.kyc_status === 'approved')
 
@@ -23,6 +24,7 @@ const approvedCount = computed(() => deposits.value.filter(d => d.status === 'ap
 
 async function load(page = 1) {
   loading.value = true
+  error.value = null
   try {
     const [infoRes, historyRes] = await Promise.all([
       api.get('/deposit'),
@@ -31,6 +33,8 @@ async function load(page = 1) {
     depositInfo.value = infoRes.data
     deposits.value = historyRes.data.data
     meta.value = historyRes.data.meta
+  } catch {
+    error.value = 'Грешка при зареждане на данните. Опитай да презаредиш страницата или се свържи с поддръжка.'
   } finally {
     loading.value = false
   }
@@ -63,6 +67,15 @@ onMounted(() => load())
 
     <div v-if="loading" class="flex items-center justify-center py-20">
       <div class="size-8 border-4 border-gray-200 border-t-navy-700 rounded-full animate-spin"></div>
+    </div>
+
+    <div v-else-if="error" class="flex flex-col items-center justify-center py-32 text-center">
+      <div class="flex size-16 items-center justify-center rounded-2xl bg-red-50 text-red-500 mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
+      </div>
+      <h2 class="text-lg font-bold text-navy-700 mb-2">Грешка</h2>
+      <p class="text-sm text-gray-500 mb-4 max-w-md">{{ error }}</p>
+      <button @click="load()" class="px-5 py-2 bg-navy-700 text-white text-sm font-semibold rounded-xl">Опитай отново</button>
     </div>
 
     <template v-else>

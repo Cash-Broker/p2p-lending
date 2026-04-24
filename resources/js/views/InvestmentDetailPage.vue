@@ -101,6 +101,8 @@ onMounted(async () => {
     const { data } = await api.get(`/loans/${route.params.id}/events`)
     events.value = data.data
   } catch {
+    // Intentional: 403 expected for non-investors
+    // (privacy boundary). Hide timeline silently.
     events.value = []
   } finally {
     eventsLoading.value = false

@@ -53,14 +53,20 @@ async function loadHistory(page = 1) {
     const { data } = await api.get('/withdrawal/history', { params: { page } })
     withdrawals.value = data.data
     meta.value = data.meta
-  } catch { /* KYC not approved — no history */ }
+  } catch {
+    // Intentional: 403 expected for non-KYC users.
+    // Graceful degrade to empty history.
+  }
 }
 
 async function loadIbans() {
   try {
     const { data } = await api.get('/profile/ibans')
     savedIbans.value = data.data
-  } catch { /* */ }
+  } catch {
+    // Intentional: 403 expected for pre-KYC users.
+    // Empty IBAN list acceptable fallback.
+  }
 }
 
 async function loadFeeConfig() {
