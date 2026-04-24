@@ -173,6 +173,50 @@ landing FAQ + chatbot.
   manual QA on first activation is required (see pre-deploy
   checklist in the F4 audit report).
 
+### APR (F5) — ГПР display & regulatory disclosure
+
+F5 surfaces the Annual Percentage Rate — "ГПР" (Годишен Процент на
+Разходите) — for each loan. EU Consumer Credit Directive
+(2008/48/EC) alignment for borrower-cost disclosure, plus
+investor-facing transparency about the originator's pricing.
+
+**Formula (v1):** nominal pass-through of `loans.interest_rate_annual`
+formatted to 2 decimals. For a no-fee annuity loan the nominal
+borrower rate IS the EU CCD APR by definition — pass-through is
+exact, not approximation. See `DECISIONS.md` F5-01 for the full
+proof and the handoff-formula correction.
+
+**Upgrade path:** when any borrower-side fee activates in F4's
+`FeeService::CATEGORIES` (origination / service / late / inactivity
+— all placeholder-ready today), swap `APRCalculatorService::calculate()`
+for a Newton-Raphson IRR solver in bcmath. Caller contract
+preserved — Vue, Filament, API consumers untouched.
+
+**Where it displays:**
+- Admin Filament **Кредити**: new sortable "ГПР (APR)" column;
+  edit page has a read-only "Ставки" section with
+  Доходност / ГПР / Марж (admin-only spread visibility).
+- Investor `/marketplace`: new "ГПР" column (desktop) + sub-line
+  on the mobile card.
+- Investor `/invest/{id}`: new stat cell in the 5-cell grid +
+  helper paragraph distinguishing "Доходност" (your yield) from
+  "ГПР" (borrower cost).
+- API `/api/loans` + `/api/loans/{id}`: new `apr` field (2-decimal
+  string or null).
+- **NOT shown** on landing, dashboard, or portfolio pages — ГПР
+  is a loan-detail concept; summary views stay uncluttered.
+
+**Null-safe fallback:** when `interest_rate_annual` is null or zero
+(legacy rows before the F5 form `minValue(0.01)` guard),
+APRCalculatorService returns null, API emits JSON null, and UI
+shows "—" instead of a misleading "0.00%". No production row can
+be null at the DB level (column is `NOT NULL decimal(5,2)`); zero
+is the only practical fallback trigger.
+
+**Deploy note:** no migration, no composer update. Run `npm run
+build` to refresh `public/build/` — Vue changes in MarketplacePage
+and InvestmentDetailPage won't show the new column/cell otherwise.
+
 ### Health monitoring
 Public endpoint covers BOTH `loans:process-late` (F1) and `loans:detect-buyback-eligible` (F2) via a single URL:
 

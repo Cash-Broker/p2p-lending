@@ -993,6 +993,141 @@ as a direct consequence of scope narrowness.
   of this but does not enforce. (Copy is currently "безплатно"
   per commit `f301c19`.)
 
+## Phase F5 — APR Display
+
+F5 surfaces the Annual Percentage Rate (Годишен Процент на
+Разходите — "ГПР") for each loan across the admin, investor, and
+API layers. Pure calculation on top of an existing column — no DB
+migration, no state machine change, no cron, no notifications, no
+feature flag. Activates the F1-L6 `interest_rate_annual` column
+("metadata-only" since F1) and routes it into admin reporting +
+investor transparency.
+
+### Purpose — EU CCD compliance + dual-axis transparency
+
+Consumer Credit Directive 2008/48/EC requires borrower-facing
+disclosure of the APR. Although this platform has no borrower UI
+(borrower is a data model only), the investor-facing display of
+the *borrower's* cost of credit serves two ends:
+  1. Investor due diligence — transparency about the originator's
+     pricing of the underlying loan.
+  2. Alignment with the CCD philosophy — regulator-audit trail
+     shows the APR was disclosed and computed consistently.
+
+### Formula — nominal pass-through (v1)
+
+```php
+APR = number_format((float) $loan->interest_rate_annual, 2, '.', '')
+```
+
+For a no-fee annuity loan, the nominal borrower rate IS the EU CCD
+APR by definition (the IRR equation `Σ Ck / (1+X)^tk = Σ Dl /
+(1+X)^sl` collapses to X = nominal rate when drawdowns = principal
+and repayments = scheduled annuity payments). Therefore pass-through
+is EXACT, not approximation. See DECISIONS.md F5-01 for the full
+proof + worked example of why the simple-flat formula would have
+been wrong.
+
+### Upgrade path — IRR solver when borrower-side fees activate
+
+When F4's `FeeService::CATEGORIES` gains any *borrower-side* fee
+(origination / service / late / inactivity — all currently
+placeholder-ready), swap the service internals to a Newton-Raphson
+IRR solver in bcmath. Caller contract (`calculate(Loan): ?string`)
+stays unchanged — Vue, Filament, and API consumers keep working
+without edits. Estimated effort: 1 day solver + 0.5 day test
+fixtures from regulator example calculators.
+
+### Dual display — Доходност + ГПР, distinct semantics
+
+| Audience | "Доходност" | "ГПР" |
+|---|---|---|
+| Investor | Your yield from this loan (investor return, from `interest_rate`) | Borrower's cost of credit (disclosure, from `interest_rate_annual`) |
+| Admin | Same | Same + a third "Марж" row = ГПР − Доходност (originator spread; admin-only) |
+
+Both rates shown side-by-side on the investor marketplace (new
+"ГПР" column) and loan detail page (expanded 5-cell stats grid)
+with Bulgarian helper copy immediately below:
+
+> **Доходност** — какво печелите вие.
+> **ГПР** — какво плаща кредитополучателят (включва лихва и такси).
+
+LandingPage + DashboardPage + PortfolioPage intentionally NOT
+touched — ГПР is a loan-detail concept, cluttering summary views
+would dilute the transparency signal.
+
+### Admin "Марж" — operator profit-margin visibility
+
+Filament `LoanResource` form adds a read-only "Ставки" section
+(visible on edit pages only — `visible(fn (?Loan $record) =>
+$record !== null)`). Three Placeholders:
+- Доходност — `interest_rate`
+- ГПР (APR) — `$loan->apr()`
+- Марж — `bcsub(interest_rate_annual, interest_rate, 2)`
+
+`helperText` on the Марж row explicitly says "Само за вътрешен
+преглед, не се показва на инвеститорите". Admin-only by gating —
+the whole Filament panel is admin-only via `canViewAny()`.
+
+Marge is computed inline (not stored). A future per-originator
+tier-pricing feature may want to store snapshots; for now the
+derivation is cheap and admin-live is fine.
+
+### Null-safe 3-layer defense
+
+Triggered when `interest_rate_annual` is null or non-positive —
+defensive against the F1-L6 "metadata-only" legacy state where
+nothing had touched the column. DB column is `NOT NULL
+decimal(5,2)` so production can't have null, but zero could slip
+through raw SQL.
+
+1. **Service layer** — `APRCalculatorService::calculate()` returns
+   `null` for null / zero / negative.
+2. **Model layer** — `$loan->apr()` passes the null through; memoed
+   (`$aprMemoResolved` flag needed because null is a valid cached
+   result).
+3. **UI layer** —
+   - API: `'apr' => $this->apr()` → JSON `null` on the wire.
+   - Vue: `<span v-if="loan.apr">{{ loan.apr }}%</span><span
+     v-else class="text-gray-300">—</span>` — never "0.00%".
+   - Filament table column: `formatStateUsing(fn ($r) =>
+     $r->apr() !== null ? $r->apr() . '%' : '—')`.
+   - Filament "Ставки" Placeholders: same fallback.
+
+### Integration points
+
+| Layer | File | Role |
+|---|---|---|
+| Service | `app/Services/APRCalculatorService.php` | Pure `calculate(Loan): ?string` — nominal pass-through in v1 |
+| Model | `app/Models/Loan.php` | `apr(): ?string` — delegates to service, per-instance memo |
+| API | `app/Http/Resources/LoanResource.php` | `'apr' => $this->apr()` — null-safe |
+| Admin | `app/Filament/Resources/LoanResource.php` | Table column + "Ставки" edit-page section (Доходност / ГПР / Марж) |
+| Investor | `resources/js/views/MarketplacePage.vue` | ГПР table column + mobile-card sub-line |
+| Investor | `resources/js/views/InvestmentDetailPage.vue` | ГПР stat cell + helper paragraph |
+
+Form validation: `LoanResource::form` made `interest_rate_annual`
+`->required() ->minValue(0.01) ->maxValue(999.99)` with explicit
+`rules(['numeric', 'min:0.01', 'max:999.99'])`. Prevents new loans
+from being created with zero/null ГПР.
+
+### Known limitations (intentional; v1.1+)
+
+- **Nominal pass-through only.** IRR solver is the v1.1 upgrade
+  trigger when any borrower-side fee activates (F5-L1). Today's
+  math is exact because fees are zero.
+- **No `apr_at_activation` snapshot column.** Live recalculation;
+  if regulation ever requires "APR as disclosed on day X"
+  preservation, add snapshot + set it on `funded → active`
+  transition (F5-L2).
+- **No Vue browser tests** — same coverage gap as F1/F2/F3/F4.
+  Data-contract pinned via `LoanAPRApiTest`; Filament
+  render-smoke pinned via `LoanResourceAPRTest`. Manual browser
+  QA before production (F5-L3).
+- **`interest_rate_annual` = 0 loans render as "—".** Form
+  validation now blocks new ones, but existing rows created
+  before the `minValue(0.01)` rule may still carry zero. Backfill
+  is optional — UI handles it gracefully with the dash.
+
 ## Currency
 - Everything in EUR
 - Format: 1,234.56 €

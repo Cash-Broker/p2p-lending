@@ -1,10 +1,107 @@
-# Phase F5 — APR Display: Step 0 Discovery Report
+# Phase F5 — APR Display: Implementation Report
 
 **Branch:** `feature/apr-display` (from `main` at `cadc3a8`)
 **Base commit:** `cadc3a8` (F4 + Filament hotfix merged — 437 passed + 4 skipped = 441 tests, 1276 assertions)
 **Session start:** 2026-04-24
 **Client decision on Q7:** *A — implement APR display now.*
-**Status:** READ-ONLY discovery. Awaiting scope confirmation before Step 1.
+
+## Completion summary
+
+| Step | Description | Commit |
+|---|---|---|
+| 0 | Discovery (§1–§9 below) — greenfield finding, formula correction, 9 open questions resolved. | (this doc, pre-commit) |
+| 1 | `APRCalculatorService` + `Loan::apr()` memoized accessor + `LoanResource` form hardening (minValue/maxValue + helper text) + DECISIONS.md F5-01 + this audit | `db78bd6` |
+| Batch A+B | API `LoanResource` `apr` field + Filament table column "ГПР (APR)" + "Ставки" edit-page section (Доходност/ГПР/Марж) + Vue MarketplacePage column + Vue InvestmentDetailPage stat cell + helper copy + 17 new tests | `3fb38e6` |
+| Final | CLAUDE.md Phase F5 section + this audit finalised + README Operations extension | (this commit) |
+
+## Test coverage (final)
+
+| Metric | Pre-F5 baseline* | F5 final | Delta |
+|---|---|---|---|
+| Tests passed | 437 | **454** | +17 |
+| Tests skipped | 4 | 4 | 0 |
+| **Total** | 441 | **458** | **+17** |
+| Assertions | 1276 | **1300** | +24 |
+| Test files in tests/ | 42 | **46** | +4 new F5 |
+| Regressions on F1/F2/F3/F4 tests | — | **0** | — |
+| Local MySQL suite duration | ~421 s | ~518 s | +97 s (new Livewire Filament smoke tests) |
+
+*Pre-F5 baseline = post-F4 + Filament hotfix (`cadc3a8`).
+
+### New F5 test files
+
+| File | Tests | Focus |
+|---|---|---|
+| `tests/Unit/Services/APRCalculatorServiceTest.php` | 7 | Nominal pass-through + null/zero/negative guards + precision normalisation + exact preservation at 9.99 / 10.01 / 999.99 bounds |
+| `tests/Unit/Models/LoanAPRTest.php` | 4 | `apr()` delegation + null return + **memoization contract pins** (once-called service mock for both non-null and null outcomes) |
+| `tests/Feature/Api/LoanAPRApiTest.php` | 3 | `apr` under `data.*` for index; `apr` at root for show (different wrapping via `response()->json(new Resource(...))`); DB-zero → JSON null |
+| `tests/Feature/LoanResourceAPRTest.php` | 3 | ListLoans render + zero-apr row doesn't crash + EditLoan renders "Ставки" section end-to-end (all 3 Placeholder closures fire) |
+
+## Known limitations (intentional; v1.1+)
+
+| # | Limitation | Follow-up |
+|---|---|---|
+| F5-L1 | **Nominal pass-through only.** `APRCalculatorService::calculate()` returns `number_format((float)$loan->interest_rate_annual, 2)` — EXACT for no-fee annuity loans but diverges from the EU CCD IRR-defined APR the moment any borrower-side fee activates. | Upgrade trigger: first borrower-side fee category (origination/service/late/inactivity) goes live in `FeeService::CATEGORIES`. Swap the service body for Newton-Raphson IRR in bcmath. Caller contract preserved (`calculate(Loan): ?string`) — no UI/API edits needed. ~1-day solver + 0.5-day test fixtures from regulator example calculators. |
+| F5-L2 | **No `apr_at_activation` snapshot column.** Live recalculation only. If the borrower rate changes after disclosure (rare — but possible via direct DB intervention), the APR displayed today differs from what was disclosed to the investor at investment time. | If Bulgarian CCD enforcement ever mandates "APR as disclosed on day X" preservation: add nullable `apr_at_activation decimal(5,2)` column, set on `funded → active` transition, render it in the investor detail page alongside the live APR when they differ. |
+| F5-L3 | **No Vue browser tests.** Same coverage gap as F1/F2/F3/F4. Data-contract pinned by `LoanAPRApiTest` (3 tests on index + show endpoints + DB-zero edge); Filament render-smoke pinned by `LoanResourceAPRTest` (3 Livewire tests including the Ставки section). Manual browser QA before production. | Standard pre-deploy checklist below. Phase 5 Frontend audit may address the broader Dusk setup. |
+| F5-L4 | **Zero-apr legacy rows.** Form validation now enforces `minValue(0.01)` on new loans, but any pre-F5 row with `interest_rate_annual = 0` renders as "—" in the UI. Not a data loss — the rate was always zero, UI just now surfaces that explicitly. Backfill optional. | If an operator wants clean display: `UPDATE loans SET interest_rate_annual = interest_rate WHERE interest_rate_annual <= 0` (or set to a business-sane default). Not recommended without audit — zero may reflect a legitimate promotional below-cost loan. |
+| F5-L5 | **Marge column not sortable.** Table sort is on `interest_rate_annual` only. Filtering/sorting by spread would require either a DB computed column or a query-time subselect. Not important in v1 (admin manually inspects per-loan). | Add a sortable derived column via `->getStateUsing` + a custom sort closure in v1.1 if the operator requests it. |
+
+## Operational pre-deploy checklist
+
+1. **Code deploy** — merge `feature/apr-display` to `main`. Verify `composer.lock` unchanged (F5 added no new PHP packages).
+2. **No migration** — F5 is pure calculation. `php artisan migrate:status` should show zero pending. Any legacy loan with `interest_rate_annual = 0` will render "—" everywhere (F5-L4) — optional backfill per §L4 guidance.
+3. **Assets rebuild** — `npm run build`. F5 modified `resources/js/views/MarketplacePage.vue` and `InvestmentDetailPage.vue`; stale `public/build/` won't show the ГПР column/cell or the helper copy.
+4. **Admin Filament smoke** — log in as admin. Navigate **Кредити**:
+   - Table: new "ГПР (APR)" column between "Доходност" and "Срок". Values formatted as "X.XX%" or "—" for zero-annual rows. Sortable (click header).
+   - Edit any loan: new "Ставки" section visible on edit page. Three Placeholders render (Доходност, ГПР, Марж). Марж value = ГПР − Доходност, correct sign.
+   - Create a new loan: "Ставки" section **hidden** on create page (no record yet). Attempting to save with zero in either rate field shows validation error "must be at least 0.01".
+5. **Investor Vue smoke** (on a browser reloaded after `npm run build`):
+   - `/marketplace`: desktop table shows "ГПР" column with values; mobile card shows "ГПР X%" sub-line under the existing interest-rate badge. Hover header tooltip shows "ГПР — Годишен Процент на Разходите...".
+   - `/invest/{id}`: stats grid has 5 cells on wide screens (Сума / Доходност / ГПР / Срок / Инвеститори); helper paragraph below the grid explains both rates.
+6. **API smoke**:
+   ```sh
+   curl -H "Authorization: Bearer $INVESTOR_TOKEN" https://app/api/loans | jq '.data[0].apr'
+   # expect "10.50" or similar 2-decimal string (or null for zero-annual loans)
+   curl -H "Authorization: Bearer $INVESTOR_TOKEN" https://app/api/loans/1 | jq '.apr'
+   # expect same format; note NO `data` wrapping on show endpoint
+   ```
+7. **Regression spot-check** — existing loan actions (invest, early-repay, buyback queue, fees page) should all continue to work. F5 touched no service/state-machine code.
+8. **No queue worker or cron changes** — F5 adds neither.
+9. **Public copy** — no changes required. F5 is admin + authenticated-investor only (per Q5). Landing page and chatbot do not mention APR.
+
+## Step completion order
+
+```
+db78bd6 (step 1)       →
+3fb38e6 (batch a+b)    →
+<this commit> (final)
+```
+
+Base: `cadc3a8` (F4 + Filament hotfix).
+
+## Q1–Q9 final resolution
+
+All 9 discovery questions resolved before Step 1. Summary:
+
+| Q | Topic | Resolution |
+|---|---|---|
+| Q1 | Rate source | **Q1c — dual display.** Доходност (investor, `interest_rate`) + ГПР (borrower, `interest_rate_annual`). Unlocks F1-L6 productively; preserves existing investor-facing "Доходност" semantic. |
+| Q2 | Formula | **Option A — nominal pass-through.** Mathematically exact for no-fee annuity. IRR solver is the v1.1 upgrade path (F5-L1). |
+| Q3 | Label | Vue = "ГПР" (BG regulatory). Filament = "ГПР (APR)" bilingual for admin clarity. Comments/code = "APR". |
+| Q4 | Precision | **2 decimals.** Matches `decimal:2` cast, EU CCD norm, SPA parseFloat-toFixed stability. |
+| Q5 | Display scope | Admin: always (list column + detail section). Investor: marketplace + loan detail. **Not shown:** landing, dashboard, portfolio (per Q5 — avoid signal dilution). |
+| Q6 | Live vs frozen | **Live** — pure calc, per-instance memo. No `apr_at_activation` column (F5-L2 revisit trigger). |
+| Q7 | Implement now | ✓ Confirmed before discovery. |
+| Q8 | Seeder changes | None — `DatabaseSeeder.php` already supplies `interest_rate_annual` for every loan. |
+| Q9 | Backfill | None needed — all seeded loans have positive `interest_rate_annual`. F5-L4 documents the optional backfill procedure for hypothetical zero-rate rows. |
+
+## Risks revisited (from Discovery §7, post-implementation status)
+
+- **Formula choice drift** — MITIGATED. `APRCalculatorService::calculate()` is the single change point when fees activate. Caller contract preserved. DECISIONS.md F5-01 documents the upgrade trigger + estimate.
+- **Dual-display confusion** — MITIGATED. Helper copy below the InvestmentDetailPage stats grid explicitly distinguishes "what you earn" from "what the borrower pays". Hover tooltips on each stat cell add secondary-channel explanation.
+- **F1-L6 activation** — MITIGATED. Three-layer null-safe defense (service / model / UI) + form `minValue(0.01)` prevents future zero entries. Legacy zero rows render "—" (F5-L4).
+- **Seeder honesty** — VERIFIED. Seeded loans have `interest_rate_annual > interest_rate` by 1–3 percentage points (factory spread logic). Investor UI will show plausible dual-rate values immediately after `migrate:fresh --seed`.
 
 ---
 
