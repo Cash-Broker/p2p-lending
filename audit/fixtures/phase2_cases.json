@@ -1,0 +1,2879 @@
+{
+  "cases": [
+    {
+      "case_id": "AM-baseline_sanity",
+      "kind": "amortization",
+      "input": {
+        "amount": "1000",
+        "interest_rate": "10",
+        "term_months": 12
+      },
+      "expected": {
+        "monthly_payment": "87.91",
+        "schedule": [
+          {
+            "principal": "79.58",
+            "interest": "8.33",
+            "total": "87.91"
+          },
+          {
+            "principal": "80.24",
+            "interest": "7.67",
+            "total": "87.91"
+          },
+          {
+            "principal": "80.91",
+            "interest": "7.00",
+            "total": "87.91"
+          },
+          {
+            "principal": "81.59",
+            "interest": "6.32",
+            "total": "87.91"
+          },
+          {
+            "principal": "82.27",
+            "interest": "5.64",
+            "total": "87.91"
+          },
+          {
+            "principal": "82.95",
+            "interest": "4.96",
+            "total": "87.91"
+          },
+          {
+            "principal": "83.64",
+            "interest": "4.27",
+            "total": "87.91"
+          },
+          {
+            "principal": "84.34",
+            "interest": "3.57",
+            "total": "87.91"
+          },
+          {
+            "principal": "85.04",
+            "interest": "2.87",
+            "total": "87.91"
+          },
+          {
+            "principal": "85.75",
+            "interest": "2.16",
+            "total": "87.91"
+          },
+          {
+            "principal": "86.47",
+            "interest": "1.44",
+            "total": "87.91"
+          },
+          {
+            "principal": "87.22",
+            "interest": "0.72",
+            "total": "87.94"
+          }
+        ],
+        "principal_sum": "1000.00",
+        "interest_sum": "54.95",
+        "total_paid": "1054.95"
+      }
+    },
+    {
+      "case_id": "AM-typical_10k_12pct_12mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "10000",
+        "interest_rate": "12",
+        "term_months": 12
+      },
+      "expected": {
+        "monthly_payment": "888.48",
+        "schedule": [
+          {
+            "principal": "788.48",
+            "interest": "100.00",
+            "total": "888.48"
+          },
+          {
+            "principal": "796.37",
+            "interest": "92.11",
+            "total": "888.48"
+          },
+          {
+            "principal": "804.33",
+            "interest": "84.15",
+            "total": "888.48"
+          },
+          {
+            "principal": "812.38",
+            "interest": "76.10",
+            "total": "888.48"
+          },
+          {
+            "principal": "820.50",
+            "interest": "67.98",
+            "total": "888.48"
+          },
+          {
+            "principal": "828.71",
+            "interest": "59.77",
+            "total": "888.48"
+          },
+          {
+            "principal": "836.99",
+            "interest": "51.49",
+            "total": "888.48"
+          },
+          {
+            "principal": "845.36",
+            "interest": "43.12",
+            "total": "888.48"
+          },
+          {
+            "principal": "853.82",
+            "interest": "34.66",
+            "total": "888.48"
+          },
+          {
+            "principal": "862.35",
+            "interest": "26.13",
+            "total": "888.48"
+          },
+          {
+            "principal": "870.98",
+            "interest": "17.50",
+            "total": "888.48"
+          },
+          {
+            "principal": "879.73",
+            "interest": "8.79",
+            "total": "888.52"
+          }
+        ],
+        "principal_sum": "10000.00",
+        "interest_sum": "661.80",
+        "total_paid": "10661.80"
+      }
+    },
+    {
+      "case_id": "AM-typical_100k_8pct_24mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "100000",
+        "interest_rate": "8",
+        "term_months": 24
+      },
+      "expected": {
+        "monthly_payment": "4522.72",
+        "schedule": [
+          {
+            "principal": "3856.06",
+            "interest": "666.66",
+            "total": "4522.72"
+          },
+          {
+            "principal": "3881.77",
+            "interest": "640.95",
+            "total": "4522.72"
+          },
+          {
+            "principal": "3907.64",
+            "interest": "615.08",
+            "total": "4522.72"
+          },
+          {
+            "principal": "3933.69",
+            "interest": "589.03",
+            "total": "4522.72"
+          },
+          {
+            "principal": "3959.92",
+            "interest": "562.80",
+            "total": "4522.72"
+          },
+          {
+            "principal": "3986.32",
+            "interest": "536.40",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4012.89",
+            "interest": "509.83",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4039.65",
+            "interest": "483.07",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4066.58",
+            "interest": "456.14",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4093.69",
+            "interest": "429.03",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4120.98",
+            "interest": "401.74",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4148.45",
+            "interest": "374.27",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4176.11",
+            "interest": "346.61",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4203.95",
+            "interest": "318.77",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4231.98",
+            "interest": "290.74",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4260.19",
+            "interest": "262.53",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4288.59",
+            "interest": "234.13",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4317.18",
+            "interest": "205.54",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4345.96",
+            "interest": "176.76",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4374.94",
+            "interest": "147.78",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4404.10",
+            "interest": "118.62",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4433.46",
+            "interest": "89.26",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4463.02",
+            "interest": "59.70",
+            "total": "4522.72"
+          },
+          {
+            "principal": "4492.88",
+            "interest": "29.95",
+            "total": "4522.83"
+          }
+        ],
+        "principal_sum": "100000.00",
+        "interest_sum": "8545.39",
+        "total_paid": "108545.39"
+      }
+    },
+    {
+      "case_id": "AM-large_1m_5pct_60mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "1000000",
+        "interest_rate": "5",
+        "term_months": 60
+      },
+      "expected": {
+        "monthly_payment": "18871.23",
+        "schedule": [
+          {
+            "principal": "14704.57",
+            "interest": "4166.66",
+            "total": "18871.23"
+          },
+          {
+            "principal": "14765.84",
+            "interest": "4105.39",
+            "total": "18871.23"
+          },
+          {
+            "principal": "14827.36",
+            "interest": "4043.87",
+            "total": "18871.23"
+          },
+          {
+            "principal": "14889.14",
+            "interest": "3982.09",
+            "total": "18871.23"
+          },
+          {
+            "principal": "14951.18",
+            "interest": "3920.05",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15013.48",
+            "interest": "3857.75",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15076.03",
+            "interest": "3795.20",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15138.85",
+            "interest": "3732.38",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15201.93",
+            "interest": "3669.30",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15265.27",
+            "interest": "3605.96",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15328.88",
+            "interest": "3542.35",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15392.75",
+            "interest": "3478.48",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15456.88",
+            "interest": "3414.35",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15521.29",
+            "interest": "3349.94",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15585.96",
+            "interest": "3285.27",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15650.90",
+            "interest": "3220.33",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15716.11",
+            "interest": "3155.12",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15781.60",
+            "interest": "3089.63",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15847.35",
+            "interest": "3023.88",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15913.38",
+            "interest": "2957.85",
+            "total": "18871.23"
+          },
+          {
+            "principal": "15979.69",
+            "interest": "2891.54",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16046.27",
+            "interest": "2824.96",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16113.13",
+            "interest": "2758.10",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16180.27",
+            "interest": "2690.96",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16247.69",
+            "interest": "2623.54",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16315.38",
+            "interest": "2555.85",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16383.36",
+            "interest": "2487.87",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16451.63",
+            "interest": "2419.60",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16520.18",
+            "interest": "2351.05",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16589.01",
+            "interest": "2282.22",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16658.13",
+            "interest": "2213.10",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16727.54",
+            "interest": "2143.69",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16797.24",
+            "interest": "2073.99",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16867.23",
+            "interest": "2004.00",
+            "total": "18871.23"
+          },
+          {
+            "principal": "16937.51",
+            "interest": "1933.72",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17008.08",
+            "interest": "1863.15",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17078.95",
+            "interest": "1792.28",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17150.11",
+            "interest": "1721.12",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17221.57",
+            "interest": "1649.66",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17293.33",
+            "interest": "1577.90",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17365.38",
+            "interest": "1505.85",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17437.74",
+            "interest": "1433.49",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17510.39",
+            "interest": "1360.84",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17583.35",
+            "interest": "1287.88",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17656.62",
+            "interest": "1214.61",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17730.19",
+            "interest": "1141.04",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17804.06",
+            "interest": "1067.17",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17878.25",
+            "interest": "992.98",
+            "total": "18871.23"
+          },
+          {
+            "principal": "17952.74",
+            "interest": "918.49",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18027.54",
+            "interest": "843.69",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18102.66",
+            "interest": "768.57",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18178.08",
+            "interest": "693.15",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18253.83",
+            "interest": "617.40",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18329.88",
+            "interest": "541.35",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18406.26",
+            "interest": "464.97",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18482.95",
+            "interest": "388.28",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18559.96",
+            "interest": "311.27",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18637.30",
+            "interest": "233.93",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18714.95",
+            "interest": "156.28",
+            "total": "18871.23"
+          },
+          {
+            "principal": "18792.82",
+            "interest": "78.30",
+            "total": "18871.12"
+          }
+        ],
+        "principal_sum": "1000000.00",
+        "interest_sum": "132273.69",
+        "total_paid": "1132273.69"
+      }
+    },
+    {
+      "case_id": "AM-short_3mo_12pct",
+      "kind": "amortization",
+      "input": {
+        "amount": "1000",
+        "interest_rate": "12",
+        "term_months": 3
+      },
+      "expected": {
+        "monthly_payment": "340.02",
+        "schedule": [
+          {
+            "principal": "330.02",
+            "interest": "10.00",
+            "total": "340.02"
+          },
+          {
+            "principal": "333.33",
+            "interest": "6.69",
+            "total": "340.02"
+          },
+          {
+            "principal": "336.65",
+            "interest": "3.36",
+            "total": "340.01"
+          }
+        ],
+        "principal_sum": "1000.00",
+        "interest_sum": "20.05",
+        "total_paid": "1020.05"
+      }
+    },
+    {
+      "case_id": "AM-medium_10k_0pct_12mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "10000",
+        "interest_rate": "0",
+        "term_months": 12
+      },
+      "expected": {
+        "monthly_payment": "833.33",
+        "schedule": [
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.33",
+            "interest": "0.00",
+            "total": "833.33"
+          },
+          {
+            "principal": "833.37",
+            "interest": "0.00",
+            "total": "833.37"
+          }
+        ],
+        "principal_sum": "10000.00",
+        "interest_sum": "0.00",
+        "total_paid": "10000.00"
+      }
+    },
+    {
+      "case_id": "AM-high_24pct_10k_12mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "10000",
+        "interest_rate": "24",
+        "term_months": 12
+      },
+      "expected": {
+        "monthly_payment": "945.59",
+        "schedule": [
+          {
+            "principal": "745.59",
+            "interest": "200.00",
+            "total": "945.59"
+          },
+          {
+            "principal": "760.51",
+            "interest": "185.08",
+            "total": "945.59"
+          },
+          {
+            "principal": "775.72",
+            "interest": "169.87",
+            "total": "945.59"
+          },
+          {
+            "principal": "791.23",
+            "interest": "154.36",
+            "total": "945.59"
+          },
+          {
+            "principal": "807.06",
+            "interest": "138.53",
+            "total": "945.59"
+          },
+          {
+            "principal": "823.20",
+            "interest": "122.39",
+            "total": "945.59"
+          },
+          {
+            "principal": "839.66",
+            "interest": "105.93",
+            "total": "945.59"
+          },
+          {
+            "principal": "856.45",
+            "interest": "89.14",
+            "total": "945.59"
+          },
+          {
+            "principal": "873.58",
+            "interest": "72.01",
+            "total": "945.59"
+          },
+          {
+            "principal": "891.05",
+            "interest": "54.54",
+            "total": "945.59"
+          },
+          {
+            "principal": "908.88",
+            "interest": "36.71",
+            "total": "945.59"
+          },
+          {
+            "principal": "927.07",
+            "interest": "18.54",
+            "total": "945.61"
+          }
+        ],
+        "principal_sum": "10000.00",
+        "interest_sum": "1347.10",
+        "total_paid": "11347.10"
+      }
+    },
+    {
+      "case_id": "AM-long_60mo_5pct_10k",
+      "kind": "amortization",
+      "input": {
+        "amount": "10000",
+        "interest_rate": "5",
+        "term_months": 60
+      },
+      "expected": {
+        "monthly_payment": "188.71",
+        "schedule": [
+          {
+            "principal": "147.05",
+            "interest": "41.66",
+            "total": "188.71"
+          },
+          {
+            "principal": "147.66",
+            "interest": "41.05",
+            "total": "188.71"
+          },
+          {
+            "principal": "148.28",
+            "interest": "40.43",
+            "total": "188.71"
+          },
+          {
+            "principal": "148.89",
+            "interest": "39.82",
+            "total": "188.71"
+          },
+          {
+            "principal": "149.51",
+            "interest": "39.20",
+            "total": "188.71"
+          },
+          {
+            "principal": "150.14",
+            "interest": "38.57",
+            "total": "188.71"
+          },
+          {
+            "principal": "150.76",
+            "interest": "37.95",
+            "total": "188.71"
+          },
+          {
+            "principal": "151.39",
+            "interest": "37.32",
+            "total": "188.71"
+          },
+          {
+            "principal": "152.02",
+            "interest": "36.69",
+            "total": "188.71"
+          },
+          {
+            "principal": "152.66",
+            "interest": "36.05",
+            "total": "188.71"
+          },
+          {
+            "principal": "153.29",
+            "interest": "35.42",
+            "total": "188.71"
+          },
+          {
+            "principal": "153.93",
+            "interest": "34.78",
+            "total": "188.71"
+          },
+          {
+            "principal": "154.57",
+            "interest": "34.14",
+            "total": "188.71"
+          },
+          {
+            "principal": "155.22",
+            "interest": "33.49",
+            "total": "188.71"
+          },
+          {
+            "principal": "155.86",
+            "interest": "32.85",
+            "total": "188.71"
+          },
+          {
+            "principal": "156.51",
+            "interest": "32.20",
+            "total": "188.71"
+          },
+          {
+            "principal": "157.16",
+            "interest": "31.55",
+            "total": "188.71"
+          },
+          {
+            "principal": "157.82",
+            "interest": "30.89",
+            "total": "188.71"
+          },
+          {
+            "principal": "158.48",
+            "interest": "30.23",
+            "total": "188.71"
+          },
+          {
+            "principal": "159.14",
+            "interest": "29.57",
+            "total": "188.71"
+          },
+          {
+            "principal": "159.80",
+            "interest": "28.91",
+            "total": "188.71"
+          },
+          {
+            "principal": "160.47",
+            "interest": "28.24",
+            "total": "188.71"
+          },
+          {
+            "principal": "161.13",
+            "interest": "27.58",
+            "total": "188.71"
+          },
+          {
+            "principal": "161.81",
+            "interest": "26.90",
+            "total": "188.71"
+          },
+          {
+            "principal": "162.48",
+            "interest": "26.23",
+            "total": "188.71"
+          },
+          {
+            "principal": "163.16",
+            "interest": "25.55",
+            "total": "188.71"
+          },
+          {
+            "principal": "163.84",
+            "interest": "24.87",
+            "total": "188.71"
+          },
+          {
+            "principal": "164.52",
+            "interest": "24.19",
+            "total": "188.71"
+          },
+          {
+            "principal": "165.20",
+            "interest": "23.51",
+            "total": "188.71"
+          },
+          {
+            "principal": "165.89",
+            "interest": "22.82",
+            "total": "188.71"
+          },
+          {
+            "principal": "166.58",
+            "interest": "22.13",
+            "total": "188.71"
+          },
+          {
+            "principal": "167.28",
+            "interest": "21.43",
+            "total": "188.71"
+          },
+          {
+            "principal": "167.98",
+            "interest": "20.73",
+            "total": "188.71"
+          },
+          {
+            "principal": "168.68",
+            "interest": "20.03",
+            "total": "188.71"
+          },
+          {
+            "principal": "169.38",
+            "interest": "19.33",
+            "total": "188.71"
+          },
+          {
+            "principal": "170.08",
+            "interest": "18.63",
+            "total": "188.71"
+          },
+          {
+            "principal": "170.79",
+            "interest": "17.92",
+            "total": "188.71"
+          },
+          {
+            "principal": "171.50",
+            "interest": "17.21",
+            "total": "188.71"
+          },
+          {
+            "principal": "172.22",
+            "interest": "16.49",
+            "total": "188.71"
+          },
+          {
+            "principal": "172.94",
+            "interest": "15.77",
+            "total": "188.71"
+          },
+          {
+            "principal": "173.66",
+            "interest": "15.05",
+            "total": "188.71"
+          },
+          {
+            "principal": "174.38",
+            "interest": "14.33",
+            "total": "188.71"
+          },
+          {
+            "principal": "175.11",
+            "interest": "13.60",
+            "total": "188.71"
+          },
+          {
+            "principal": "175.84",
+            "interest": "12.87",
+            "total": "188.71"
+          },
+          {
+            "principal": "176.57",
+            "interest": "12.14",
+            "total": "188.71"
+          },
+          {
+            "principal": "177.31",
+            "interest": "11.40",
+            "total": "188.71"
+          },
+          {
+            "principal": "178.04",
+            "interest": "10.67",
+            "total": "188.71"
+          },
+          {
+            "principal": "178.79",
+            "interest": "9.92",
+            "total": "188.71"
+          },
+          {
+            "principal": "179.53",
+            "interest": "9.18",
+            "total": "188.71"
+          },
+          {
+            "principal": "180.28",
+            "interest": "8.43",
+            "total": "188.71"
+          },
+          {
+            "principal": "181.03",
+            "interest": "7.68",
+            "total": "188.71"
+          },
+          {
+            "principal": "181.78",
+            "interest": "6.93",
+            "total": "188.71"
+          },
+          {
+            "principal": "182.54",
+            "interest": "6.17",
+            "total": "188.71"
+          },
+          {
+            "principal": "183.30",
+            "interest": "5.41",
+            "total": "188.71"
+          },
+          {
+            "principal": "184.07",
+            "interest": "4.64",
+            "total": "188.71"
+          },
+          {
+            "principal": "184.83",
+            "interest": "3.88",
+            "total": "188.71"
+          },
+          {
+            "principal": "185.60",
+            "interest": "3.11",
+            "total": "188.71"
+          },
+          {
+            "principal": "186.38",
+            "interest": "2.33",
+            "total": "188.71"
+          },
+          {
+            "principal": "187.15",
+            "interest": "1.56",
+            "total": "188.71"
+          },
+          {
+            "principal": "187.74",
+            "interest": "0.78",
+            "total": "188.52"
+          }
+        ],
+        "principal_sum": "10000.00",
+        "interest_sum": "1322.41",
+        "total_paid": "11322.41"
+      }
+    },
+    {
+      "case_id": "AM-edge-1000-3mo-12pct",
+      "kind": "amortization",
+      "note": "Rounding-drift classic (user-specified edge)",
+      "input": {
+        "amount": "1000",
+        "interest_rate": "12",
+        "term_months": 3
+      },
+      "expected": {
+        "monthly_payment": "340.02",
+        "schedule": [
+          {
+            "principal": "330.02",
+            "interest": "10.00",
+            "total": "340.02"
+          },
+          {
+            "principal": "333.33",
+            "interest": "6.69",
+            "total": "340.02"
+          },
+          {
+            "principal": "336.65",
+            "interest": "3.36",
+            "total": "340.01"
+          }
+        ],
+        "principal_sum": "1000.00",
+        "interest_sum": "20.05",
+        "total_paid": "1020.05"
+      }
+    },
+    {
+      "case_id": "AM-edge-1-month",
+      "kind": "amortization",
+      "note": "Degenerate annuity (1-month loan)",
+      "input": {
+        "amount": "5000",
+        "interest_rate": "10",
+        "term_months": 1
+      },
+      "expected": {
+        "monthly_payment": "5041.66",
+        "schedule": [
+          {
+            "principal": "5000",
+            "interest": "41.66",
+            "total": "5041.66"
+          }
+        ],
+        "principal_sum": "5000.00",
+        "interest_sum": "41.66",
+        "total_paid": "5041.66"
+      }
+    },
+    {
+      "case_id": "AM-edge-precision-floor",
+      "kind": "amortization",
+      "note": "Precision floor (1 cent principal). Zero-interest forced — annuity of 0.01 @ 10%/12 underflows to unpayable.",
+      "input": {
+        "amount": "0.01",
+        "interest_rate": "0",
+        "term_months": 1
+      },
+      "expected": {
+        "monthly_payment": "0.01",
+        "schedule": [
+          {
+            "principal": "0.01",
+            "interest": "0.00",
+            "total": "0.01"
+          }
+        ],
+        "principal_sum": "0.01",
+        "interest_sum": "0.00",
+        "total_paid": "0.01"
+      }
+    },
+    {
+      "case_id": "AM-mx-1k-5pct-6mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "1000",
+        "interest_rate": "5",
+        "term_months": 6
+      },
+      "expected": {
+        "monthly_payment": "169.10",
+        "schedule": [
+          {
+            "principal": "164.94",
+            "interest": "4.16",
+            "total": "169.10"
+          },
+          {
+            "principal": "165.63",
+            "interest": "3.47",
+            "total": "169.10"
+          },
+          {
+            "principal": "166.32",
+            "interest": "2.78",
+            "total": "169.10"
+          },
+          {
+            "principal": "167.01",
+            "interest": "2.09",
+            "total": "169.10"
+          },
+          {
+            "principal": "167.70",
+            "interest": "1.40",
+            "total": "169.10"
+          },
+          {
+            "principal": "168.40",
+            "interest": "0.70",
+            "total": "169.10"
+          }
+        ],
+        "principal_sum": "1000.00",
+        "interest_sum": "14.60",
+        "total_paid": "1014.60"
+      }
+    },
+    {
+      "case_id": "AM-mx-1k-24pct-6mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "1000",
+        "interest_rate": "24",
+        "term_months": 6
+      },
+      "expected": {
+        "monthly_payment": "178.52",
+        "schedule": [
+          {
+            "principal": "158.52",
+            "interest": "20.00",
+            "total": "178.52"
+          },
+          {
+            "principal": "161.70",
+            "interest": "16.82",
+            "total": "178.52"
+          },
+          {
+            "principal": "164.93",
+            "interest": "13.59",
+            "total": "178.52"
+          },
+          {
+            "principal": "168.23",
+            "interest": "10.29",
+            "total": "178.52"
+          },
+          {
+            "principal": "171.59",
+            "interest": "6.93",
+            "total": "178.52"
+          },
+          {
+            "principal": "175.03",
+            "interest": "3.50",
+            "total": "178.53"
+          }
+        ],
+        "principal_sum": "1000.00",
+        "interest_sum": "71.13",
+        "total_paid": "1071.13"
+      }
+    },
+    {
+      "case_id": "AM-mx-100k-5pct-12mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "100000",
+        "interest_rate": "5",
+        "term_months": 12
+      },
+      "expected": {
+        "monthly_payment": "8560.74",
+        "schedule": [
+          {
+            "principal": "8144.08",
+            "interest": "416.66",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8178.01",
+            "interest": "382.73",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8212.09",
+            "interest": "348.65",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8246.30",
+            "interest": "314.44",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8280.66",
+            "interest": "280.08",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8315.17",
+            "interest": "245.57",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8349.81",
+            "interest": "210.93",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8384.60",
+            "interest": "176.14",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8419.54",
+            "interest": "141.20",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8454.62",
+            "interest": "106.12",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8489.85",
+            "interest": "70.89",
+            "total": "8560.74"
+          },
+          {
+            "principal": "8525.27",
+            "interest": "35.52",
+            "total": "8560.79"
+          }
+        ],
+        "principal_sum": "100000.00",
+        "interest_sum": "2728.93",
+        "total_paid": "102728.93"
+      }
+    },
+    {
+      "case_id": "AM-mx-100k-12pct-36mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "100000",
+        "interest_rate": "12",
+        "term_months": 36
+      },
+      "expected": {
+        "monthly_payment": "3321.43",
+        "schedule": [
+          {
+            "principal": "2321.43",
+            "interest": "1000.00",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2344.65",
+            "interest": "976.78",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2368.10",
+            "interest": "953.33",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2391.78",
+            "interest": "929.65",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2415.69",
+            "interest": "905.74",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2439.85",
+            "interest": "881.58",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2464.25",
+            "interest": "857.18",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2488.89",
+            "interest": "832.54",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2513.78",
+            "interest": "807.65",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2538.92",
+            "interest": "782.51",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2564.31",
+            "interest": "757.12",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2589.95",
+            "interest": "731.48",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2615.85",
+            "interest": "705.58",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2642.01",
+            "interest": "679.42",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2668.43",
+            "interest": "653.00",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2695.11",
+            "interest": "626.32",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2722.06",
+            "interest": "599.37",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2749.29",
+            "interest": "572.14",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2776.78",
+            "interest": "544.65",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2804.55",
+            "interest": "516.88",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2832.59",
+            "interest": "488.84",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2860.92",
+            "interest": "460.51",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2889.53",
+            "interest": "431.90",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2918.42",
+            "interest": "403.01",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2947.61",
+            "interest": "373.82",
+            "total": "3321.43"
+          },
+          {
+            "principal": "2977.08",
+            "interest": "344.35",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3006.85",
+            "interest": "314.58",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3036.92",
+            "interest": "284.51",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3067.29",
+            "interest": "254.14",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3097.96",
+            "interest": "223.47",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3128.94",
+            "interest": "192.49",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3160.23",
+            "interest": "161.20",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3191.84",
+            "interest": "129.59",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3223.75",
+            "interest": "97.68",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3255.99",
+            "interest": "65.44",
+            "total": "3321.43"
+          },
+          {
+            "principal": "3288.40",
+            "interest": "32.88",
+            "total": "3321.28"
+          }
+        ],
+        "principal_sum": "100000.00",
+        "interest_sum": "19571.33",
+        "total_paid": "119571.33"
+      }
+    },
+    {
+      "case_id": "AM-mx-1m-8pct-36mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "1000000",
+        "interest_rate": "8",
+        "term_months": 36
+      },
+      "expected": {
+        "monthly_payment": "31336.36",
+        "schedule": [
+          {
+            "principal": "24669.70",
+            "interest": "6666.66",
+            "total": "31336.36"
+          },
+          {
+            "principal": "24834.16",
+            "interest": "6502.20",
+            "total": "31336.36"
+          },
+          {
+            "principal": "24999.72",
+            "interest": "6336.64",
+            "total": "31336.36"
+          },
+          {
+            "principal": "25166.39",
+            "interest": "6169.97",
+            "total": "31336.36"
+          },
+          {
+            "principal": "25334.16",
+            "interest": "6002.20",
+            "total": "31336.36"
+          },
+          {
+            "principal": "25503.06",
+            "interest": "5833.30",
+            "total": "31336.36"
+          },
+          {
+            "principal": "25673.08",
+            "interest": "5663.28",
+            "total": "31336.36"
+          },
+          {
+            "principal": "25844.23",
+            "interest": "5492.13",
+            "total": "31336.36"
+          },
+          {
+            "principal": "26016.53",
+            "interest": "5319.83",
+            "total": "31336.36"
+          },
+          {
+            "principal": "26189.97",
+            "interest": "5146.39",
+            "total": "31336.36"
+          },
+          {
+            "principal": "26364.57",
+            "interest": "4971.79",
+            "total": "31336.36"
+          },
+          {
+            "principal": "26540.34",
+            "interest": "4796.02",
+            "total": "31336.36"
+          },
+          {
+            "principal": "26717.27",
+            "interest": "4619.09",
+            "total": "31336.36"
+          },
+          {
+            "principal": "26895.39",
+            "interest": "4440.97",
+            "total": "31336.36"
+          },
+          {
+            "principal": "27074.69",
+            "interest": "4261.67",
+            "total": "31336.36"
+          },
+          {
+            "principal": "27255.19",
+            "interest": "4081.17",
+            "total": "31336.36"
+          },
+          {
+            "principal": "27436.89",
+            "interest": "3899.47",
+            "total": "31336.36"
+          },
+          {
+            "principal": "27619.80",
+            "interest": "3716.56",
+            "total": "31336.36"
+          },
+          {
+            "principal": "27803.93",
+            "interest": "3532.43",
+            "total": "31336.36"
+          },
+          {
+            "principal": "27989.29",
+            "interest": "3347.07",
+            "total": "31336.36"
+          },
+          {
+            "principal": "28175.89",
+            "interest": "3160.47",
+            "total": "31336.36"
+          },
+          {
+            "principal": "28363.73",
+            "interest": "2972.63",
+            "total": "31336.36"
+          },
+          {
+            "principal": "28552.82",
+            "interest": "2783.54",
+            "total": "31336.36"
+          },
+          {
+            "principal": "28743.17",
+            "interest": "2593.19",
+            "total": "31336.36"
+          },
+          {
+            "principal": "28934.79",
+            "interest": "2401.57",
+            "total": "31336.36"
+          },
+          {
+            "principal": "29127.69",
+            "interest": "2208.67",
+            "total": "31336.36"
+          },
+          {
+            "principal": "29321.87",
+            "interest": "2014.49",
+            "total": "31336.36"
+          },
+          {
+            "principal": "29517.35",
+            "interest": "1819.01",
+            "total": "31336.36"
+          },
+          {
+            "principal": "29714.14",
+            "interest": "1622.22",
+            "total": "31336.36"
+          },
+          {
+            "principal": "29912.23",
+            "interest": "1424.13",
+            "total": "31336.36"
+          },
+          {
+            "principal": "30111.65",
+            "interest": "1224.71",
+            "total": "31336.36"
+          },
+          {
+            "principal": "30312.39",
+            "interest": "1023.97",
+            "total": "31336.36"
+          },
+          {
+            "principal": "30514.47",
+            "interest": "821.89",
+            "total": "31336.36"
+          },
+          {
+            "principal": "30717.90",
+            "interest": "618.46",
+            "total": "31336.36"
+          },
+          {
+            "principal": "30922.69",
+            "interest": "413.67",
+            "total": "31336.36"
+          },
+          {
+            "principal": "31128.86",
+            "interest": "207.52",
+            "total": "31336.38"
+          }
+        ],
+        "principal_sum": "1000000.00",
+        "interest_sum": "128108.98",
+        "total_paid": "1128108.98"
+      }
+    },
+    {
+      "case_id": "AM-mx-10k-5pct-1mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "10000",
+        "interest_rate": "5",
+        "term_months": 1
+      },
+      "expected": {
+        "monthly_payment": "10041.66",
+        "schedule": [
+          {
+            "principal": "10000",
+            "interest": "41.66",
+            "total": "10041.66"
+          }
+        ],
+        "principal_sum": "10000.00",
+        "interest_sum": "41.66",
+        "total_paid": "10041.66"
+      }
+    },
+    {
+      "case_id": "AM-mx-10k-0pct-60mo",
+      "kind": "amortization",
+      "input": {
+        "amount": "10000",
+        "interest_rate": "0",
+        "term_months": 60
+      },
+      "expected": {
+        "monthly_payment": "166.66",
+        "schedule": [
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "166.66",
+            "interest": "0.00",
+            "total": "166.66"
+          },
+          {
+            "principal": "167.06",
+            "interest": "0.00",
+            "total": "167.06"
+          }
+        ],
+        "principal_sum": "10000.00",
+        "interest_sum": "0.00",
+        "total_paid": "10000.00"
+      }
+    },
+    {
+      "case_id": "PR-2inv-equal",
+      "kind": "prorata",
+      "input": {
+        "total": "100",
+        "investor_amounts": [
+          "50",
+          "50"
+        ]
+      },
+      "expected": {
+        "total": "100.00",
+        "funded": "100.00",
+        "distributions": [
+          "50.00",
+          "50.00"
+        ],
+        "sum_distributions": "100.00"
+      }
+    },
+    {
+      "case_id": "PR-3inv-equal",
+      "kind": "prorata",
+      "input": {
+        "total": "1000",
+        "investor_amounts": [
+          "333",
+          "333",
+          "334"
+        ]
+      },
+      "expected": {
+        "total": "1000.00",
+        "funded": "1000.00",
+        "distributions": [
+          "333.00",
+          "333.00",
+          "334.00"
+        ],
+        "sum_distributions": "1000.00"
+      }
+    },
+    {
+      "case_id": "PR-3inv-uneven",
+      "kind": "prorata",
+      "input": {
+        "total": "1000",
+        "investor_amounts": [
+          "500",
+          "300",
+          "200"
+        ]
+      },
+      "expected": {
+        "total": "1000.00",
+        "funded": "1000.00",
+        "distributions": [
+          "500.00",
+          "300.00",
+          "200.00"
+        ],
+        "sum_distributions": "1000.00"
+      }
+    },
+    {
+      "case_id": "PR-5inv-equal",
+      "kind": "prorata",
+      "input": {
+        "total": "10000",
+        "investor_amounts": [
+          "2000",
+          "2000",
+          "2000",
+          "2000",
+          "2000"
+        ]
+      },
+      "expected": {
+        "total": "10000.00",
+        "funded": "10000.00",
+        "distributions": [
+          "2000.00",
+          "2000.00",
+          "2000.00",
+          "2000.00",
+          "2000.00"
+        ],
+        "sum_distributions": "10000.00"
+      }
+    },
+    {
+      "case_id": "PR-5inv-weighted",
+      "kind": "prorata",
+      "input": {
+        "total": "10000",
+        "investor_amounts": [
+          "5000",
+          "2000",
+          "1500",
+          "1000",
+          "500"
+        ]
+      },
+      "expected": {
+        "total": "10000.00",
+        "funded": "10000.00",
+        "distributions": [
+          "5000.00",
+          "2000.00",
+          "1500.00",
+          "1000.00",
+          "500.00"
+        ],
+        "sum_distributions": "10000.00"
+      }
+    },
+    {
+      "case_id": "PR-10inv-equal",
+      "kind": "prorata",
+      "input": {
+        "total": "10000",
+        "investor_amounts": [
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000"
+        ]
+      },
+      "expected": {
+        "total": "10000.00",
+        "funded": "10000.00",
+        "distributions": [
+          "1000.00",
+          "1000.00",
+          "1000.00",
+          "1000.00",
+          "1000.00",
+          "1000.00",
+          "1000.00",
+          "1000.00",
+          "1000.00",
+          "1000.00"
+        ],
+        "sum_distributions": "10000.00"
+      }
+    },
+    {
+      "case_id": "PR-100-3-classic",
+      "kind": "prorata",
+      "note": "Last-investor-remainder stress",
+      "input": {
+        "total": "100",
+        "investor_amounts": [
+          "100",
+          "100",
+          "100"
+        ]
+      },
+      "expected": {
+        "total": "100.00",
+        "funded": "300.00",
+        "distributions": [
+          "33.33",
+          "33.33",
+          "33.34"
+        ],
+        "sum_distributions": "100.00"
+      }
+    },
+    {
+      "case_id": "PR-1000-7-cases",
+      "kind": "prorata",
+      "note": "Last-investor-remainder stress",
+      "input": {
+        "total": "1000",
+        "investor_amounts": [
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000",
+          "1000"
+        ]
+      },
+      "expected": {
+        "total": "1000.00",
+        "funded": "7000.00",
+        "distributions": [
+          "142.85",
+          "142.85",
+          "142.85",
+          "142.85",
+          "142.85",
+          "142.85",
+          "142.90"
+        ],
+        "sum_distributions": "1000.00"
+      }
+    },
+    {
+      "case_id": "PR-3inv-single-investor-share",
+      "kind": "prorata",
+      "note": "Last-investor-remainder stress",
+      "input": {
+        "total": "1",
+        "investor_amounts": [
+          "1",
+          "1",
+          "1"
+        ]
+      },
+      "expected": {
+        "total": "1.00",
+        "funded": "3.00",
+        "distributions": [
+          "0.33",
+          "0.33",
+          "0.34"
+        ],
+        "sum_distributions": "1.00"
+      }
+    },
+    {
+      "case_id": "PR-edge-99inv-equal",
+      "kind": "prorata",
+      "note": "99 investors equal shares (large pro-rata stress)",
+      "input": {
+        "total": "10000",
+        "investor_amounts": [
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100",
+          "100"
+        ]
+      },
+      "expected": {
+        "total": "10000.00",
+        "funded": "9900.00",
+        "distributions": [
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.01",
+          "101.02"
+        ],
+        "sum_distributions": "10000.00"
+      }
+    },
+    {
+      "case_id": "PR-edge-extreme-uneven",
+      "kind": "prorata",
+      "note": "Extreme uneven: 0.01%/99.99% split",
+      "input": {
+        "total": "10000",
+        "investor_amounts": [
+          "0.01",
+          "99.99"
+        ]
+      },
+      "expected": {
+        "total": "10000.00",
+        "funded": "100.00",
+        "distributions": [
+          "1.00",
+          "9999.00"
+        ],
+        "sum_distributions": "10000.00"
+      }
+    },
+    {
+      "case_id": "PR-1inv-trivial",
+      "kind": "prorata",
+      "note": "Single investor — pro-rata no-op",
+      "input": {
+        "total": "1000",
+        "investor_amounts": [
+          "1000"
+        ]
+      },
+      "expected": {
+        "total": "1000.00",
+        "funded": "1000.00",
+        "distributions": [
+          "1000.00"
+        ],
+        "sum_distributions": "1000.00"
+      }
+    },
+    {
+      "case_id": "BB-fresh-loan-principal-only",
+      "kind": "buyback",
+      "note": "Fresh loan, no payments made, principal-only coverage",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [],
+        "coverage": "principal_only"
+      },
+      "expected": {
+        "coverage": "principal_only",
+        "unpaid_principal": "10000.00",
+        "unpaid_interest": "0",
+        "total": "10000.00"
+      }
+    },
+    {
+      "case_id": "BB-fresh-loan-principal-plus-interest",
+      "kind": "buyback",
+      "note": "Fresh loan, no payments made, full coverage",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [],
+        "coverage": "principal_plus_interest"
+      },
+      "expected": {
+        "coverage": "principal_plus_interest",
+        "unpaid_principal": "10000.00",
+        "unpaid_interest": "661.80",
+        "total": "10661.80"
+      }
+    },
+    {
+      "case_id": "BB-partial-3-paid-principal-only",
+      "kind": "buyback",
+      "note": "3 installments paid, principal-only coverage",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [
+          0,
+          1,
+          2
+        ],
+        "coverage": "principal_only"
+      },
+      "expected": {
+        "coverage": "principal_only",
+        "unpaid_principal": "7610.82",
+        "unpaid_interest": "0",
+        "total": "7610.82"
+      }
+    },
+    {
+      "case_id": "BB-edge-partial-6-paid-full-coverage",
+      "kind": "buyback",
+      "note": "Loan half-paid then buyback (user-mandatory edge, full coverage)",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "coverage": "principal_plus_interest"
+      },
+      "expected": {
+        "coverage": "principal_plus_interest",
+        "unpaid_principal": "5149.23",
+        "unpaid_interest": "181.69",
+        "total": "5330.92"
+      }
+    },
+    {
+      "case_id": "BB-partial-11-paid-full-coverage",
+      "kind": "buyback",
+      "note": "Almost-complete loan bought back (last installment only)",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "coverage": "principal_plus_interest"
+      },
+      "expected": {
+        "coverage": "principal_plus_interest",
+        "unpaid_principal": "879.73",
+        "unpaid_interest": "8.79",
+        "total": "888.52"
+      }
+    },
+    {
+      "case_id": "ER-fresh-boundary-0",
+      "kind": "early_repayment",
+      "note": "Fresh loan, close at first installment boundary",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [],
+        "late_indices": [],
+        "boundary_index": 0
+      },
+      "expected": {
+        "outstanding_principal": "10000.00",
+        "unpaid_interest": "100.00",
+        "total": "10100.00"
+      }
+    },
+    {
+      "case_id": "ER-partial-3-paid-boundary-3",
+      "kind": "early_repayment",
+      "note": "3 paid, closing at boundary=installment 4 (index 3)",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [
+          0,
+          1,
+          2
+        ],
+        "late_indices": [],
+        "boundary_index": 3
+      },
+      "expected": {
+        "outstanding_principal": "7610.82",
+        "unpaid_interest": "76.10",
+        "total": "7686.92"
+      }
+    },
+    {
+      "case_id": "ER-partial-5-paid-boundary-5",
+      "kind": "early_repayment",
+      "note": "5 paid, closing at boundary=installment 6",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "late_indices": [],
+        "boundary_index": 5
+      },
+      "expected": {
+        "outstanding_principal": "5977.94",
+        "unpaid_interest": "59.77",
+        "total": "6037.71"
+      }
+    },
+    {
+      "case_id": "ER-edge-late-plus-early",
+      "kind": "early_repayment",
+      "note": "4 paid, installment 5 LATE, closing at boundary=6 — interest sums index-4 LATE + index-5 BOUNDARY",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "late_indices": [
+          4
+        ],
+        "boundary_index": 5
+      },
+      "expected": {
+        "outstanding_principal": "6798.44",
+        "unpaid_interest": "127.75",
+        "total": "6926.19"
+      }
+    },
+    {
+      "case_id": "ER-double-late-plus-boundary",
+      "kind": "early_repayment",
+      "note": "3 paid, indices 4+5 LATE, boundary=6 — interest sums 3 rows",
+      "input": {
+        "schedule_from": {
+          "amount": "10000",
+          "interest_rate": "12",
+          "term_months": 12
+        },
+        "paid_indices": [
+          0,
+          1,
+          2
+        ],
+        "late_indices": [
+          3,
+          4
+        ],
+        "boundary_index": 5
+      },
+      "expected": {
+        "outstanding_principal": "7610.82",
+        "unpaid_interest": "203.85",
+        "total": "7814.67"
+      }
+    },
+    {
+      "case_id": "APR-typical-10.50",
+      "kind": "apr",
+      "input": {
+        "interest_rate_annual": "10.50"
+      },
+      "expected": {
+        "apr": "10.50"
+      }
+    },
+    {
+      "case_id": "APR-typical-999.99",
+      "kind": "apr",
+      "input": {
+        "interest_rate_annual": "999.99"
+      },
+      "expected": {
+        "apr": "999.99"
+      }
+    },
+    {
+      "case_id": "APR-unpadded-12.5",
+      "kind": "apr",
+      "input": {
+        "interest_rate_annual": "12.5"
+      },
+      "expected": {
+        "apr": "12.50"
+      }
+    },
+    {
+      "case_id": "APR-zero-null",
+      "kind": "apr",
+      "input": {
+        "interest_rate_annual": "0"
+      },
+      "expected": {
+        "apr": null
+      }
+    },
+    {
+      "case_id": "APR-negative-null",
+      "kind": "apr",
+      "input": {
+        "interest_rate_annual": "-1"
+      },
+      "expected": {
+        "apr": null
+      }
+    }
+  ]
+}
