@@ -1,9 +1,209 @@
-# Phase F4 — Fees Infrastructure: Step 0 Discovery Report
+# Phase F4 — Fees Infrastructure: Implementation Report
 
-**Branch:** `claude/goofy-archimedes-b2be8f` (worktree on `main` @ `a30fafc`)
-**Base commit:** `a30fafc` (F3 fully shipped — 404 passed + 4 skipped = 408 tests, 1213 assertions)
+**Branch:** `feature/fees-infrastructure` (from `main` at `83458b7`)
+**Base commit:** `83458b7` (F3 chore/handoff — per `APP_BASE_PATH`-fixed
+baseline: 406 passed + 4 skipped = 410 tests, 1215 assertions)
 **Session start:** 2026-04-24
-**Status:** READ-ONLY discovery complete. Awaiting user scope confirmation before Step 1.
+**Client decision on Q5 (scope):** *E — infrastructure ready, disabled by
+default in v1.*
+
+## Completion summary
+
+| Step | Description | Commit |
+|---|---|---|
+| — | Copy hotfix: FAQ + chatbot → "безплатно" (decoupled from F4 main work; truth-before-infra) | `f301c19` |
+| 0 | Discovery (section 2 below) — catalogue 16 exists-and-wired items + dormant producers + missing pieces. Recommended GAP-FILL scope. | (this doc, pre-commit) |
+| 1 | Migration: `platform_settings` seed rows (`fees_withdrawal_enabled` bool, `fees_withdrawal_amount` float) + CHECK 0–100 + `PlatformSetting::set()` helper + FeesPage scaffold + DECISIONS.md F4-01 + this audit | `6dc63c6` |
+| Batch A (Steps 2+3+FeesPage UI) | `FeeService` + `FeeQuote` DTO + `WithdrawalService::approve()` branch-split + FeesPage live preview + stats + recent-fees list + 13 tests | `fa300b4` |
+| Batch B (Steps 4+5) | `FeeController` + `GET /api/fees/config` + `WithdrawalPage.vue` breakdown + 14 more tests | `36a00d8` |
+| 6 | CLAUDE.md Phase F4 section + this audit finalised + DECISIONS.md F4-02/F4-03 + README Operations extension | (this commit) |
+
+## Test coverage (final)
+
+| Metric | Pre-F4 baseline* | F4 final | Delta |
+|---|---|---|---|
+| Tests passed | 406 | **433** | +27 |
+| Tests skipped (documented null-path placeholders) | 4 | **4** | 0 |
+| **Total** | 410 | **437** | **+27** |
+| Assertions | 1215 | **1272** | +57 |
+| Test files in tests/ | 38 | **40** | +2 new F4 |
+| Regressions on F1/F2/F3 tests | — | **0** | — |
+| Local MySQL suite duration | ~225 s | ~262 s | stable |
+
+*"Pre-F4 baseline" uses the APP_BASE_PATH-corrected count. HANDOFF_F4
+recorded 404+4=408; discrepancy is dataProvider-case counting, not a
+regression (see "Worktree workflow notes" below).
+
+### New F4 test files
+
+| File | Tests | Focus |
+|---|---|---|
+| `tests/Unit/Services/FeeServiceTest.php` | 13 | Flag on/off matrix + zero-gross / zero-amount / missing-key edges + category whitelist + unpadded-value normalisation + large-gross precision + `FeeQuote::netAmount` arithmetic |
+| `tests/Feature/WithdrawalFeeTest.php` | 8 | Flag-off parity + flag-on two-debit + reserved-bucket invariant + negative-net guard + description/reference format + sequential-withdrawal uniqueness + TOCTOU (enable-between-create-and-approve) + reconciliation sum |
+| `tests/Feature/Api/FeesConfigApiTest.php` | 6 | Default disabled shape + public no-auth + flag toggle reflected + amount change reflected + stored-value normalisation + authenticated-equivalence |
+
+27 F4 tests, 3 files. No contract-guard pattern (no F4 notifications
+with dedupe). No whitelist-sanitisation guard (no F4 `loan_events`
+entries — see "Not written" below).
+
+## Known limitations (deliberate; v1.1 or separate follow-up)
+
+| # | Limitation | Follow-up |
+|---|---|---|
+| F4-L1 | **Withdrawal-only scope in v1.** Origination / service / late / early-repayment / inactivity fees are placeholder-ready (`Transaction::TYPE_FEE` + `LoanEvent::TYPE_FEE_APPLIED` exist since F1) but not implemented. Each category requires its own migration + `FeeService::CATEGORIES` entry + integration point. | Incremental — next fee category when business enables it. |
+| F4-L2 | **No platform-wallet model.** Fee revenue lives in admin's business bank account off-platform. Platform ledger records the debit only; no paired credit row. Reconciliation is the admin's bank statement vs. `SUM(transactions WHERE type='fee')` per period. | DECISIONS.md F4-01 documents trigger conditions (multi-tenant expansion, regulator-mandated fiduciary-vs-operating separation, admin reconciliation friction) + 2-3 day effort estimate for introducing `platform_wallets`. |
+| F4-L3 | **No browser tests.** Vue breakdown rendering is not covered by PHPUnit (no Dusk / Vitest in the project). Data-contract coverage via `FeesConfigApiTest` (6 tests pinning exact JSON shape) is the strongest guarantee without a browser-driver setup. Manual QA before merge is the v1 compensating control. | Dusk 1-2 day spike flagged for a separate follow-up. Phase 5 Frontend audit may address coverage gaps. |
+| F4-L4 | **Public-copy coupling.** When operator flips `fees_withdrawal_enabled=true`, FAQ (`resources/js/components/landing/FaqSection.vue`) + chatbot (`resources/js/components/ChatbotWidget.vue`) MUST be amended to describe the concrete fee. The FeesPage activation banner warns of this but does not enforce. Copy is currently "безплатно" (commit `f301c19`). | Activation procedure (manual). Could grow into a pre-toggle checklist in a future version of the FeesPage form. |
+| F4-L5 | **No per-loan fee events.** `LoanEvent::TYPE_FEE_APPLIED = 'fee_applied'` pre-expanded in the F1 enum but NOT written by F4. Withdrawal fees aren't loan-scoped. Origination / service / late fees (future) will write it; admin-internal metadata vs. investor-public will require extending `LoanEventResource::PUBLIC_METADATA_KEYS` at that time. | Deferred until a loan-scoped fee category lands. |
+
+## Operational pre-deploy checklist
+
+1. **Code deploy** — merge `feature/fees-infrastructure` to `main`.
+   Verify `composer.lock` unchanged (F4 added no new PHP packages).
+2. **Migration** — `php artisan migrate`. One new F4 migration applies
+   on top of F3's batch:
+   ```
+   2026_04_25_000002_seed_fee_platform_settings ........... DONE
+   ```
+   Verify 2 new rows in `platform_settings`:
+   ```sql
+   SELECT `key`, `value`, `type` FROM platform_settings
+    WHERE `key` LIKE 'fees_%';
+   -- fees_withdrawal_enabled | false | bool
+   -- fees_withdrawal_amount  | 2.50  | float
+   ```
+3. **CHECK constraint verification** (MySQL; SQLite has no CHECK):
+   ```sql
+   UPDATE platform_settings SET value = '101'
+    WHERE `key` = 'fees_withdrawal_amount';
+   -- expected: ERROR 3819 (HY000) check constraint violated
+   ```
+4. **Assets rebuild** — `npm run build`. F4 modified
+   `resources/js/views/WithdrawalPage.vue`; stale `public/build/`
+   will render the old version without the breakdown.
+5. **Flag-off smoke** (default state):
+    - Log in as investor. Navigate **Теглене**. Enter an amount >
+      available balance → error shown. Enter valid amount → submit →
+      confirmation modal shows gross only, no breakdown. Confirm →
+      admin Filament shows pending withdrawal → admin approves.
+    - Verify DB: ONE `transactions` row of `type='withdrawal'` with
+      amount = full requested; ZERO `type='fee'` rows.
+    - Confirm pre-F4 behaviour byte-identical.
+6. **Flag-on smoke** (admin activation):
+    - Log in as admin. Navigate **Финанси → Такси**. Verify the
+      activation banner with 4-step checklist. Amend the public copy
+      (FAQ + chatbot) first per the checklist. Flip `fees_withdrawal
+      _enabled` to true. Save. Verify `audit_logs` row written.
+    - Navigate `/fees/config` directly in the browser (unauth). Should
+      return `{"withdrawal":{"enabled":true,"amount":"2.50"}}`.
+    - As investor, initiate a withdrawal. Verify breakdown panel shows
+      Заявявате / Такса / Получавате with live math. Confirmation
+      modal shows the breakdown too.
+    - Submit + admin approves. Verify DB: TWO transaction rows per
+      withdrawal — `type='withdrawal'` amount = net (gross − fee) with
+      reference `withdrawal_request:{id}`, AND `type='fee'` amount =
+      fee with reference `withdrawal_request:{id}:fee`.
+    - Verify reserved bucket on the investor's wallet dropped to 0
+      after both debits.
+7. **Negative-net edge** — with flag on, create a withdrawal for an
+   amount ≤ fee (admin SQL insert or create with flag off, then
+   enable flag). Admin approves. Expect `ValidationException("must
+   exceed fee")`; withdrawal stays `pending`; no transactions
+   created; reserved bucket untouched.
+8. **FeesPage stats smoke** — return to **Финанси → Такси**. Verify
+   "Събрани такси (общо)" + "Този месец" cards show correct totals.
+   "Последни 10 такси" list shows the recent approvals.
+9. **Reconciliation** — after a few test withdrawals:
+   ```sql
+   SELECT SUM(amount) FROM transactions WHERE type = 'fee';
+   ```
+   Compare with the expected total (N withdrawals × fee amount). Any
+   discrepancy indicates a missed `TYPE_FEE` write path and needs
+   investigation BEFORE enabling for production.
+10. **Public copy** — after flag flip, re-verify FAQ + chatbot copy
+    describes the concrete fee (not the current "безплатно" from
+    `f301c19`). This is F4-L4; it's a HUMAN step, no test covers it.
+11. **Queue worker** — no new workers required. F4 added no investor-
+    facing notifications (per Q5 scope).
+12. **Cron** — no new scheduled commands. `crontab -l` should match
+    the F3 state.
+
+## Step completion order (for replay / forensic review)
+
+```
+f301c19 (copy hotfix)   →
+6dc63c6 (step 1)        →
+fa300b4 (batch a)       →
+36a00d8 (batch b)       →
+<this commit> (step 6)
+```
+
+Base: `83458b7` (F3 chore/handoff — "main" at the start of this session).
+
+## Q1–Q13 final resolution
+
+All 13 discovery questions resolved during Step 1 scope confirmation.
+Summary table:
+
+| Q | Topic | Resolution |
+|---|---|---|
+| Q1 | Fee categories in v1 | **Withdrawal only.** Origination / service / late / early-repayment / inactivity deferred. Each gets its own migration + FeeService extension when enabled (F4-L1). |
+| Q2 | Withdrawal fee shape | **Flat 2.50 €** (matches historical FAQ/chatbot copy). No percent, no floor. Configurable via FeesPage. |
+| Q3 | Who pays | **Investor.** Deducted from reserved bucket at admin approve time. |
+| Q4 | Timing (per-transaction or batch) | **Per-transaction** at `WithdrawalService::approve()` — no batch processing. |
+| Q5 | Ledger shape | **Option A — separate `TYPE_FEE` row** linked via `reference = 'withdrawal_request:{id}:fee'`. Mirrors F1/F2/F3 transaction-per-event pattern. |
+| Q6 | Investor UI display | **Wallet shows `available` dropping by gross** via two transactions (net `TYPE_WITHDRAWAL` + `TYPE_FEE`). Transactions page shows both rows; breakdown panel on WithdrawalPage shows math at request time. |
+| Q7 | Virtual-ledger accounting | **No platform-wallet bucket** — fee "leaves the ledger" from investor's POV. Admin's bank statement = revenue source of truth (DECISIONS.md F4-01). |
+| Q8 | Kill-switch shape | **Per-category flags**, not master. `fees_withdrawal_enabled` in v1; future categories add their own. |
+| Q9 | Public copy commitment | **Amend copy to "безплатно" first** (commit `f301c19`), then ship F4 with flag off. Flip copy back when flag flips on. |
+| Q10 | Admin-triggered or automatic | **Auto at approve time.** Fee lookup INSIDE `DB::transaction` (TOCTOU-safe). Admin triggers the approve; fee rides along. |
+| Q11 | Admin UI surface | **Dedicated FeesPage** (Filament Page, not Resource — DECISIONS.md F4-02). Navigation "Такси" under Финанси. |
+| Q12 | Investor pre-submit visibility | **Live breakdown in WithdrawalPage + confirmation modal** + `amountBelowFee` pre-submit guard. |
+| Q13 | Test coverage expectations | **27 F4 tests** — smoke + edge cases + API contract. Browser tests out of scope (F4-L3). |
+
+## Worktree workflow notes (Claude Code specific; not blocking merge)
+
+These quirks are artifacts of developing in a Claude Code worktree
+(`.claude/worktrees/goofy-archimedes-b2be8f`). They do NOT leak into
+the commit and clear automatically when `git worktree remove` runs.
+Documented here for any future developer following the same pattern.
+
+1. **Composer vendor junction** — `worktree/vendor` was created as a
+   Windows directory junction pointing at `parent/vendor` to avoid a
+   full `composer install` per worktree. Works for most operations,
+   but `Application::inferBasePath()` resolves its composer loader
+   through the junction and returns the PARENT path. As a result,
+   `php artisan test` (via phpunit) loads the parent's
+   `bootstrap/app.php`, sets `base_path()` to parent, and scans
+   parent's `database/migrations/` — missing any migrations that
+   exist only on the feature branch.
+2. **Fix: `APP_BASE_PATH` env var** — prefix test invocations with
+   `APP_BASE_PATH="$(pwd)"` so `inferBasePath()` picks up the worktree
+   path. `bootstrap/app.php` in production is called by `artisan`
+   (worktree's real file) which passes `basePath: dirname(__DIR__)`
+   explicitly — so this is test-only. Production `php artisan test`
+   from the merged branch in `main` needs no prefix.
+3. **public/build junction** — similarly junctioned to the parent for
+   the Laravel `ExampleTest` which requires `public/build/manifest.json`.
+4. **`.env` copied from parent** — worktree has no `.env`; `cp
+   ../../../.env .env` once per worktree. Gitignored.
+5. **Baseline count discrepancy** — HANDOFF_F4 recorded 404+4=408.
+   Actual on `83458b7` with APP_BASE_PATH fix is 406+4=410. 2-test
+   delta is dataProvider-case counting behaviour differences between
+   the two test invocations, not a regression. F4 adds +27 on top of
+   whichever baseline.
+
+`git status --short` shows only the 6 F4 implementation commits' worth
+of files. None of the scaffolding above is tracked.
+
+---
+
+## Step 0 — original Discovery Report (below)
+
+*The section that follows is the verbatim read-only discovery document
+written before Step 1. Preserved for forensic review — DO NOT EDIT.
+Superseded by the Implementation Report above for current-state
+reference.*
 
 ---
 

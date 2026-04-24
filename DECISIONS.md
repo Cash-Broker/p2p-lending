@@ -547,3 +547,98 @@ remediations as a new entry that references the old one).
   credit platform), reconciliation query updates, test coverage.
 
 ---
+
+## F4-02: Filament Page over Resource for singleton fee config
+
+- **Date:** 2026-04-24
+- **Decision:** The admin-facing fee configuration surface is a
+  Filament **Page** (`app/Filament/Pages/FeesPage.php`), not a
+  Filament **Resource**. Uses `platform_settings` rows as the
+  backing store — no dedicated `fees` table and no `Fee` model.
+- **Rationale:**
+  - A Resource requires a backing Eloquent model. With fee config
+    stored as 2 rows in the existing `platform_settings` table,
+    the Resource options were:
+    - (a) A sham single-row "FeeConfig" model mapping onto platform_
+      settings rows via custom accessors — hacky.
+    - (b) `PlatformSetting` Resource scoped to fee keys only —
+      duplicates the existing `PlatformSettingResource` with a
+      narrower filter.
+    Both fight Filament's design.
+  - Filament `Page` is the idiomatic primitive for singleton config
+    screens. Precedent in this codebase: `BuybackQueue.php`,
+    `ProcessRepayment.php`.
+  - User outcome identical: "Такси" navigation item under **Финанси**,
+    purpose-built form fields, admin-only access.
+- **Audit trail unchanged:** `PlatformSetting` has the `Auditable`
+  trait; every save routes through `update()` → writes to
+  `audit_logs` with old/new value, admin id, IP, UA.
+- **Trade-off:** slightly more boilerplate than a Resource (own
+  Blade view + form setup), but avoids a sham model. A dedicated
+  `fees` table becomes worth the cost only when per-tenant or
+  per-originator fee overrides land — then FeeResource on the new
+  model replaces the Page.
+- **Trigger conditions for revisiting:**
+  - Multi-tenant expansion — per-tenant fee schedules need a real
+    table.
+  - Per-originator fee overrides — same.
+  - Fee history / versioning — if operators need to know "what was
+    the fee amount on 2027-03-15" a `fees_history` or time-indexed
+    table becomes necessary; at that point a Resource on the history
+    model fits naturally.
+- **Owner of follow-up:** Backend lead (on triggers above).
+
+---
+
+## F4-03: /api/fees/config response shape — nested by category
+
+- **Date:** 2026-04-24
+- **Decision:** The public `GET /api/fees/config` endpoint returns
+  a nested-by-category JSON payload:
+  ```json
+  {
+    "withdrawal": {
+      "enabled": false,
+      "amount": "2.50"
+    }
+  }
+  ```
+  NOT a flat top-level `{enabled, amount}`.
+- **Rationale:**
+  - v1 wires only the withdrawal category. v1.1+ will add
+    origination / service / late / early-repayment / inactivity.
+    Nested shape accommodates them with `{enabled, amount}` per
+    category added as a new top-level key — ZERO breaking change
+    for existing SPA consumers.
+  - A flat top-level shape would force v1.1 to EITHER:
+    - Version the endpoint (`/v2/fees/config`) — churn.
+    - Break v1 consumers — no.
+    - Rename fields awkwardly (`withdrawal_enabled`,
+      `origination_enabled`, …) — loses grouping, hurts
+      readability.
+  - Amount is a STRING (normalised 2-decimal via `number_format`),
+    not a float — keeps the wire format exactly matching what
+    bcmath produces server-side.
+- **No API Resource wrapper:** payload is derived from
+  `platform_settings` rows, not models. Using a Resource for a
+  non-model payload adds ceremony without value. Mirrors
+  `SchedulerHealthController` direct `JsonResponse` precedent.
+- **Public access:** no auth. Fee schedule is public-ish info
+  already advertised on the landing FAQ + chatbot. Rate-limited
+  60/min to deflect abuse. Matches `/api/health/scheduler` policy.
+- **Contract guard:** `FeesConfigApiTest::test_amount_is_always_
+  returned_as_normalised_two_decimal_string` pins the format —
+  stored "5" surfaces as "5.00" on the wire. If this test fails,
+  SPA's `parseFloat + toFixed` could break.
+- **Trigger conditions for revisiting:**
+  - If the platform ever introduces category-level sub-configuration
+    (e.g. per-originator withdrawal fees), the per-category block
+    would grow fields (`{enabled, amount, overrides}`) — additive,
+    still no breaking change.
+  - If wire-format floats become desirable (unlikely in a bcmath
+    codebase), would require a `/v2` endpoint.
+- **Effort estimate to add a category:** ~30 minutes per category —
+  `FeeService::CATEGORIES` entry + 2 platform_settings rows +
+  one line in `FeeController::__invoke`.
+
+---

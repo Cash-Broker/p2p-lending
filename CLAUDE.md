@@ -747,6 +747,252 @@ triggers execution.
   for v1) would have needed this. If v1.1 adds day-count, add the
   column then.
 
+## Phase F4 — Fees Infrastructure
+
+F4 adds withdrawal-fee infrastructure on top of F1+F2+F3. Per client
+decision Q5, the infrastructure ships **disabled by default**
+(`fees_withdrawal_enabled = false`) so existing flows are byte-identical
+until an operator explicitly flips it on the Filament admin surface.
+Scope is intentionally narrow — only the withdrawal category is wired
+in v1; origination, service, late, early-repayment, and inactivity
+categories are placeholder-ready but not implemented.
+
+### Tables (F4 migration — 1 file, no new tables)
+
+Extends the F1 `platform_settings` key/value store with 2 rows +
+1 CHECK. No standalone `fees` table (single-tenant simplicity per
+client Q11).
+
+- `fees_withdrawal_enabled` (bool, default `'false'`) — master
+  toggle. When false, `WithdrawalService::approve()` is byte-identical
+  to pre-F4 (single `TYPE_WITHDRAWAL` at full amount; no `TYPE_FEE`
+  row).
+- `fees_withdrawal_amount` (float, default `'2.50'`) — flat EUR
+  fee. Defense-in-depth CHECK `chk_fees_withdrawal_amount_range`
+  enforces `value REGEXP '^[0-9]+([.][0-9]{1,2})?$'` AND
+  `CAST(value AS DECIMAL(6,2)) BETWEEN 0 AND 100`. Pattern mirrors
+  F1 `chk_grace_period_days_range` + F2
+  `chk_buyback_default_trigger_days_range`. SQLite-skipped (test
+  suite only).
+
+Existing scaffold (since F1) that F4 activates:
+- `Transaction::TYPE_FEE = 'fee'` — app constant + in `Transaction::TYPES`
+  allowlist. F1-era display surfaces (TransactionResource badge,
+  AuditLogResource label, TransactionsPage.vue filter, ReconcileLedger
+  aggregation) all pass through unchanged — they've been waiting for
+  the producer side.
+- `LoanEvent::TYPE_FEE_APPLIED = 'fee_applied'` — pre-expanded in the
+  F1 `loan_events` CHECK enum. **NOT written by F4** — withdrawal
+  fees aren't loan-scoped. Reserved for future per-loan fee
+  categories.
+
+### Feature-flag shape — per-category, not master
+
+Per DECISIONS.md F4-01:
+- ONE flag per category, not a single master flag.
+- v1: `fees_withdrawal_enabled` + `fees_withdrawal_amount`.
+- Future categories add their own pair: `fees_origination_enabled` +
+  `_amount`, etc. Each gets its own migration + CHECK + FeeService
+  wiring.
+- Rationale: gradual adoption. Master-flag would force all-or-nothing
+  as each fee type is introduced.
+
+### Virtual-ledger accounting — no platform wallet
+
+Per DECISIONS.md F4-01:
+- A fee is recorded as a `TYPE_FEE` transaction debiting the
+  investor's wallet bucket (specifically `reserved` for withdrawal
+  fees — see integration below). NO corresponding credit to a
+  platform-owned wallet.
+- Real-world: admin keeps the fee portion in the business bank
+  account and wires the NET amount to the investor's IBAN
+  externally. Platform ledger records the debit; admin's bank
+  statement is the source of truth for accrued platform revenue.
+- Reconciliation: `SELECT SUM(amount) FROM transactions WHERE type
+  = 'fee' AND created_at BETWEEN ?` gives the period fee accrual
+  for cross-checking vs. the bank statement.
+- Revisit triggers for introducing a `platform_wallets` table:
+  multi-tenant expansion, regulator-mandated fiduciary-vs-operating
+  separation, or reconciliation friction (F4-01).
+
+### FeeService API (`app/Services/FeeService.php`)
+
+Pure reader, zero side effects.
+
+- `isEnabled(string $category): bool` — reads `platform_settings.
+  fees_{category}_enabled`. Missing key → false (fail-safe).
+- `isWithdrawalFeeEnabled(): bool` — convenience for the common
+  call site.
+- `getAmount(string $category): string` — returns normalised
+  2-decimal-string EUR amount. Missing/unconfigured → `'0.00'`.
+- `getQuote(string $category, string $grossAmount): FeeQuote` —
+  builds the quote DTO. Returns `applies=false` when:
+  - flag off, OR
+  - gross <= 0, OR
+  - configured amount <= 0.
+
+Category whitelist via `FeeService::CATEGORIES` — unknown category
+throws `InvalidArgumentException` (prevents typos at call sites
+from silently resolving to empty config).
+
+`FeeQuote` (`app/Services/FeeQuote.php`) — read-only DTO:
+- `applies: bool`, `amount: string` (2-decimal), `category: string`.
+- `netAmount(string $gross): string` — returns `gross - amount` via
+  `bcsub(..., 2)` if applies; otherwise returns gross unchanged.
+
+### WithdrawalService integration
+
+`WithdrawalService::approve()` has two code paths, both inside a
+single `DB::transaction`. The fee lookup happens INSIDE the
+transaction so a mid-approve flag flip can't create a
+preview/charge TOCTOU.
+
+**Fee-off (default)** — byte-identical to pre-F4. One
+`WalletService::debitReserved()` call with `TYPE_WITHDRAWAL` and
+reference `withdrawal_request:{id}`.
+
+**Fee-on** — two `debitReserved` calls:
+
+1. `debitReserved(net, TYPE_WITHDRAWAL, "withdrawal_request:{id}")`
+   where `net = bcsub(gross, fee, 2)`. Net is what wires to the
+   investor's bank.
+2. `debitReserved(fee, TYPE_FEE, "withdrawal_request:{id}:fee")`.
+   Fee stays with the platform (off-platform in admin's business
+   bank account).
+
+Both debits deplete the RESERVED bucket (the investor earmarked the
+full gross at request time via `WalletService::reserve()`). Sum
+equals gross; `reserved` drops to its pre-request value (0 in the
+simple case). `available` is untouched by the approve path in
+BOTH flag-on and flag-off scenarios.
+
+**Negative-net guard** — if `bccomp(net, '0', 2) <= 0` (fee >= gross;
+edge case when admin enabled the flag AFTER a small request was
+created), throws `ValidationException("must exceed fee")`. The
+`DB::transaction` rolls back; zero partial commits.
+
+**Idempotency** — guaranteed by the `WithdrawalRequest::where(
+'status', 'pending')->firstOrFail()` at the top of `approve()`. A
+second call on an already-approved withdrawal throws
+`ModelNotFoundException` before any wallet touch. The `:fee`
+reference suffix is an audit link, NOT an idempotency key.
+
+### API endpoint — GET /api/fees/config
+
+Public, no auth, throttled 60/min. Shape:
+```json
+{
+  "withdrawal": {
+    "enabled": false,
+    "amount": "2.50"
+  }
+}
+```
+
+Consumed by `WithdrawalPage.vue` to render the live breakdown
+(gross / fee / net). Public because the fee schedule is already
+advertised on the landing FAQ + chatbot. Nested-by-category shape
+(per DECISIONS.md F4-03) so future categories extend without
+breaking existing SPA consumers.
+
+No API Resource wrapper — the payload derives from
+`platform_settings`, not models. Mirrors `SchedulerHealthController`
+direct `JsonResponse` precedent.
+
+### Admin UI — FeesPage (Filament)
+
+`app/Filament/Pages/FeesPage.php` — navigation
+**Финанси → Такси**, admin-only via `canAccess() → isAdmin()`.
+
+**Not a Resource** (DECISIONS.md F4-02) — `platform_settings` is
+the backing store; a Resource would need either a sham single-row
+model or a scoped `PlatformSetting` resource. Filament Page is the
+idiomatic primitive for singleton config screens; BuybackQueue +
+ProcessRepayment precedent.
+
+Form sections:
+1. **Такса при теглене** — Toggle (`fees_withdrawal_enabled`) +
+   TextInput (`fees_withdrawal_amount`, numeric, min 0, max 100,
+   step 0.01). Both `live(debounce: 400)`.
+2. **Преглед** — user-input `preview_amount` + `Placeholder` with
+   live closure rendering "При теглене X € / Такса Y € / Получавате
+   Z €". Three branches: disabled state, normal state, amount-≤-fee
+   warning. Preview reflects FORM state (unsaved), so the admin
+   sees what Save will produce.
+3. **Warning banner** — 4-step activation checklist (HTML ordered
+   list). Reminds admin to amend public copy (FAQ + chatbot) and
+   consider notifying existing investors BEFORE flipping the flag.
+
+Stats + recent-fees block (Blade view below the form):
+- All-time + this-month `TYPE_FEE` sum + count (two stat cards).
+- Latest 10 `TYPE_FEE` transactions with user eager-loaded.
+- Empty state: "Все още няма записани такси. Първата такса..."
+
+Save handler calls `PlatformSetting::set()` for each row. `Auditable`
+trait on `PlatformSetting` → every edit writes to `audit_logs`
+(old + new value, admin, IP, UA).
+
+### Investor UI — WithdrawalPage breakdown
+
+`resources/js/views/WithdrawalPage.vue`:
+- On mount, fetches `/api/fees/config` in `Promise.all` alongside
+  `loadHistory()` + `loadIbans()`.
+- Graceful degradation: fetch failure → defaults to
+  `{enabled: false, amount: '0.00'}` → breakdown hidden entirely.
+- Live computed breakdown shown below the amount input AND inside
+  the confirmation modal. Fields: Заявявате / Такса / Получавате
+  (three rows, `data-testid="fee-breakdown"`).
+- `amountBelowFee` computed blocks `openConfirm()` when net would
+  be negative — catches the admin-enabled-fee-after-small-request
+  edge on the client side before the server hits the
+  `ValidationException`.
+- Hidden entirely when flag is off (no "0.00 € такса" clutter).
+
+### Commands — none
+
+F4 adds NO scheduled commands. No `loans:process-*` or
+`loans:detect-*`. No new cron entries. No new log files. No new
+queue workers. Fee application is entirely admin-triggered via
+`WithdrawalService::approve()` (which itself is triggered by admin
+approval of a pending withdrawal).
+
+### Health endpoint — no changes
+
+F4 does not extend `/api/health/scheduler`. No cron to monitor.
+
+### Idempotency layers — 1
+
+1. **Withdrawal approval** — `WithdrawalRequest::where('status',
+   'pending')->firstOrFail()` at the top of `approve()`. Second
+   call throws `ModelNotFoundException` before any wallet touch.
+
+No detection cron, no investor notifications, no per-loan fee
+events in v1. F4 has fewer idempotency layers than F2 (3) or F3 (2)
+as a direct consequence of scope narrowness.
+
+### Known limitations (intentional; v1.1+)
+
+- **Withdrawal-only scope.** Origination / service / late /
+  early-repayment / inactivity fees are placeholder-ready
+  (`Transaction::TYPE_FEE` + `LoanEvent::TYPE_FEE_APPLIED`) but not
+  implemented. Each requires its own migration + `FeeService::
+  CATEGORIES` entry + integration point.
+- **No platform-wallet model.** Fee revenue lives in admin's bank
+  account (off-platform). Platform ledger records the debit only;
+  reconciliation is the admin's bank statement vs. `SUM(TYPE_FEE)`
+  per period. See DECISIONS.md F4-01 revisit triggers for when a
+  `platform_wallets` table becomes worth the schema cost.
+- **No browser tests.** Vue breakdown rendering verified manually
+  (no Dusk / Vitest in the project). Data-contract coverage is
+  PHPUnit-only via `FeesConfigApiTest` — 6 tests pinning the exact
+  JSON shape `WithdrawalPage.vue` consumes.
+- **Public copy coupling.** When operator flips
+  `fees_withdrawal_enabled` to true, FAQ (`FaqSection.vue`) +
+  chatbot (`ChatbotWidget.vue`) public copy MUST be amended to
+  describe the concrete fee. The FeesPage activation banner warns
+  of this but does not enforce. (Copy is currently "безплатно"
+  per commit `f301c19`.)
+
 ## Currency
 - Everything in EUR
 - Format: 1,234.56 €

@@ -104,6 +104,75 @@ No new cron entries, no new log files, no new queue workers. Investor
 email notifications ride the existing queue worker configured for
 F1/F2.
 
+### Fees (F4) — admin toggle, withdrawal only in v1
+
+F4 ships fee infrastructure **disabled by default** — withdrawals
+behave exactly as pre-F4 until an admin flips
+`fees_withdrawal_enabled`. No new cron, no new queue workers, no new
+log files.
+
+**Activation procedure** — follow in order; skipping steps
+desynchronises public messaging from actual behaviour:
+
+1. Navigate **Финанси → Такси** in Filament as admin.
+2. Read the 4-step activation banner in full.
+3. Update the public copy FIRST:
+    - `resources/js/components/landing/FaqSection.vue` — replace the
+      "безплатно" wording with the concrete fee.
+    - `resources/js/components/ChatbotWidget.vue` — same.
+    - Rebuild assets (`npm run build`) + redeploy.
+4. (Optional) notify existing investors via your preferred channel
+   before the first chargeable withdrawal.
+5. Flip `fees_withdrawal_enabled` to ON. Set the amount (default
+   2.50 €; valid range 0–100, DB-enforced).
+6. Save. Verify the success toast. `audit_logs` gets a row
+   automatically.
+
+**Deactivation** is the reverse: flip the toggle off, then amend the
+public copy back to "безплатно" (or whatever the new policy calls for).
+
+**Reconciliation** — every charged fee creates one `type='fee'`
+transaction row with reference `withdrawal_request:{id}:fee`. Reconcile
+against the business bank account:
+
+```sql
+SELECT
+    DATE(created_at)    AS day,
+    COUNT(*)            AS withdrawals,
+    SUM(amount)         AS fee_total
+FROM transactions
+WHERE type = 'fee'
+  AND created_at >= '2026-05-01'
+  AND created_at <  '2026-06-01'
+GROUP BY DATE(created_at)
+ORDER BY day;
+```
+
+FeesPage (Filament) shows the same totals in two stat cards
+(all-time + current month) + the latest 10 fee transactions for a
+quick spot-check without dropping into SQL.
+
+**Public API** — `GET /api/fees/config` (no auth, throttle 60/min):
+
+```
+→ 200 {"withdrawal":{"enabled":false,"amount":"2.50"}}
+```
+
+Consumed by the investor SPA's `WithdrawalPage.vue` to render the
+live breakdown. Public because the fee schedule is advertised on the
+landing FAQ + chatbot.
+
+**Known limitations (see AUDIT_REPORT_PHASE_F4.md for detail):**
+- Withdrawal category only in v1; origination / service / late /
+  early-repayment / inactivity are placeholder-ready but not
+  implemented.
+- No platform-wallet model — fees live in admin's bank account
+  off-platform. Platform ledger records the debit; bank statement
+  is the revenue source of truth.
+- Vue breakdown rendering not covered by automated browser tests;
+  manual QA on first activation is required (see pre-deploy
+  checklist in the F4 audit report).
+
 ### Health monitoring
 Public endpoint covers BOTH `loans:process-late` (F1) and `loans:detect-buyback-eligible` (F2) via a single URL:
 
