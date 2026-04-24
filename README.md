@@ -65,6 +65,13 @@ Scheduled commands (in execution order):
 
 The 03:30 → 03:45 dependency: buyback detection reads `loan.status` that late detection maintains. 15-min gap is a comfortable buffer over the typical < 5-min runtime; if F1 ever grows past 15 min consistently, move F2 to 04:00.
 
+**`loans:process-late` passes** (since Phase 3 P3-F5 fix):
+1. Late detection (`active → late` when ≥1 schedule past grace period).
+2. Late recovery (`late → active` OR `late → repaid` per rule R1 tiebreaker).
+3. **Auto-close cleanly-completing loans** (`active → repaid` when all schedules paid). See DECISIONS.md P3-02.
+
+Metrics written to `platform_metrics` include `last_late_check_auto_repaid` — monotonic counter of auto-closed loans (monthly delta via archive query).
+
 Verify:
 ```sh
 crontab -l | grep schedule:run

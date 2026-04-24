@@ -142,6 +142,8 @@ Populated in later steps.
 | P3-F5 | MEDIUM | `active → repaid` had no automation — cleanly-completing loans stuck ACTIVE | **FIXED** (this commit). Option 1 shipped: `LoanStatusUpdaterService::autoRepayCompletedLoans` + `loans:process-late` wire-up + new `last_late_check_auto_repaid` metric. 7 new tests pin the behaviour. DECISIONS.md P3-02 + CLAUDE.md F1 section updated. |
 | P3-F6 | LOW-MEDIUM | FUNDED loan requires manual admin activation, no stale-loan alert | NEW Step 3. Documented. v1.1 observability dashboard. |
 | P3-F7 | LOW | Withdrawal requests no auto-expiration / stale alert | NEW Step 3. Documented. v1.1 observability. |
+| P3-F8 | LOW | InvestmentService transitions don't emit `loan_events` (investor timeline incomplete) | NEW Step 4. Change-detector test in place. v1.1 ~30 min. |
+| P3-F9 | LOW | Filament admin publish/unpublish/activate don't emit `loan_events` | NEW Step 4. Change-detector test in place. v1.1 ~90 min. |
 
 ### §1 state machine — CLOSED
 
@@ -320,6 +322,219 @@ User registration flow: `pending` → submits → `submitted` → admin reviews 
 
 ---
 
-## §4–§5 — pending (Steps 4, 5)
+## §4 Audit trail coverage (Step 4 — done)
 
-_Populated during subsequent steps._
+### 4.1 Auditable trait inventory
+
+`app/Traits/Auditable.php` hooks Eloquent `created` / `updated` / `deleted` events. Applied to 9 models: Borrower, DepositRequest, Investment, Loan, PlatformSetting, Transaction, User, Wallet, WithdrawalRequest. Every change writes to `audit_logs` with `user_id` (`auth()->id()` — null for cron/system), `action`, `model_type`, `model_id`, `old_values`, `new_values`, `ip_address`, `user_agent`.
+
+**Sensitive-field redaction**: password, remember_token, personal_id, iban, full_name, address, phone are replaced with `[REDACTED]` in old/new values before writing. Verified by `test_audit_log_redacts_sensitive_fields`.
+
+### 4.2 Loan event writer inventory (investor-visible timeline)
+
+| Writer | Event types |
+|---|---|
+| `LoanStatusUpdaterService::markLoanLate` | `went_late` |
+| `LoanStatusUpdaterService::maybeRecoverLoan` | `recovered_from_late` |
+| `LoanStatusUpdaterService::maybeAutoRepayLoan` (P3-F5 fix) | `status_changed` (auto-repay) |
+| `DetectBuybackEligible` cron | `buyback_triggered` |
+| `BuybackExecutionService::execute` | `buyback_completed` |
+| `EarlyRepaymentExecutionService::execute` | `early_repayment_completed` |
+
+`LoanEventResource` sanitises metadata via opt-in whitelist (`PUBLIC_METADATA_KEYS`) — unwhitelisted keys dropped silently. Admin-only keys (`triggered_by_user_id`, `executed_by_admin_id`, `late_schedule_count`, `originator_id`) intentionally excluded.
+
+### 4.3 Loan transition audit gaps
+
+#### P3-F8 — LOW — `InvestmentService` transitions have no `loan_events` row
+
+`InvestmentService::invest` auto-transitions `published → funding` (first investment) and `funding → funded` (fully funded). **Only `audit_logs` is written** (via the Auditable trait on Loan); NO `loan_events` row.
+
+**Impact:** investor-visible lifecycle timeline (`/api/loans/{id}/events`) does not show "funding started" or "fully funded" events. Investors infer from `funded_amount` reaching `loan.amount`. LOW severity — no data loss, UX completeness gap.
+
+**Fix (v1.1, ~30 min):** emit `LoanEvent(status_changed, published→funding, system)` and `LoanEvent(status_changed, funding→funded, system)` inside `InvestmentService::invest`, after each `transitionTo`. Reuse existing `TYPE_STATUS_CHANGED` event type.
+
+**Change-detector test:** `test_P3_F8_investment_service_transitions_do_NOT_emit_loan_event` currently asserts the gap. Flips on v1.1 closure.
+
+#### P3-F9 — LOW — Filament admin `publish`/`unpublish`/`activate` have no `loan_events` row
+
+Same pattern as P3-F8 but for the Filament admin-triggered transitions. Admin clicks "Публикувай" → loan goes `draft → published` — audit_logs gets a row (admin user_id), but `loan_events` stays empty. Same for `unpublish` and `activate`.
+
+**Impact:** investor timeline silent on publish/unpublish/activate. Admin-facing audit_logs captures everything, so compliance is intact; only the investor-side narrative is incomplete.
+
+**Fix (v1.1, ~30 min per action, 3 actions):** emit `LoanEvent(status_changed, X→Y, admin, triggered_by_user_id=auth()->id())` in each Filament action closure.
+
+**Change-detector test:** `test_P3_F9_filament_admin_transitions_do_NOT_emit_loan_event` pins the current gap.
+
+### 4.4 Admin login / logout logging
+
+[app/Listeners/SendAdminLoginAlert.php](app/Listeners/SendAdminLoginAlert.php) — listens for `Login` event, emails admin on every login with "known IP" vs "new IP" distinction + trust-this-IP signed link. Rate-limited (11+ logins/hour collapses to 2 emails). Documented in DECISIONS.md 2FA-deferral entry.
+
+Logout / session events — no dedicated listener; session cleanup relies on Laravel defaults. Not a gap for v1 scale.
+
+### 4.5 Wallet mutations → transaction rows (ledger integrity)
+
+Every `WalletService` mutation that moves money creates a `Transaction` row with the appropriate `type` (deposit/withdrawal/investment/repayment_principal/repayment_interest/buyback_principal/buyback_interest/early_repayment_principal/early_repayment_interest/fee). `Transaction` rows are immutable (append-only triggers + model override throws `LogicException` on update/delete).
+
+**Exceptions (not a finding, documented):**
+- `WalletService::reserve` / `releaseReservation` — move funds between available and reserved buckets. **No transaction row.** Reservation state tracked via `WithdrawalRequest.status`. Acceptable because reserved is a "hold" not a ledger event; the Transaction row is written at approval time (`debitReserved`).
+- This is consistent with the virtual-ledger model (DECISIONS.md F4-01).
+
+### 4.6 Configuration change auditing
+
+`PlatformSetting` uses the Auditable trait. Every `set()` / direct `update()` call writes to `audit_logs`. Verified by `test_platform_setting_update_writes_audit_log`.
+
+### 4.7 Buyback dismiss / reactivate auditing
+
+`Loan` uses Auditable. Dismiss fields (`buyback_dismissed_at`, `buyback_dismissed_reason`, `buyback_dismissed_by`) are tracked via model updates → `audit_logs` captures old + new. Reactivate clears all three — same mechanism.
+
+**Compounded coverage:** the `buyback_dismissed_by` FK (RESTRICT on users.id) ensures the acting admin is identifiable even years later from the `Loan` row alone, without needing `audit_logs` at all.
+
+### 4.8 Step 4 test coverage
+
+`tests/Audit/Phase3AuditTrailTest.php` — 7 tests, 14 assertions, ~9s:
+
+- 4 positive coverage (PlatformSetting, Wallet, Loan transition, User password redaction)
+- 2 change-detector negatives (P3-F8 InvestmentService, P3-F9 Filament)
+- 1 AuditLog immutability
+
+### 4.9 Step 4 findings summary
+
+| # | Severity | Area |
+|---|---|---|
+| P3-F8 | LOW | InvestmentService transitions lack `loan_events` — investor timeline incomplete |
+| P3-F9 | LOW | Filament admin transitions (publish/unpublish/activate) lack `loan_events` — investor timeline incomplete |
+
+No CRITICAL, no HIGH, no MEDIUM in Step 4. Both LOW findings are completeness gaps (compliance is intact via `audit_logs`); fix is low-effort v1.1 (~1.5 hours total).
+
+---
+
+## §5 Final fix pass + merge prep (Step 5 — done)
+
+### 5.1 P3-F1 one-line label fix
+
+`app/Filament/Resources/LoanResource.php` — added `'bought_back' => 'Изкупен обратно'` to the `$allLabels` dictionary in the Status Select form. For a `late` loan, the Select now offers `bought_back` as a proper Bulgarian label instead of the raw status key. Cosmetic only; no functional change.
+
+### 5.2 Final audit test count
+
+Phase 3 added 5 test files:
+
+| File | Tests | Focus |
+|---|---|---|
+| `tests/Audit/Phase3StateMachineMatrixTest.php` | 81 | Exhaustive 72-pair transition matrix + terminal rejection + enforcement layers + P3-F2 abandon guard |
+| `tests/Audit/Phase3AuthorizationTest.php` | 12 | Cross-user data access, PII containment, public endpoint shape, Filament panel admin-only |
+| `tests/Audit/Phase3LifecycleTest.php` | 8 | Stuck-state probes (P3-F5/F6/F7 documentation), FK integrity, KYC lifecycle |
+| `tests/Audit/Phase3AutoRepayTest.php` | 7 | P3-F5 auto-repay regression guards |
+| `tests/Audit/Phase3AuditTrailTest.php` | 7 | Auditable trait positive coverage + P3-F8/F9 change-detectors + AuditLog immutability |
+
+**Total Phase 3 tests:** 115. **Audit suite total:** 175 (60 Phase 2 + 115 Phase 3).
+
+### 5.3 Main suite regression check
+
+```
+php artisan test --exclude-testsuite=Audit
+Tests: 4 skipped, 455 passed (1300 assertions)
+```
+
+Zero regressions across F1–F5 baseline through all Phase 3 work.
+
+---
+
+## §6 Final findings summary
+
+| # | Sev | Area | Status | Commit |
+|---|---|---|---|---|
+| P3-F1 | LOW | Filament `$allLabels` missing `bought_back` key | **FIXED** Step 5 | (this commit) |
+| P3-F2 | MEDIUM | FUNDING had no abandon path; partial investors could be stranded | **FIXED** Step 1 + CLAUDE.md manual procedure + DECISIONS.md P3-01 v1.1 ticket for automated `cancelled` status | `c325e39` (model + resource) / `0e4dd7a` (bundled Loan.php) |
+| P3-F3 | LOW | Raw SQL bypasses `booted()` transition guard | Documented gap + change-detector test; DB CHECK = v1.1 consideration | `c325e39` |
+| P3-F4 | MEDIUM | `INVESTOR_VISIBLE_STATUSES` excluded DEFAULT — holding investor got 403 | **FIXED** Step 2 + change-detector flipped from 403 to 200 with /api/portfolio consistency assert | `0e4dd7a` |
+| P3-F5 | MEDIUM | `active → repaid` had no automation — every cleanly-completing loan stuck ACTIVE | **FIXED** Step 3 — new `LoanStatusUpdaterService::autoRepayCompletedLoans` pass in `loans:process-late` cron + `last_late_check_auto_repaid` metric + DECISIONS.md P3-02 | `0822f16` |
+| P3-F6 | LOW-MED | FUNDED requires manual activation, no stale-loan alert | Documented; v1.1 observability dashboard candidate | — |
+| P3-F7 | LOW | Withdrawal pending never expires / no stale alert | Documented; v1.1 observability | — |
+| P3-F8 | LOW | `InvestmentService` transitions (published→funding, funding→funded) don't emit `loan_events` | Documented + change-detector; v1.1 fix ~30 min | — |
+| P3-F9 | LOW | Filament `publish`/`unpublish`/`activate` don't emit `loan_events` | Documented + change-detector; v1.1 fix ~90 min | — |
+
+**Severity tally:**
+- CRITICAL: **0**
+- HIGH: **0**
+- MEDIUM: **3** (P3-F2, P3-F4, P3-F5) — **ALL FIXED** in-phase
+- LOW-MEDIUM: **1** (P3-F6) — deferred to v1.1
+- LOW: **5** (P3-F1 fixed, P3-F3/F7/F8/F9 deferred or documented)
+
+**In-phase fixes:** 4 (P3-F1, P3-F2, P3-F4, P3-F5).
+**v1.1 deferred:** 5 (P3-F3 doc-only, P3-F6, P3-F7, P3-F8, P3-F9).
+
+Matches the pre-audit expectation (0 CRITICAL, 0-1 HIGH, 1-2 MEDIUM, 1-3 LOW) at the MEDIUM upper bound and slightly exceeds LOW count — expected for a broad lifecycle + audit-trail sweep.
+
+---
+
+## §7 v1.1 follow-up commitments
+
+Consolidated from Phase 3 findings for the v1.1 planning document:
+
+1. **[MEDIUM] Automated loan `cancelled` status + `CancelRefundExecutionService`** (P3-F2 extended).
+   Mirrors F2 buyback pattern. Enables clean abandon of partial-funded loans with pro-rata refund. 1–2 days.
+   DECISIONS.md P3-01 trigger conditions.
+
+2. **[LOW-MED] Stale-lifecycle dashboard** (P3-F6, P3-F7).
+   Filament admin widget surfacing counters:
+   - Loans in `funded` > 3 days (P3-F6)
+   - Withdrawal requests pending > 3 days (P3-F7)
+   - `last_late_check_auto_repaid` monthly delta (P3-F5 observability)
+   Phase 4 observability audit candidate. ~2 hours.
+
+3. **[LOW] Emit `loan_events` on all transitions** (P3-F8, P3-F9).
+   - InvestmentService: 2 transitions, ~30 min
+   - Filament publish/unpublish/activate: 3 transitions, ~90 min
+   - Whitelist `published_at`, `funded_at` metadata keys in LoanEventResource
+   Total: ~2 hours to close both findings.
+
+4. **[LOW] DB CHECK constraint on `loans.status`** (P3-F3 optional).
+   Would close the raw-SQL bypass gap. Non-trivial (requires either a status-history table or trigger-based CHECK). Defer unless a raw-SQL incident surfaces.
+
+---
+
+## §8 Pre-deploy checklist
+
+Phase 3 merge adds:
+
+1. **No new migration** — all changes are code-level. `php artisan migrate:status` unchanged.
+2. **No composer/npm changes** — skip `composer install` / `npm run build`.
+3. **New platform_metric key** — `last_late_check_auto_repaid`. Populated on first `loans:process-late` cron run post-deploy. External `/api/health/scheduler` monitoring picks it up automatically (flat field under last_run_stats if Phase 4 surfaces it there; for now, it's internal).
+4. **Cron behaviour change** — `loans:process-late` now runs 3 passes instead of 2. Expect slightly longer runtime (negligible — auto-repay query is a single SELECT per active loan). Dry-run + --loan=ID flags honoured.
+5. **Manual verification post-deploy:**
+   - Filament: open a `late` loan in edit — Status Select dropdown now shows "Изкупен обратно" (not `bought_back`).
+   - Filament: find a `default` status loan — admin-only, should still be visible.
+   - Investor UI: if any test-account holds a position in a `default` loan (unlikely in prod), confirm loan detail page loads (P3-F4).
+   - Cron: run `php artisan loans:process-late --dry-run --detail` — output line `auto-repaid: 0 completed active loan(s)` should appear after the existing transitions line.
+6. **No public API shape change** — Vue SPA continues to render identically.
+
+---
+
+## §9 Step completion order
+
+```
+c325e39  audit(phase3): complete P3-F2 surface — LoanResource unpublish extension + state machine matrix test
+0822f16  fix(f1): extend LoanStatusUpdaterService with auto-repay for completed active loans (P3-F5)
+0e4dd7a  fix(loan): add default status to INVESTOR_VISIBLE_STATUSES
+<this>   audit(phase3): finalize - label fix + audit report complete + DECISIONS pass
+```
+
+Base: `8edc3ac` (Phase 2 final).
+
+---
+
+## §10 Executive summary
+
+Phase 3 surfaced **9 findings** across state machine integrity, authorization boundaries, lifecycle completeness, and audit trail coverage. Zero CRITICAL, zero HIGH — the F1–F5 audit discipline paid off. **All 3 MEDIUM findings fixed in-phase**; the 5 LOW + 1 LOW-MED either closed or routed to v1.1 with clear trigger conditions.
+
+**Biggest operational win:** P3-F5 auto-repay. Cleanly-completing loans now self-close via the daily cron instead of waiting for admin manual intervention. At 200–500 loans/year, this removes a persistent admin-attention requirement. Mirrors the existing F1 rule R1 tiebreaker pattern — well-understood, well-tested.
+
+**Biggest audit-posture observation:** the platform has STRONG defense-in-depth throughout — 3-layer transition enforcement (`transitionTo`/`booted` hook/model-level canTransitionTo), 9 models with Auditable trait, Transaction append-only + DB triggers, LoanEventResource opt-in whitelist, Filament panel admin-only gate, FK RESTRICT everywhere, AccountDeletionService anonymising rather than deleting. The LOW findings are completeness gaps, not security holes.
+
+**v1.1 focus** should be the observability dashboard (P3-F6 + P3-F7 + clamp-frequency from Phase 2) — a single Filament widget surfacing stale-state counters would close 3 findings at once and support the operator's day-to-day monitoring.
+
+**Phase 3 closed.** Ready for Phase 4 (Infrastructure Audit).
+
+---
+
+*End of Phase 3 Business Logic & Lifecycle Audit report.*

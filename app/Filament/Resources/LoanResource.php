@@ -53,6 +53,10 @@ class LoanResource extends Resource
                             'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се',
                             'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял',
                             'default' => 'Просрочен', 'repaid' => 'Изплатен',
+                            // P3-F1 fix (Phase 3 audit): bought_back was previously
+                            // missing — for a `late` loan the Select would offer the
+                            // untranslated key `bought_back` as an option.
+                            'bought_back' => 'Изкупен обратно',
                         ];
                         if (! $record?->id) {
                             return ['draft' => 'Чернова'];
