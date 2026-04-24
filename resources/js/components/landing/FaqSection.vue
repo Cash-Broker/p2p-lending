@@ -51,6 +51,8 @@ const faqs = [
           :class="openFaq === i ? 'border-accent-200' : 'border-gray-100'"
         >
           <button
+            :aria-label="openFaq === i ? 'Свий въпроса' : 'Разгъни въпроса'"
+            :aria-expanded="openFaq === i"
             class="w-full flex items-center justify-between px-6 py-5 text-left"
             @click="toggleFaq(i)"
           >

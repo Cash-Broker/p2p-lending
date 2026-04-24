@@ -247,7 +247,7 @@ onMounted(() => {
             <td class="px-5 py-3 font-semibold text-accent-500">{{ loan.interest_rate }}%</td>
             <td class="px-5 py-3 text-navy-700">
               <span v-if="loan.apr">{{ loan.apr }}%</span>
-              <span v-else class="text-gray-300">—</span>
+              <span v-else class="text-gray-500">—</span>
             </td>
             <td class="px-5 py-3 text-gray-500">{{ loan.term_months }} мес.</td>
             <td class="px-5 py-3 text-navy-700">{{ formatAmount(loan.amount) }} €</td>
@@ -261,7 +261,7 @@ onMounted(() => {
             </td>
             <td class="px-5 py-3">
               <div class="flex items-center gap-2">
-                <button @click="toggleFavorite(loan)" class="text-gray-300 hover:text-amber-400 transition-colors">
+                <button :aria-label="loan._favorited ? 'Премахни от любими' : 'Добави в любими'" @click="toggleFavorite(loan)" class="text-gray-500 hover:text-amber-400 transition-colors">
                   <svg xmlns="http://www.w3.org/2000/svg" :fill="loan._favorited ? 'currentColor' : 'none'" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5" :class="loan._favorited ? 'text-amber-400' : ''"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" /></svg>
                 </button>
                 <router-link :to="`/invest/${loan.id}`" class="px-3 py-1 bg-navy-700 text-white text-xs font-medium rounded-lg hover:bg-navy-600 transition-colors">Отвори</router-link>
@@ -304,7 +304,7 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-2">
           <router-link :to="`/invest/${loan.id}`" class="flex-1 text-center px-3 py-2 bg-navy-700 text-white text-sm font-medium rounded-xl">Отвори</router-link>
-          <button @click="toggleFavorite(loan)" class="px-3 py-2 border border-gray-200 rounded-xl" :class="loan._favorited ? 'text-amber-400' : 'text-gray-300'">
+          <button :aria-label="loan._favorited ? 'Премахни от любими' : 'Добави в любими'" @click="toggleFavorite(loan)" class="px-3 py-2 border border-gray-200 rounded-xl" :class="loan._favorited ? 'text-amber-400' : 'text-gray-500'">
             <svg xmlns="http://www.w3.org/2000/svg" :fill="loan._favorited ? 'currentColor' : 'none'" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" /></svg>
           </button>
         </div>

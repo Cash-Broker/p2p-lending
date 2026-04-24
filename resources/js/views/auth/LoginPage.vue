@@ -61,7 +61,7 @@ async function submit() {
               :class="errors.email ? 'border-red-400' : ''"
               placeholder="ime@example.com"
             />
-            <p v-if="errors.email" class="mt-1 text-xs text-red-500">{{ errors.email[0] }}</p>
+            <p v-if="errors.email" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.email[0] }}</p>
           </div>
 
           <div>
@@ -79,7 +79,7 @@ async function submit() {
               :class="errors.password ? 'border-red-400' : ''"
               placeholder="••••••••"
             />
-            <p v-if="errors.password" class="mt-1 text-xs text-red-500">{{ errors.password[0] }}</p>
+            <p v-if="errors.password" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.password[0] }}</p>
           </div>
 
           <button

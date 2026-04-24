@@ -61,7 +61,7 @@ async function submit() {
               :class="errors.name ? 'border-red-400' : ''"
               placeholder="Иван Иванов"
             />
-            <p v-if="errors.name" class="mt-1 text-xs text-red-500">{{ errors.name[0] }}</p>
+            <p v-if="errors.name" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.name[0] }}</p>
           </div>
 
           <div>
@@ -76,7 +76,7 @@ async function submit() {
               :class="errors.email ? 'border-red-400' : ''"
               placeholder="ime@example.com"
             />
-            <p v-if="errors.email" class="mt-1 text-xs text-red-500">{{ errors.email[0] }}</p>
+            <p v-if="errors.email" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.email[0] }}</p>
           </div>
 
           <div>
@@ -91,7 +91,7 @@ async function submit() {
               :class="errors.password ? 'border-red-400' : ''"
               placeholder="Минимум 8 символа"
             />
-            <p v-if="errors.password" class="mt-1 text-xs text-red-500">{{ errors.password[0] }}</p>
+            <p v-if="errors.password" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.password[0] }}</p>
           </div>
 
           <div>
@@ -123,7 +123,7 @@ async function submit() {
                 Разбирам, че инвестирането в кредити носи риск.
               </span>
             </label>
-            <p v-if="errors.terms_accepted" class="mt-1 text-xs text-red-500">{{ errors.terms_accepted[0] }}</p>
+            <p v-if="errors.terms_accepted" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.terms_accepted[0] }}</p>
           </div>
 
           <button

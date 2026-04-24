@@ -95,6 +95,7 @@ function sendFreeText() {
       <input
         v-model="freeText"
         type="text"
+        aria-label="Вашият въпрос"
         placeholder="Напишете въпрос..."
         class="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400"
       />

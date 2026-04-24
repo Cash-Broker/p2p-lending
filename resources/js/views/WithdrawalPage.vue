@@ -211,7 +211,7 @@ onMounted(() => load())
                   :class="errors.amount ? 'border-red-400' : ''"
                   placeholder="мин. 10.00"
                 />
-                <p v-if="errors.amount" class="mt-1 text-xs text-red-500">{{ errors.amount[0] }}</p>
+                <p v-if="errors.amount" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.amount[0] }}</p>
               </div>
 
               <!-- Fee breakdown — shown only when the withdrawal-fee flag is on
@@ -263,8 +263,8 @@ onMounted(() => load())
                   :class="errors.iban ? 'border-red-400' : ''"
                   placeholder="BG80BNBG96611020345678"
                 />
-                <p v-if="errors.iban" class="mt-1 text-xs text-red-500">{{ errors.iban[0] }}</p>
-                <p v-if="errors.saved_iban_id" class="mt-1 text-xs text-red-500">{{ errors.saved_iban_id[0] }}</p>
+                <p v-if="errors.iban" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.iban[0] }}</p>
+                <p v-if="errors.saved_iban_id" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.saved_iban_id[0] }}</p>
               </div>
 
               <button

@@ -312,6 +312,88 @@ Effort: 30 min across 4 locations + any other similar patterns discovered later.
 
 ---
 
+## §2c Step 2 findings — Accessibility + Localization
+
+Explore-agent sweep against 5 a11y + l10n criteria produced 17 raw findings. Triaged to **5 consolidated findings + 2 explicit non-findings** after grouping pattern-level issues and verifying Bulgarian grammar.
+
+### P5-F5 (MEDIUM → fixed in-phase) — Icon-only buttons lack `aria-label`
+
+7 interactive icon-only elements across the SPA were unlabeled to screen readers. Consolidated into one finding with per-location Bulgarian labels. Dynamic labels used for state-bearing controls (favorites, FAQ expand) so screen-reader announcements reflect current state.
+
+| File:Line | Control | Label |
+|---|---|---|
+| [AppLayout.vue:146](resources/js/layouts/AppLayout.vue:146) | Mobile hamburger | `"Отвори меню"` |
+| [AppLayout.vue:160](resources/js/layouts/AppLayout.vue:160) | Notification bell | `"Известия"` |
+| [AppLayout.vue:181](resources/js/layouts/AppLayout.vue:181) | Delete notification | `"Изтрий известие"` |
+| [MarketplacePage.vue:264](resources/js/views/MarketplacePage.vue:264) | Favorite (desktop) | `:aria-label="loan._favorited ? 'Премахни от любими' : 'Добави в любими'"` |
+| [MarketplacePage.vue:307](resources/js/views/MarketplacePage.vue:307) | Favorite (mobile card) | same dynamic |
+| [LandingHeader.vue:28](resources/js/components/landing/LandingHeader.vue:28) | Mobile hamburger | `:aria-label="mobileMenuOpen ? 'Затвори меню' : 'Отвори меню'"` |
+| [FaqSection.vue:53](resources/js/components/landing/FaqSection.vue:53) | FAQ expand chevron | `:aria-label="openFaq === i ? 'Свий въпроса' : 'Разгъни въпроса'"` + `:aria-expanded="openFaq === i"` |
+
+### P5-F6 (MEDIUM → fixed in-phase) — Form error messages not announced to screen readers
+
+16 error-message `<p>` tags across 6 form-bearing views used identical `class="mt-1 text-xs text-red-500"` but no ARIA semantics. Screen reader users saw no indication when validation failed.
+
+**Fix:** batched `replace_all` across all 6 files: `class="mt-1 text-xs text-red-500"` → `role="alert" aria-live="polite" class="mt-1 text-xs text-red-500"`. Using `aria-live="polite"` (not `assertive`) per user direction — waits for reader pause instead of interrupting flow.
+
+Files touched:
+- `views/auth/LoginPage.vue` (2)
+- `views/auth/RegisterPage.vue` (4)
+- `views/auth/ForgotPasswordPage.vue` (1)
+- `views/auth/ResetPasswordPage.vue` (2)
+- `views/WithdrawalPage.vue` (3)
+- `views/ProfilePage.vue` (4)
+
+### P5-F7 (LOW → fixed in-phase) — Low-contrast text on white
+
+3 occurrences of `text-gray-300/400` on light backgrounds that fail WCAG AA 4.5:1 for normal text:
+
+| File:Line | Content | Before | After |
+|---|---|---|---|
+| `AppLayout.vue:154` | "свободни" label | `text-gray-400` | `text-gray-500` |
+| `AppLayout.vue:176` | Notification timestamp | `text-gray-400` | `text-gray-500` (batch w/ P5-F8) |
+| `AppLayout.vue:181` | Delete icon default color | `text-gray-300` | `text-gray-500` (batch w/ P5-F5) |
+| `InvestmentDetailPage.vue:233` | APR null-value dash | `text-gray-300` | `text-gray-500` |
+| `MarketplacePage.vue:250` | APR null-value dash | `text-gray-300` | `text-gray-500` |
+
+Post-fix contrast ~4.6:1 (passes AA).
+
+### P5-F8 (LOW → fixed in-phase) — Date formatter silently drops time options
+
+[AppLayout.vue:179](resources/js/layouts/AppLayout.vue:179) used `toLocaleDateString('bg-BG', { day, month, year, hour, minute })` to render notification timestamps. **`toLocaleDateString` does not support `hour`/`minute` options** — those were silently ignored, so notifications only showed the date, never the time. This is a real display bug (independent of accessibility concerns).
+
+**Fix:** changed to `toLocaleString(...)` which does honour `hour`/`minute`. Users now see e.g. `24.04.2026, 14:42` instead of just `24.04.2026`.
+
+**Verified intentional (not findings):**
+- `ProfilePage.vue:190` — `toLocaleDateString('bg-BG')` — date-only rendering of `auth.user.created_at` (registration date, time not shown by design).
+- `InvestmentDetailPage.vue:83` — `toLocaleString('bg-BG', { dateStyle: 'medium', timeStyle: 'short' })` — correct usage.
+
+### P5-F9 (LOW → fixed in-phase) — ChatbotWidget input lacks accessible label
+
+[ChatbotWidget.vue:95](resources/js/components/ChatbotWidget.vue:95) had only `placeholder="Напишете въпрос..."`, which is not an accessible label (placeholders vanish on focus + aren't announced reliably by screen readers).
+
+**Fix:** added `aria-label="Вашият въпрос"` to the input. Simpler than introducing a new DOM label node; same semantic effect.
+
+### Explicit non-findings (Bulgarian grammar verification)
+
+Explore agent flagged pluralization gaps that weren't actually wrong:
+
+| File:Line | Agent claim | Why not a finding |
+|---|---|---|
+| `PortfolioPage.vue:149` "кредит"/"кредита" via ternary | "Bulgarian has 3 plural forms (1, 2-4, 5+)" | **Modern Bulgarian lost the dual number and is 2-form (singular/plural) for most nouns**, including "кредит" (masculine inanimate). The 1-vs-N ternary is grammatically correct. This is different from Russian which does have 3-form rules. |
+| `InvestmentDetailPage.vue:337` `+{{ row.days_late }}д` | "Should be `дни` if > 1" | The "д" abbreviation is a stylistic choice (compact UI micro-label). Not a grammatical error. Could be `"дн."` for marginally more standard abbreviation but is within acceptable UI compression patterns. |
+
+### Positive confirmations from Step 2
+
+| Check | Verdict |
+|---|---|
+| Bulgarian locale for number formatting | ✓ `toLocaleString('bg-BG', { minimumFractionDigits: 2 })` used consistently everywhere |
+| Currency symbol placement | ✓ All `{{ amount }} €` (symbol AFTER), never `€ {{ amount }}` |
+| Form `<label>` + input `for`/`id` binding | ✓ Standard on all auth pages + profile + deposit + withdrawal forms |
+| No hardcoded English UI strings | ✓ (confirmed again during this sweep — same result as Step 1) |
+
+---
+
 ## §3 Audit plan for Steps 1–6
 
 Mapped to user's 8 audit areas:

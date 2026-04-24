@@ -58,7 +58,7 @@ async function submit() {
               class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400 transition-colors"
               :class="errors.email ? 'border-red-400' : ''"
             />
-            <p v-if="errors.email" class="mt-1 text-xs text-red-500">{{ errors.email[0] }}</p>
+            <p v-if="errors.email" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.email[0] }}</p>
           </div>
 
           <div>
@@ -73,7 +73,7 @@ async function submit() {
               :class="errors.password ? 'border-red-400' : ''"
               placeholder="Минимум 8 символа"
             />
-            <p v-if="errors.password" class="mt-1 text-xs text-red-500">{{ errors.password[0] }}</p>
+            <p v-if="errors.password" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.password[0] }}</p>
           </div>
 
           <div>

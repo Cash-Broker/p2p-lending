@@ -143,7 +143,7 @@ async function logout() {
       <!-- Top header -->
       <header class="sticky top-0 z-30 h-16 bg-white/80 backdrop-blur-lg border-b border-gray-100 flex items-center justify-between px-4 sm:px-6 lg:px-8">
         <!-- Mobile hamburger -->
-        <button class="lg:hidden flex items-center justify-center size-10 text-gray-600" @click="sidebarOpen = true">
+        <button aria-label="Отвори меню" class="lg:hidden flex items-center justify-center size-10 text-gray-600" @click="sidebarOpen = true">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
         </button>
 
@@ -151,13 +151,13 @@ async function logout() {
         <div class="hidden lg:flex items-center gap-2 px-4 py-1.5 rounded-full bg-gray-50 border border-gray-100">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 text-accent-500"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 0 0-2.25-2.25H15a3 3 0 1 1-6 0H5.25A2.25 2.25 0 0 0 3 12m18 0v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 9m18 0V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v3" /></svg>
           <span class="text-sm font-semibold text-navy-700">{{ auth.user?.wallet?.available ?? '0.00' }} €</span>
-          <span class="text-xs text-gray-400">свободни</span>
+          <span class="text-xs text-gray-500">свободни</span>
         </div>
 
         <div class="flex items-center gap-4">
           <!-- Notification bell + dropdown -->
           <div class="relative">
-            <button @click="showNotifications = !showNotifications; if(showNotifications) loadNotifications()" class="relative flex items-center justify-center size-9 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors">
+            <button aria-label="Известия" @click="showNotifications = !showNotifications; if(showNotifications) loadNotifications()" class="relative flex items-center justify-center size-9 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
               <span v-if="unreadCount > 0" class="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
             </button>
@@ -176,9 +176,9 @@ async function logout() {
                   <button @click="markAsRead(n.id)" class="flex-1 text-left">
                     <p class="text-sm text-navy-700">{{ { deposit_approved: 'Депозит одобрен', deposit_rejected: 'Депозит отхвърлен', withdrawal_approved: 'Теглене одобрено', withdrawal_rejected: 'Теглене отхвърлено', kyc_approved: 'KYC одобрен', kyc_rejected: 'KYC отхвърлен', loan_status_changed: 'Промяна на кредит' }[n.data?.type] || 'Известие' }}</p>
                     <p v-if="n.data?.amount" class="text-xs text-accent-500 font-medium">{{ n.data.amount }} €</p>
-                    <p class="text-xs text-gray-400 mt-0.5">{{ new Date(n.created_at).toLocaleDateString('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</p>
+                    <p class="text-xs text-gray-500 mt-0.5">{{ new Date(n.created_at).toLocaleString('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</p>
                   </button>
-                  <button @click.stop="deleteNotification(n.id)" class="text-gray-300 hover:text-red-500 mt-1 shrink-0">
+                  <button aria-label="Изтрий известие" @click.stop="deleteNotification(n.id)" class="text-gray-500 hover:text-red-500 mt-1 shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
                   </button>
                 </div>

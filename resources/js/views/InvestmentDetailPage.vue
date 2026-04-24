@@ -230,7 +230,7 @@ async function confirmInvest() {
                 <p class="text-xs text-gray-400 mb-1">ГПР</p>
                 <p class="text-lg font-bold text-navy-700">
                   <span v-if="loan.apr">{{ loan.apr }}%</span>
-                  <span v-else class="text-gray-300">—</span>
+                  <span v-else class="text-gray-500">—</span>
                 </p>
               </div>
               <div>

@@ -25,7 +25,7 @@ const mobileMenuOpen = ref(false)
           <router-link to="/register" class="text-sm font-medium text-white bg-navy-700 hover:bg-navy-600 transition-colors px-5 py-2 rounded-lg">Регистрация</router-link>
         </div>
 
-        <button class="md:hidden flex items-center justify-center size-10 text-gray-600" @click="mobileMenuOpen = !mobileMenuOpen">
+        <button :aria-label="mobileMenuOpen ? 'Затвори меню' : 'Отвори меню'" class="md:hidden flex items-center justify-center size-10 text-gray-600" @click="mobileMenuOpen = !mobileMenuOpen">
           <svg v-if="!mobileMenuOpen" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
           <svg v-else xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
         </button>
