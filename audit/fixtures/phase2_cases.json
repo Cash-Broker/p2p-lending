@@ -1157,7 +1157,7 @@
         "monthly_payment": "5041.66",
         "schedule": [
           {
-            "principal": "5000",
+            "principal": "5000.00",
             "interest": "41.66",
             "total": "5041.66"
           }
@@ -1767,7 +1767,7 @@
         "monthly_payment": "10041.66",
         "schedule": [
           {
-            "principal": "10000",
+            "principal": "10000.00",
             "interest": "41.66",
             "total": "10041.66"
           }
@@ -2594,7 +2594,7 @@
       "expected": {
         "coverage": "principal_only",
         "unpaid_principal": "10000.00",
-        "unpaid_interest": "0",
+        "unpaid_interest": "0.00",
         "total": "10000.00"
       }
     },
@@ -2638,7 +2638,7 @@
       "expected": {
         "coverage": "principal_only",
         "unpaid_principal": "7610.82",
-        "unpaid_interest": "0",
+        "unpaid_interest": "0.00",
         "total": "7610.82"
       }
     },

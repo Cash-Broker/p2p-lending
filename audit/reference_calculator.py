@@ -68,6 +68,16 @@ def _trunc(value: Decimal, scale: int) -> Decimal:
     return value.quantize(quantum, rounding=ROUND_DOWN)
 
 
+def money_str(value) -> str:
+    """Consistent wire-format for monetary values: always 2 decimals.
+
+    Matches how the platform serializes decimal:2 columns — `Decimal(0)`
+    renders as `'0.00'`, `Decimal('5000')` renders as `'5000.00'`, never
+    `'0'` or `'5000'`.
+    """
+    return str(_trunc(_to_decimal(value), 2))
+
+
 def bcadd(a, b, scale: int) -> Decimal:
     return _trunc(_to_decimal(a) + _to_decimal(b), scale)
 
@@ -169,9 +179,9 @@ def amortization_schedule(principal, interest_rate_pct, term_months: int) -> dic
         total_i = bcadd(principal_i, interest_i, 2)
         schedule.append(
             {
-                "principal": str(principal_i),
-                "interest": str(interest_i),
-                "total": str(total_i),
+                "principal": money_str(principal_i),
+                "interest": money_str(interest_i),
+                "total": money_str(total_i),
             }
         )
         remaining = bcsub(remaining, principal_i, 2)
@@ -181,11 +191,11 @@ def amortization_schedule(principal, interest_rate_pct, term_months: int) -> dic
     total_paid = sum((_to_decimal(row["total"]) for row in schedule), Decimal(0))
 
     return {
-        "monthly_payment": str(M),
+        "monthly_payment": money_str(M),
         "schedule": schedule,
-        "principal_sum": str(_trunc(principal_sum, 2)),
-        "interest_sum": str(_trunc(interest_sum, 2)),
-        "total_paid": str(_trunc(total_paid, 2)),
+        "principal_sum": money_str(principal_sum),
+        "interest_sum": money_str(interest_sum),
+        "total_paid": money_str(total_paid),
     }
 
 
@@ -225,14 +235,14 @@ def pro_rata(total, investor_amounts: list) -> dict:
         else:
             ratio = bcdiv(a, F, PRORATA_SCALE)
             share = bcmul(T, ratio, 2)
-        distributions.append(str(share))
+        distributions.append(money_str(share))
         distributed_so_far += share
 
     return {
-        "total": str(_trunc(T, 2)),
+        "total": money_str(T),
         "funded": F_str,
         "distributions": distributions,
-        "sum_distributions": str(_trunc(distributed_so_far, 2)),
+        "sum_distributions": money_str(distributed_so_far),
     }
 
 
@@ -263,9 +273,9 @@ def buyback_total(schedule: list, paid_indices: list, coverage: str) -> dict:
     total = bcadd(unpaid_principal, unpaid_interest, 2)
     return {
         "coverage": coverage,
-        "unpaid_principal": str(unpaid_principal),
-        "unpaid_interest": str(unpaid_interest),
-        "total": str(total),
+        "unpaid_principal": money_str(unpaid_principal),
+        "unpaid_interest": money_str(unpaid_interest),
+        "total": money_str(total),
     }
 
 
@@ -325,9 +335,9 @@ def early_repayment_total(
 
     total = bcadd(outstanding_principal, unpaid_interest, 2)
     return {
-        "outstanding_principal": str(outstanding_principal),
-        "unpaid_interest": str(unpaid_interest),
-        "total": str(total),
+        "outstanding_principal": money_str(outstanding_principal),
+        "unpaid_interest": money_str(unpaid_interest),
+        "total": money_str(total),
     }
 
 
@@ -340,7 +350,7 @@ def apr(interest_rate_annual_pct) -> str | None:
     rate = _to_decimal(interest_rate_annual_pct)
     if rate <= 0:
         return None
-    return str(_trunc(rate, 2))
+    return money_str(rate)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -726,13 +736,11 @@ def generate_fixture(out_path: Path):
     for case in cases:
         exp = case["expected"]
         if case["kind"] == "amortization":
-            assert exp["principal_sum"] == str(
-                _trunc(_to_decimal(case["input"]["amount"]), 2)
-            ), f"{case['case_id']}: principal_sum != amount"
+            assert exp["principal_sum"] == money_str(case["input"]["amount"]), \
+                f"{case['case_id']}: principal_sum != amount"
         elif case["kind"] == "prorata":
-            assert exp["sum_distributions"] == str(
-                _trunc(_to_decimal(case["input"]["total"]), 2)
-            ), f"{case['case_id']}: sum_distributions != total"
+            assert exp["sum_distributions"] == money_str(case["input"]["total"]), \
+                f"{case['case_id']}: sum_distributions != total"
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps({"cases": cases}, indent=2, ensure_ascii=False), encoding="utf-8")

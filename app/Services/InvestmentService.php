@@ -65,11 +65,20 @@ class InvestmentService
                 $newFundedAmount = bcadd($loan->funded_amount, $amount, 2);
                 $loan->forceFill(['funded_amount' => $newFundedAmount])->save();
 
-                // Auto-transition loan status
-                if ($loan->isFullyFunded()) {
-                    $loan->transitionTo(Loan::STATUS_FUNDED);
-                } elseif ($loan->status === Loan::STATUS_PUBLISHED) {
+                // Auto-transition loan status. The state machine only permits
+                // `published → funding → funded`, never `published → funded` in
+                // one step. When a single investment fully funds a previously
+                // published loan, we MUST route through `funding` — otherwise
+                // transitionTo() throws InvalidArgumentException and the whole
+                // investment rolls back.
+                //
+                // Ordering: PUBLISHED → FUNDING first (always), then FUNDING →
+                // FUNDED iff fully funded. Partial-funding remains on FUNDING.
+                if ($loan->status === Loan::STATUS_PUBLISHED) {
                     $loan->transitionTo(Loan::STATUS_FUNDING);
+                }
+                if ($loan->isFullyFunded() && $loan->status === Loan::STATUS_FUNDING) {
+                    $loan->transitionTo(Loan::STATUS_FUNDED);
                 }
 
                 return $investment;

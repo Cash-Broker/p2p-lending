@@ -198,34 +198,40 @@ class EarlyRepaymentExecutionServiceTest extends TestCase
         $this->service->execute($loan->id, $admin->id);
     }
 
-    public function test_rollback_on_wallet_failure_leaves_no_partial_state(): void
+    public function test_zero_invested_bucket_handled_via_clamp_not_rollback(): void
     {
-        // Mirror F2 pattern: first investor's wallet has invested=0, so
-        // the first WalletService::earlyRepayPrincipal push goes negative
-        // and CHECK rejects the UPDATE. Entire DB::transaction rolls back —
-        // no Transaction rows, no loan status change, no LoanEvent.
+        // Phase 2 audit — finding #2 behavior change.
+        //
+        // BEFORE fix: pro-rata drift pushing invested < 0 hit the
+        // `chk_wallets_invested_non_negative` CHECK constraint, which
+        // rolled back the entire DB::transaction — leaving operators
+        // unable to close affected loans. Confirmed in production logs
+        // from 2026-04-24 early test runs ("Early repayment execute
+        // failed unexpectedly ... invested = -0.02").
+        //
+        // AFTER fix (WalletService::creditAvailableFromInvested):
+        // the clamp zeroes invested instead of going negative, the
+        // execute succeeds, and a WARNING is logged for ops visibility.
+        //
+        // Rollback SEMANTICS for other failure paths (idempotency,
+        // invalid status) are covered by the dedicated tests above.
         [$loan, $admin, $investors] = $this->makeScenario();
         Wallet::where('user_id', $investors[0]->id)->update(['invested' => '0.00']);
 
-        $preTxCount = Transaction::count();
-        $preEventCount = LoanEvent::count();
-
-        try {
-            $this->service->execute($loan->id, $admin->id);
-            $this->fail('Expected wallet CHECK violation');
-        } catch (\Throwable $e) {
-            // any throw acceptable — specific type depends on driver
-        }
+        $this->service->execute($loan->id, $admin->id);
 
         $loan->refresh();
-        $this->assertSame('active', $loan->status);
-        $this->assertNull($loan->early_repaid_at);
-        $this->assertNull($loan->early_repayment_amount);
+        $this->assertSame('repaid', $loan->status, 'service succeeded via clamp');
+        $this->assertNotNull($loan->early_repaid_at);
 
-        $this->assertSame($preTxCount, Transaction::count(),
-            'DB::transaction must roll back ALL Transaction writes');
-        $this->assertSame($preEventCount, LoanEvent::count(),
-            'DB::transaction must roll back the LoanEvent write');
+        // Clamped wallet: invested stays 0 (never negative), available
+        // received the full principal share.
+        $postWalletA = Wallet::where('user_id', $investors[0]->id)->first();
+        $this->assertSame('0.00', (string) $postWalletA->invested);
+        $this->assertTrue(
+            bccomp((string) $postWalletA->available, '0', 2) > 0,
+            'full principal share still credited to available despite zero invested',
+        );
     }
 
     public function test_loan_event_written_with_correct_aggregate_metadata(): void

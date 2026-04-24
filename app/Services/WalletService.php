@@ -280,12 +280,24 @@ class WalletService
      * Used by repayPrincipal, buybackPrincipal AND earlyRepayPrincipal —
      * same wallet-bucket arithmetic, different transaction type + description.
      *
-     * Does NOT validate `wallet.invested >= amount` at the app layer — the
-     * wallets CHECK constraint (migration 2026_04_15_000001) enforces
-     * non-negative buckets at the DB layer, which is the source of truth.
-     * App-level validation would double-guard but also require reading
-     * wallet.invested before write (extra round trip); the DB guard is
-     * sufficient and atomic with the UPDATE.
+     * **Last-investor-remainder drift absorption (Phase 2 audit finding).**
+     * The pro-rata last-investor-remainder pattern in RepaymentService /
+     * BuybackCalculationService / EarlyRepaymentCalculationService guarantees
+     * `Σ distributions == installment_total` per installment, but NOT
+     * `Σ per-investor distributions across all installments == investor's
+     * invested`. Non-last investors get floor() shares that cumulatively
+     * under-return; the last investor cumulatively over-returns by the
+     * same amount. Platform money is conserved across investors (no
+     * net gain/loss), but the last investor's wallet can try to
+     * subtract 1–2 stotinki MORE principal than they originally invested.
+     *
+     * Before Phase 2 fix, that underflow hit the `chk_wallets_invested
+     * _non_negative` DB CHECK and rolled back the entire repayment —
+     * leaving production operators unable to close certain loans. The
+     * clamp below detects the underflow case and zeroes `invested`
+     * instead of going negative. The full requested amount still
+     * credits to `available` (money movement is valid in aggregate).
+     * We log at WARNING level so unusual drift is visible in ops.
      */
     private function creditAvailableFromInvested(
         int $userId,
@@ -301,8 +313,28 @@ class WalletService
         return DB::transaction(function () use ($userId, $amount, $type, $description, $reference) {
             $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
 
+            $rawInvested = bcsub((string) $wallet->invested, $amount, 2);
+            if (bccomp($rawInvested, '0', 2) < 0) {
+                // Clamp. Log the drift so ops can see cumulative rounding
+                // artifacts in the wild. Drift is almost always ≤ 0.02.
+                \Illuminate\Support\Facades\Log::warning(
+                    'WalletService: invested bucket drift clamped at zero',
+                    [
+                        'user_id'                => $userId,
+                        'type'                   => $type,
+                        'requested_amount'       => $amount,
+                        'wallet_invested_before' => (string) $wallet->invested,
+                        'drift_absorbed'         => $rawInvested, // negative magnitude shows drift
+                        'reference'              => $reference,
+                    ],
+                );
+                $newInvested = '0.00';
+            } else {
+                $newInvested = $rawInvested;
+            }
+
             $wallet->forceFill([
-                'invested' => bcsub($wallet->invested, $amount, 2),
+                'invested'  => $newInvested,
                 'available' => bcadd($wallet->available, $amount, 2),
             ])->save();
 

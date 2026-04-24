@@ -188,6 +188,34 @@ class LoanTest extends TestCase
         $this->assertEquals(Loan::STATUS_FUNDED, $loan->fresh()->status);
     }
 
+    public function test_invest_published_to_funded_via_funding_when_single_investment_fills_loan(): void
+    {
+        // Phase 2 audit — finding #1 regression guard.
+        //
+        // A PUBLISHED loan (no prior investments) that gets ONE
+        // investment equal to its full amount must transition through
+        // FUNDING before reaching FUNDED. The state machine forbids
+        // `published → funded` directly (ALLOWED_TRANSITIONS[published]
+        // = [draft, funding]). Pre-fix InvestmentService tried the
+        // direct jump and threw InvalidArgumentException, rolling the
+        // entire investment back — admins couldn't fund single-
+        // investor loans in one shot.
+        //
+        // Post-fix: service routes PUBLISHED → FUNDING first, then
+        // FUNDING → FUNDED on the same invest() call.
+        $loan = Loan::factory()->published()->create(['amount' => 1000, 'funded_amount' => 0]);
+        $user = $this->createVerifiedInvestor(['available' => 5000]);
+
+        $this->actingAs($user)->postJson(
+            "/api/loans/{$loan->id}/invest",
+            ['amount' => 1000],
+            ['X-Idempotency-Key' => 'single-fill-' . uniqid()],
+        )->assertSuccessful();
+
+        $this->assertEquals(Loan::STATUS_FUNDED, $loan->fresh()->status);
+        $this->assertEquals('1000.00', (string) $loan->fresh()->funded_amount);
+    }
+
     public function test_invest_fails_insufficient_balance(): void
     {
         $loan = Loan::factory()->published()->create(['amount' => 10000]);

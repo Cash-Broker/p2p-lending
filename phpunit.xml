@@ -11,6 +11,12 @@
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
+        <!-- Phase 2 financial correctness audit. Opt-in only via
+             `php artisan test testsuite=Audit`. NOT part of the
+             default CI suite (Unit+Feature). See AUDIT_REPORT_PHASE2.md. -->
+        <testsuite name="Audit">
+            <directory>tests/Audit</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>

@@ -210,13 +210,23 @@ class BuybackExecutionServiceTest extends TestCase
         $this->service->execute($loan->id, $admin->id);
     }
 
-    public function test_rollback_on_wallet_failure_leaves_no_partial_state(): void
+    public function test_zero_invested_bucket_handled_via_clamp_not_rollback(): void
     {
-        // Two investors. First investor's wallet has invested=0, so the
-        // FIRST buybackPrincipal call would push invested negative and
-        // the wallets CHECK constraint rejects the UPDATE. Whole
-        // DB::transaction rolls back — no wallet changes, no transactions,
-        // no LoanEvent, no loan status transition.
+        // Phase 2 audit — finding #2 behavior change.
+        //
+        // BEFORE fix: pro-rata drift pushing invested < 0 hit the
+        // `chk_wallets_invested_non_negative` CHECK constraint, which
+        // rolled back the entire DB::transaction — leaving operators
+        // unable to close affected loans.
+        //
+        // AFTER fix (WalletService::creditAvailableFromInvested):
+        // the clamp zeroes invested instead of going negative. Buyback
+        // succeeds, wallet ends in a clamped state (invested=0,
+        // available += full share), a WARNING is logged so ops see
+        // cumulative drift.
+        //
+        // Rollback SEMANTICS for other (non-clamp) failure paths are
+        // tested by the idempotency + invalid-status tests above.
         [$loan, $admin, $investors] = $this->makeScenario(
             investorCount: 2,
             eachInvestment: '100.00',
@@ -225,38 +235,27 @@ class BuybackExecutionServiceTest extends TestCase
             interestPerSchedule: '10.00',
         );
 
-        // Zero out the FIRST investor's invested bucket. The service iterates
-        // investors in Investment.id order, so this investor is processed first.
+        // Zero out the FIRST investor's invested bucket. Pre-fix this
+        // forced a CHECK violation; post-fix it triggers the clamp.
         Wallet::where('user_id', $investors[0]->id)->update(['invested' => '0.00']);
 
-        $preTxCount = Transaction::count();
-        $preEventCount = LoanEvent::count();
-        $preWalletB = Wallet::where('user_id', $investors[1]->id)->first();
+        $this->service->execute($loan->id, $admin->id);
 
-        try {
-            $this->service->execute($loan->id, $admin->id);
-            $this->fail('Expected the DB CHECK violation to throw');
-        } catch (\Throwable $e) {
-            // Any throw — specific type depends on DB driver
-        }
-
-        // Loan status NOT transitioned, bought_back_at still null.
+        // Loan DID transition — service succeeded via the clamp.
         $loan->refresh();
-        $this->assertSame('late', $loan->status);
-        $this->assertNull($loan->bought_back_at);
+        $this->assertSame('bought_back', $loan->status);
+        $this->assertNotNull($loan->bought_back_at);
 
-        // No Transaction rows added.
-        $this->assertSame($preTxCount, Transaction::count(),
-            'DB::transaction must roll back ALL partial writes (Transaction rows)');
-
-        // No LoanEvent added.
-        $this->assertSame($preEventCount, LoanEvent::count(),
-            'DB::transaction must roll back the LoanEvent write');
-
-        // Investor B's wallet unchanged (service never reached them before rollback).
-        $postWalletB = Wallet::where('user_id', $investors[1]->id)->first();
-        $this->assertSame((string) $preWalletB->available, (string) $postWalletB->available);
-        $this->assertSame((string) $preWalletB->invested, (string) $postWalletB->invested);
+        // Clamped wallet: invested still 0 (not negative), available
+        // received the full principal share despite "insufficient"
+        // invested bucket.
+        $postWalletA = Wallet::where('user_id', $investors[0]->id)->first();
+        $this->assertSame('0.00', (string) $postWalletA->invested,
+            'clamp prevented invested from going negative');
+        $this->assertTrue(
+            bccomp((string) $postWalletA->available, '0', 2) > 0,
+            'full principal share still credited to available',
+        );
     }
 
     public function test_loan_event_written_with_correct_aggregate_metadata(): void
