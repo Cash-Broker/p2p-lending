@@ -546,6 +546,207 @@ move F2 to 04:00 and update this note.
    worker retries of the SAME job don't double-insert into the
    admin inbox.
 
+## Phase F3 — Early Repayment
+
+F3 adds borrower-initiated early loan close-out on top of F1+F2.
+**Admin-triggered only** model, same as F2 buyback: borrower contacts
+admin externally, wires funds off-platform, admin verifies the transfer
+in the business bank account, then clicks Execute in Filament. No cron.
+No queue UI. No borrower-facing flow. Smaller scope than F2 (~70%
+code clone of F2 buyback).
+
+### Tables (F3 migrations — 1 file)
+
+- `loans` — 2 nullable columns:
+  - `early_repaid_at` — timestamp. Set by
+    `EarlyRepaymentExecutionService::execute()` at admin Execute click.
+    Distinguishes a `repaid` loan that was CLOSED EARLY from one that
+    reached `repaid` through scheduled completion. Terminal (never
+    cleared).
+  - `early_repayment_amount` — DECIMAL(12,2). Denormalised audit value:
+    the total distributed at execution. CHECK constraint:
+    `IS NULL OR (amount >= 0 AND amount <= 10_000_000)` — lower bound
+    is defense-in-depth; upper bound is a psychological sanity alarm
+    (any single-loan close above 10M EUR is almost certainly a calc
+    bug; platform loan amounts typically < 50k).
+
+- No changes to `loan_events.event_type` — F1 pre-expanded the enum
+  with `early_repayment_completed`. F3 writes it without migration.
+- `transactions.type` column has NO DB CHECK — F3 adds 2 app-level
+  constants (`TYPE_EARLY_REPAYMENT_PRINCIPAL`,
+  `TYPE_EARLY_REPAYMENT_INTEREST`) to `Transaction::TYPES`.
+
+### State machine (NO changes)
+
+`Loan::ALLOWED_TRANSITIONS` already permits:
+- `active → repaid`
+- `late → repaid`
+- `default → repaid`
+
+F3 uses these existing paths. The `early_repaid_at` timestamp is the
+"was closed early" marker — **NOT a new status**. Both F3-closed loans
+and normally-completed loans share `status = 'repaid'`; the timestamp
+distinguishes them (set vs null).
+
+### Interest calculation — schedule-boundary (NO day-count accrual)
+
+Per DECISIONS.md "F3: Early repayment — schedule-boundary interest":
+```
+outstanding_principal = Σ schedule.principal where status IN (pending, late)
+unpaid_interest       = Σ schedule.interest where status IN (pending, late)
+                         AND due_date <= next_upcoming_schedule.due_date
+total                 = principal + interest
+```
+
+`next_upcoming_schedule.due_date` is the first unpaid with
+`due_date >= today`. Fallback when EVERY unpaid is overdue (no
+upcoming): use the LAST unpaid due_date as the boundary — filter
+passes all unpaid interest (for a loan being closed after extensive
+delinquency).
+
+Intuition: borrower pays outstanding principal PLUS interest for the
+CURRENT installment period. Past-due (late) interest is included — the
+borrower catches up on missed months. No mid-month day-count accrual
+(chosen over day-count for codebase consistency; see DECISIONS.md for
+the v1 vs v1.1 rationale).
+
+**Business-facing T&C language (per DECISIONS.md):**
+> "При предсрочно погасяване, кредитополучателят плаща главница +
+> цялата лихва до следващата планирана вноска."
+
+### Execution mechanism — admin-triggered only
+
+Admin opens **Финанси → Кредити** (Filament LoanResource). Clicks the
+row action **"Предсрочно погасяване"** on any loan in
+`active | late | default`. Action:
+
+- **Visibility gate** (column-only, no per-row DB subquery):
+  ```php
+  in_array($r->status, [ACTIVE, LATE, DEFAULT])
+      && $r->early_repaid_at === null
+      && $r->bought_back_at === null
+  ```
+  No query on `amortization_schedules` in visibility to avoid N+1 on
+  large LoanResource tables. Edge case (loan with no unpaid schedules)
+  is caught by the modal's error panel instead.
+- **Modal `modalContent`** closure runs `EarlyRepayment
+  CalculationService::calculateTotal()` FRESH at open time.
+  Renders either:
+    - Happy-path breakdown: outstanding, unpaid interest, total,
+      investor count, warning about irreversibility +
+      bank-transfer-confirmation reminder.
+    - Error panel: if calc throws (no unpaid schedules, data
+      inconsistency), Blade renders a danger-tinted card with the
+      exception message.
+- **Action closure** — triple-catch (specific → typed → generic):
+  ```php
+  try {
+      $result = EarlyRepaymentExecutionService::execute($id, auth()->id());
+      // Dispatch per-investor EarlyRepaymentReceivedNotification
+      // AFTER the DB::transaction committed (money first, emails second).
+  } catch (EarlyRepaymentAlreadyExecutedException $e) {
+      // Idempotency → warning toast
+  } catch (InvalidArgumentException $e) {
+      // Wrong status / zero total → danger toast with service message
+  } catch (\Throwable $e) {
+      // Unexpected → Log::error + generic danger toast
+  }
+  ```
+
+`EarlyRepaymentExecutionService::execute()` wraps everything in one
+`DB::transaction(function () { ... })`:
+1. `Loan::lockForUpdate()` on the target.
+2. **Differentiated idempotency/state validation:**
+   - `status=repaid + early_repaid_at set` →
+     `EarlyRepaymentAlreadyExecutedException` ("already early-repaid on
+     {date}"). Filament catches for warning toast.
+   - `status=repaid + early_repaid_at NULL` → `InvalidArgument`
+     ("already repaid through scheduled completion"). Different
+     semantic from idempotency — loan finished normally, early-repay
+     is not applicable.
+   - `status=bought_back` → `InvalidArgument` ("originator owns the
+     debt; early repayment N/A").
+   - `status NOT IN (active, late, default)` → `InvalidArgument`
+     ("not yet activated").
+3. `EarlyRepaymentCalculationService::calculateTotal()` — fresh amount.
+   Throws `InvalidArgument` on zero unpaid schedules.
+4. `::distribute()` — pro-rata with last-investor-remainder (penny-
+   precise; Σ(shares) == total exactly).
+5. Per investor: `WalletService::earlyRepayPrincipal` (invested →
+   available, `TYPE_EARLY_REPAYMENT_PRINCIPAL`) and `::earlyRepayInterest`
+   (available += + earned +=, `TYPE_EARLY_REPAYMENT_INTEREST`).
+   Reference: `"loan:{id}:early_repayment:user:{user_id}"`.
+6. **Single UPDATE** — `forceFill(['early_repaid_at' => now,
+   'early_repayment_amount' => calc->total])` then
+   `transitionTo(STATUS_REPAID)` — both fields + status persist in
+   ONE UPDATE on `loans` (empirically verified by
+   `EarlyRepaymentExecutionServiceTest::test_single_update_query_for
+   _early_repaid_at_and_amount_and_status`).
+7. `LoanEvent(early_repayment_completed, <from> → repaid)` with
+   aggregate metadata only — `executed_by_admin_id`, `from_status`,
+   `total_amount`, `total_principal`, `total_interest`,
+   `investor_count`, `executed_at`. **No per-investor breakdown** —
+   privacy (other investors' shares must not leak through the public
+   timeline API).
+
+Service returns `EarlyRepaymentResult` (read-only DTO) containing
+aggregates + per-investor `distributions`. The Filament action uses
+`distributions` to dispatch `EarlyRepaymentReceivedNotification`
+per investor AFTER the `DB::transaction` has committed.
+
+### Notifications
+
+**Investor** — `EarlyRepaymentReceivedNotification`:
+- `implements ShouldQueue`, channels `mail + database`.
+- Constructor snapshot: `Loan $loan, CarbonInterface $executedAt,
+  string $investorPrincipal, string $investorInterest,
+  string $totalReceived`. No `coverageType` (early repayment has no
+  per-originator config).
+- Dedupe: per `(user, loan, early_repaid_at)` via
+  `whereJsonContains('data->early_repaid_at', ISO)`. Since
+  `early_repaid_at` is terminal-once, this effectively collapses to
+  per-`(user, loan)` but the explicit timestamp key is retained for
+  F1/F2 contract symmetry.
+- Contract guard: `toArray()` MUST keep `early_repaid_at` as an
+  ISO-8601 string. Pinned by
+  `EarlyRepaymentReceivedNotificationTest::test_toarray_includes_
+  early_repaid_at_as_iso_string_for_rate_limit_contract`.
+- Email template `resources/views/emails/early-repayment-received.blade.php`:
+  BG copy, positive framing, 6-row data table (loan id, originator,
+  received principal, received interest, total bold, executed date),
+  CTA to portfolio, educational paragraph explaining Option B
+  behaviour. NO borrower PII; originator name included (public).
+
+### Admin-facing behaviour — NO cron
+
+F3 has **no detection cron**. No `loans:detect-*` command. No scheduler
+entry in `bootstrap/app.php`. No health endpoint extension. Admin
+verifies the borrower's bank transfer externally and manually
+triggers execution.
+
+### Idempotency layers (2, not 3)
+
+1. **Execution** — `Loan::lockForUpdate()` + differentiated status
+   check inside `EarlyRepaymentExecutionService::execute`. A second
+   call on an already-early-repaid loan throws
+   `EarlyRepaymentAlreadyExecutedException`; Filament surfaces a
+   friendly "already done" toast.
+2. **Notification** — per-(user, loan, early_repaid_at) dedupe in
+   `EarlyRepaymentReceivedNotification::wasRecentlyNotified`. Protects
+   against queue-worker retries and against degenerate admin-SQL-
+   intervention scenarios.
+
+### Known limitations
+
+- **Overpayment up to half a monthly installment** (Option B schedule-
+  boundary). Borrower closing mid-month pays interest "до следваща
+  планирана вноска" — slightly more than pure day-count accrual would
+  charge. ~5 EUR average per early close; the overpayment flows to
+  investors as extra distribution (not retained by platform).
+- **`loans.activated_at` NOT added.** Day-count alternative (rejected
+  for v1) would have needed this. If v1.1 adds day-count, add the
+  column then.
+
 ## Currency
 - Everything in EUR
 - Format: 1,234.56 €

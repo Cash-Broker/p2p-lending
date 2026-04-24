@@ -109,6 +109,94 @@ remediations as a new entry that references the old one).
 
 ---
 
+## F3: No new loan status for early-repaid (marker-timestamp pattern)
+
+- **Date:** 2026-04-23
+- **Decision:** Early-repaid loans reach `status='repaid'` (existing
+  terminal state) with `loans.early_repaid_at` as a nullable timestamp
+  distinguishing them from normally-completed ones. NO new enum value
+  (no `STATUS_EARLY_REPAID`). Mirror of F2's `bought_back` pattern where
+  a new status was needed because it has semantically different
+  consequences; F3 does NOT introduce a new status because the terminal
+  outcome from investor / borrower perspective is identical to a
+  normally-closed loan (loan fully paid, money returned).
+- **Rationale:**
+  - State-machine simplicity: no new transitions, no UI status-badge
+    label update across 4 surfaces (Filament table/form, Vue
+    PortfolioPage, Vue InvestmentDetailPage, notification copy).
+  - Reuse existing `active/late/default → repaid` transitions without
+    modification.
+  - Timestamp markers are sufficient for distinguishing outcomes:
+    `early_repaid_at IS NOT NULL` → closed by borrower early;
+    `early_repaid_at IS NULL AND status = 'repaid'` → closed via
+    scheduled completion.
+  - Idempotency + state validation surface both cases with
+    differentiated error messages (see
+    `EarlyRepaymentExecutionService::execute`).
+- **Compensating controls:**
+  - `EarlyRepaymentExecutionService` has TWO rejection paths for
+    `status='repaid'`:
+    * `early_repaid_at !== null` → `EarlyRepaymentAlreadyExecuted
+      Exception` (benign idempotency hit → warning toast).
+    * `early_repaid_at === null` → `InvalidArgumentException`
+      ("already repaid through scheduled completion; cannot early-
+      repay a finalised loan").
+  - Filament visibility gate on the row action hides it when
+    `early_repaid_at !== null` (no double-execute UI path).
+  - Tests pin both branches
+    (`EarlyRepaymentExecutionServiceTest::test_idempotency_*` and
+    `::test_repaid_through_normal_completion_*`).
+- **Trigger conditions for revisiting:**
+  - If investor UX demands aggregating "early-paid" separately from
+    "normally-paid" in portfolio views (currently both fall under the
+    single "Изплатен" bucket).
+  - If regulators require the distinction in financial statements.
+- **Effort estimate to migrate to a new status:** ~2 days — enum
+  value, new ALLOWED_TRANSITIONS entry, update 4+ UI surfaces.
+
+---
+
+## F3: Single-UPDATE batching pattern (forceFill + transitionTo)
+
+- **Date:** 2026-04-23
+- **Decision:** When an execution service needs to stamp multiple
+  columns alongside a status transition (e.g. `early_repaid_at` +
+  `early_repayment_amount` + `status`), the service calls
+  `$loan->forceFill([col1, col2])` to set the dirty state, then
+  `$loan->transitionTo(NEW_STATUS)` which invokes `save()` internally
+  — ALL dirty attributes persist in ONE UPDATE statement. Same pattern
+  that F2's `BuybackExecutionService` established (`bought_back_at` +
+  `status`).
+- **Rationale:**
+  - **ONE `audit_logs` row per business event** — `Auditable` trait
+    snapshots diff on each save. Splitting into two saves (one for the
+    column, one for the status) would create two audit rows with
+    partially overlapping diffs, misleading forensic replay.
+  - **Atomic state snapshot** — admin reading the loan between the two
+    saves could see an inconsistent intermediate state
+    (`early_repaid_at` set but `status` still `active`). One UPDATE
+    eliminates that window.
+  - **Performance** — one UPDATE vs two is a minor win but real.
+- **Compensating controls:**
+  - Empirical test pins the pattern: `EarlyRepayment
+    ExecutionServiceTest::test_single_update_query_for_early_repaid_at
+    _and_amount_and_status` asserts exactly ONE UPDATE on `loans`
+    containing all three column names. Parallel test exists for F2 at
+    `BuybackExecutionServiceTest::test_single_update_query_for_bought
+    _back_at_and_status`. A refactor that inadvertently splits the save
+    will fail one of these tests before hitting production.
+- **Trigger conditions for revisiting:**
+  - If a service needs to invoke side effects that require the status
+    to be committed FIRST (then a second UPDATE stamps columns). In
+    that case, use two explicit saves with the rationale documented.
+- **Implementation note:** `Loan::transitionTo()` calls
+  `$this->forceFill(['status' => $newStatus])->save()` internally
+  (see `app/Models/Loan.php:123-124`). Laravel's `save()` persists ALL
+  currently-dirty attributes, so any `forceFill` CALLED BEFORE
+  `transitionTo` adds its fields to the same UPDATE.
+
+---
+
 ## F3: Early repayment — schedule-boundary interest (NO day-count accrual)
 
 - **Date:** 2026-04-23

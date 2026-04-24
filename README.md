@@ -90,6 +90,20 @@ stdout_logfile=/path/to/app/storage/logs/queue-worker.log
 
 Or systemd: standard `[Service] ExecStart=/usr/bin/php /path/to/app/artisan queue:work --tries=3` unit.
 
+### Early repayment (F3) — admin manual trigger
+
+F3 introduces no scheduled commands. Early repayment is executed by
+the admin clicking **"Предсрочно погасяване"** on a loan's row in
+Filament (**Финанси → Кредити**). The action is visible only for loans
+in `active`, `late`, or `default` status. Confirmation modal shows a
+fresh calculation (outstanding principal + unpaid interest through
+the next-scheduled-installment boundary) plus a reminder to verify
+the borrower's bank transfer before proceeding.
+
+No new cron entries, no new log files, no new queue workers. Investor
+email notifications ride the existing queue worker configured for
+F1/F2.
+
 ### Health monitoring
 Public endpoint covers BOTH `loans:process-late` (F1) and `loans:detect-buyback-eligible` (F2) via a single URL:
 
