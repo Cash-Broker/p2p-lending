@@ -71,9 +71,15 @@ class LoanResource extends Resource
             \Filament\Schemas\Components\Section::make('Финансови параметри')->schema([
                 Forms\Components\TextInput::make('amount')->label('Сума (€)')->numeric()->required()->minValue(100)
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
-                Forms\Components\TextInput::make('interest_rate')->label('Доходност (%)')->numeric()->required()->step(0.01)
+                Forms\Components\TextInput::make('interest_rate')->label('Доходност (%)')
+                    ->helperText('Годишната доходност, която инвеститорите получават. Използва се за изготвяне на погасителен план.')
+                    ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
+                    ->rules(['numeric', 'min:0.01', 'max:999.99'])
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
-                Forms\Components\TextInput::make('interest_rate_annual')->label('Лихва кредитополучател (%)')->numeric()->required()->step(0.01)
+                Forms\Components\TextInput::make('interest_rate_annual')->label('Лихва кредитополучател (%)')
+                    ->helperText('Годишната лихва, която кредитополучателят плаща. Използва се за изчисляване на ГПР (APR). Трябва да е ≥ "Доходност" (разликата е марж на оригинатора).')
+                    ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
+                    ->rules(['numeric', 'min:0.01', 'max:999.99'])
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
                 Forms\Components\TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),

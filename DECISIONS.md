@@ -642,3 +642,96 @@ remediations as a new entry that references the old one).
   one line in `FeeController::__invoke`.
 
 ---
+
+## F5-01: APR calculation — nominal pass-through in v1, IRR path deferred
+
+- **Date:** 2026-04-24
+- **Decision:** Phase F5's `APRCalculatorService::calculate()` returns
+  `number_format((float) $loan->interest_rate_annual, 2, '.', '')` —
+  a pass-through of the stored nominal borrower rate, formatted to
+  two decimals. No IRR solver, no approximation formula, no mid-term
+  recalculation.
+- **Rationale:**
+  - **Mathematical correctness under no-fee regime.** For a vanilla
+    annuity loan with no borrower-side fees, the nominal rate IS the
+    EU CCD APR by definition. The APR is the Xa that solves
+    `Σ Ck × (1+X)^(-tk) = Σ Dl × (1+X)^(-sl)` (Directive 2008/48/EC
+    Annex I); when fees are zero, the solution collapses to X =
+    nominal rate. Pass-through is therefore exact, not an
+    approximation.
+  - **F4 scope confirms the no-fee regime.** F4 shipped
+    withdrawal-fee infrastructure only — investor-side, charged at
+    admin-approval time on withdrawals. No borrower-side fees exist
+    today. Origination / service / late / inactivity fee categories
+    are placeholder-ready in `FeeService::CATEGORIES` but not
+    implemented.
+  - **Handoff-formula correction.** The client's F5 brief proposed
+    `APR = (Total Cost − Principal) / Principal × 12 / term_months
+    × 100`. This is the *simple flat rate* formula, not APR. For a
+    10 000 € / 10% / 12-month annuity it returns 5.50% vs the true
+    APR of 10.00% — roughly half the nominal rate, because flat
+    ignores amortizing balance. Using that formula would display
+    legally-non-compliant ГПР values. Nominal pass-through avoids
+    the error entirely.
+- **Upgrade path — IRR solver when borrower-side fees activate:**
+  - Signature stays: `calculate(Loan $loan): ?string`. Callers never
+    change.
+  - Internals switch to Newton-Raphson on the EU CCD equation.
+    bcmath-based (scale ≥ 10 for rate iterations; final answer
+    rounded to 2 decimals).
+  - Trigger: any new row in `FeeService::CATEGORIES` that represents
+    a borrower-side fee (origination, service, late, inactivity).
+  - Effort estimate: 1 day for solver + 0.5 day for test fixtures
+    (known APR targets from regulator example calculators).
+- **Dual-display decision (Q1c):**
+  - Both "Доходност" (investor yield from `interest_rate`) AND "ГПР"
+    (borrower cost from `interest_rate_annual`) are shown to
+    investors on the loan detail page. Distinct labels; distinct
+    columns; distinct helper text.
+  - Rationale: "Доходност" has been the investor-facing rate since
+    F1 and investors have mental anchors around it. Replacing it
+    with "ГПР" breaks expectations. ADDING "ГПР" as a second
+    transparency data point preserves the existing signal AND
+    discloses the borrower's cost for due diligence — aligned with
+    EU CCD philosophy even though this platform has no borrower UI.
+  - F1-L6 activation: `interest_rate_annual` was "metadata only"
+    pre-F5. F5 makes it load-bearing. The column is `NOT NULL
+    decimal(5,2)` at the DB layer, so no production row can be
+    missing. A defensive null/zero guard in APRCalculatorService
+    returns null → UI renders "—" instead of "0.00%".
+- **Admin-only marge visibility:**
+  - Filament LoanResource admin detail shows `(interest_rate_annual
+    − interest_rate)` as "Марж" — the originator's spread per loan.
+    Surfaces profit-margin visibility for the operator ("клиентката")
+    without exposing it to investors.
+  - Rationale: the operator needs to see spread at a glance for
+    pricing decisions; investors don't need it and it could invite
+    irrelevant bargaining. Admin-only matches the existing
+    AuditLogResource admin-only discipline.
+  - Displayed as a read-only Placeholder (not a form field — it's
+    derived, never stored).
+- **Precision:** 2 decimals. Matches the `decimal:2` cast on both
+  `interest_rate` and `interest_rate_annual`. Matches EU CCD
+  disclosure norms (common-practice for consumer-credit disclosure
+  documents). Storing 2 decimals on the wire avoids float-
+  roundtripping errors between PHP and JS.
+- **Live recalculation (no snapshot column):**
+  - APR computed on-the-fly via `$loan->apr()`. Memoized
+    per-instance (cheap now, future-proofs the IRR case).
+  - No `apr_at_activation` column. Rationale: APR is deterministic
+    given loan parameters — snapshot would only make sense if
+    regulation required "APR as disclosed on day X" preservation.
+    This platform has no such requirement today. Revisit if Bulgarian
+    CCD enforcement adds preservation obligations.
+- **Trigger conditions for revisiting:**
+  - First borrower-side fee activates in `FeeService::CATEGORIES` —
+    switch to IRR solver.
+  - Regulator demands APR-at-disclosure preservation — add
+    `apr_at_activation` column + snapshot on the `funded → active`
+    transition.
+  - Originator spread becomes a negotiated quantity per loan
+    (rather than platform-set) — marge display moves from admin-
+    only to originator-visible.
+- **Owner of follow-up:** Backend lead (on triggers above).
+
+---

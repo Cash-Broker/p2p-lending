@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Services\AmortizationService;
+use App\Services\APRCalculatorService;
 use Database\Factories\LoanFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -170,6 +171,34 @@ class Loan extends Model
             'early_repaid_at' => 'datetime',
             'early_repayment_amount' => 'decimal:2',
         ];
+    }
+
+    /**
+     * Per-instance memoization for apr(). Separate "resolved" flag is
+     * needed because null is a valid cached outcome (F1-L6 fallback).
+     */
+    protected ?string $aprMemo = null;
+    protected bool $aprMemoResolved = false;
+
+    /**
+     * F5 — Annual Percentage Rate / Годишен Процент на Разходите.
+     *
+     * Delegates to {@see APRCalculatorService}. Memoized per-instance
+     * because the service may become expensive (IRR Newton-Raphson)
+     * when borrower-side fees activate. Today it's a one-liner, but
+     * the cache costs nothing and future-proofs the contract.
+     *
+     * Returns null → UI should render "—" (dash), NOT "0.00%".
+     */
+    public function apr(): ?string
+    {
+        if ($this->aprMemoResolved) {
+            return $this->aprMemo;
+        }
+
+        $this->aprMemo = app(APRCalculatorService::class)->calculate($this);
+        $this->aprMemoResolved = true;
+        return $this->aprMemo;
     }
 
     public function originator(): BelongsTo
