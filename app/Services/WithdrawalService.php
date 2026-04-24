@@ -12,7 +12,10 @@ use Illuminate\Validation\ValidationException;
 
 class WithdrawalService
 {
-    public function __construct(private WalletService $walletService) {}
+    public function __construct(
+        private WalletService $walletService,
+        private FeeService $feeService,
+    ) {}
 
     /**
      * Create a withdrawal request and RESERVE the amount.
@@ -53,14 +56,58 @@ class WithdrawalService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            // Debit from reserved (not available — amount was reserved at creation)
-            $this->walletService->debitReserved(
-                $withdrawal->user_id,
+            // Fee lookup happens INSIDE the transaction so a mid-approve
+            // flag flip can't create a TOCTOU split between what the
+            // admin previewed and what actually gets charged.
+            $quote = $this->feeService->getQuote(
+                FeeService::CATEGORY_WITHDRAWAL,
                 $withdrawal->amount,
-                Transaction::TYPE_WITHDRAWAL,
-                "Withdrawal approved (IBAN: ****" . substr($withdrawal->iban, -4) . ")",
-                "withdrawal_request:{$withdrawal->id}"
             );
+
+            $ibanSuffix = substr($withdrawal->iban, -4);
+            $withdrawalRef = "withdrawal_request:{$withdrawal->id}";
+
+            if ($quote->applies) {
+                // Fee-on path. Both debits come out of the RESERVED bucket
+                // (the investor set aside the full gross amount at request
+                // time). Net = what wires to the investor's bank; fee =
+                // what stays with the platform (off-platform).
+                // Both transactions live in this single DB::transaction,
+                // so partial commits are impossible.
+                $net = bcsub($withdrawal->amount, $quote->amount, 2);
+                if (bccomp($net, '0', 2) <= 0) {
+                    throw ValidationException::withMessages([
+                        'fee' => ["Withdrawal amount ({$withdrawal->amount}) must exceed fee ({$quote->amount}). Either raise the withdrawal or reject it."],
+                    ]);
+                }
+
+                $this->walletService->debitReserved(
+                    $withdrawal->user_id,
+                    $net,
+                    Transaction::TYPE_WITHDRAWAL,
+                    "Withdrawal approved (IBAN: ****{$ibanSuffix}; net of {$quote->amount} € fee)",
+                    $withdrawalRef,
+                );
+
+                $this->walletService->debitReserved(
+                    $withdrawal->user_id,
+                    $quote->amount,
+                    Transaction::TYPE_FEE,
+                    "Такса при теглене #{$withdrawal->id} (IBAN: ****{$ibanSuffix})",
+                    "{$withdrawalRef}:fee",
+                );
+            } else {
+                // Fee-off path — byte-identical to pre-F4 behaviour. The
+                // full withdrawal amount leaves reserved as one
+                // TYPE_WITHDRAWAL transaction; no TYPE_FEE row.
+                $this->walletService->debitReserved(
+                    $withdrawal->user_id,
+                    $withdrawal->amount,
+                    Transaction::TYPE_WITHDRAWAL,
+                    "Withdrawal approved (IBAN: ****{$ibanSuffix})",
+                    $withdrawalRef,
+                );
+            }
 
             $withdrawal->update([
                 'status' => 'approved',
