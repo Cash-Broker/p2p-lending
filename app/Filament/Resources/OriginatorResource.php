@@ -7,6 +7,7 @@ use App\Models\Originator;
 use App\Models\PlatformSetting;
 use BackedEnum;
 use Filament\Forms;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Resources\Resource;
 use Filament\Tables;
@@ -46,7 +47,7 @@ class OriginatorResource extends Resource
                     . (PlatformSetting::get('buyback_default_coverage') === 'principal_only'
                         ? 'Само главница' : 'Главница + планирана лихва'))
                 ->helperText('Без избор → използва платформения default.')
-                ->visible(fn (Forms\Get $get) => $get('buyback') === true),
+                ->visible(fn (Get $get) => $get('buyback') === true),
 
             Forms\Components\TextInput::make('buyback_trigger_days')
                 ->label('Buyback trigger (дни)')
@@ -57,7 +58,7 @@ class OriginatorResource extends Resource
                 ->placeholder(fn () => 'Платформен default: '
                     . PlatformSetting::get('buyback_default_trigger_days', 60))
                 ->helperText('Дни след became_late_at преди buyback да стане eligible. 0 = веднага. Без стойност → платформен default.')
-                ->visible(fn (Forms\Get $get) => $get('buyback') === true),
+                ->visible(fn (Get $get) => $get('buyback') === true),
 
             Forms\Components\FileUpload::make('logo_path')->label('Лого')
                 ->image()

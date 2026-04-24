@@ -10,6 +10,7 @@ use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\HtmlString;
@@ -114,7 +115,7 @@ class FeesPage extends Page
 
                     Forms\Components\Placeholder::make('preview_breakdown')
                         ->label('Резултат')
-                        ->content(fn (Forms\Get $get) => $this->renderPreview(
+                        ->content(fn (Get $get) => $this->renderPreview(
                             (bool) $get('fees_withdrawal_enabled'),
                             (string) ($get('fees_withdrawal_amount') ?? '0'),
                             (string) ($get('preview_amount') ?? '0'),
