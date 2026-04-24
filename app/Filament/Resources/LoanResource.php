@@ -6,6 +6,8 @@ use App\Filament\Resources\LoanResource\Pages;
 use App\Models\Borrower;
 use App\Models\Loan;
 use App\Models\Originator;
+use App\Models\User;
+use App\Notifications\EarlyRepaymentReceivedNotification;
 use App\Services\Loans\EarlyRepaymentAlreadyExecutedException;
 use App\Services\Loans\EarlyRepaymentCalculationService;
 use App\Services\Loans\EarlyRepaymentExecutionService;
@@ -215,18 +217,42 @@ class LoanResource extends Resource
                                 adminId: auth()->id(),
                             );
 
-                            // TODO Step 5 (new numbering): dispatch per-investor
-                            // EarlyRepaymentReceivedNotification using
-                            // $result->distributions. Money already moved; only
-                            // email channel remains to wire up.
+                            // Dispatch per-investor notification AFTER the
+                            // service's DB::transaction committed. Each send
+                            // in its own try/catch so one bad address cannot
+                            // starve the rest (F1/F2 discipline).
+                            $notifiedCount = 0;
+                            foreach ($result->distributions as $d) {
+                                try {
+                                    $investor = $d['user'] ?? User::find($d['user_id']);
+                                    if (! $investor) {
+                                        continue;
+                                    }
+                                    $investor->notify(new EarlyRepaymentReceivedNotification(
+                                        loan: $record,
+                                        executedAt: $result->executedAt,
+                                        investorPrincipal: $d['principal'],
+                                        investorInterest: $d['interest'],
+                                        totalReceived: $d['total'],
+                                    ));
+                                    $notifiedCount++;
+                                } catch (\Throwable $e) {
+                                    Log::warning('Failed to send EarlyRepaymentReceivedNotification', [
+                                        'loan_id' => $record->id,
+                                        'user_id' => $d['user_id'],
+                                        'error' => $e->getMessage(),
+                                    ]);
+                                }
+                            }
 
                             Notification::make()
                                 ->title('Предсрочно погасяване изпълнено')
                                 ->body(sprintf(
-                                    'Разпределени %s € към %d %s. Кредитът е маркиран като погасен.',
+                                    'Разпределени %s € към %d %s. Кредитът е маркиран като погасен. Уведомления queued: %d.',
                                     $result->totalAmount,
                                     $result->investorCount,
                                     $result->investorCount === 1 ? 'инвеститор' : 'инвеститори',
+                                    $notifiedCount,
                                 ))
                                 ->success()
                                 ->send();

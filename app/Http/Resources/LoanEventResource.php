@@ -54,6 +54,16 @@ class LoanEventResource extends JsonResource
         'total_interest',
         'investor_count',
         'executed_at',
+
+        // F3 — early_repayment_completed (execution aggregates).
+        // `total_amount`, `total_principal`, `total_interest`,
+        // `investor_count`, `executed_at` are ALREADY whitelisted above
+        // for F2 buyback events and are reused verbatim by F3 with
+        // identical investor-facing semantics. Only `from_status` is
+        // F3-specific — captures whether the loan was `active`, `late`,
+        // or `default` at the moment of early close (investor timeline
+        // display). `executed_by_admin_id` stays admin-only (F2 policy).
+        'from_status',
     ];
 
     public function toArray(Request $request): array

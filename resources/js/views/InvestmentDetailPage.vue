@@ -54,7 +54,7 @@ const eventTypeLabels = {
   buyback_triggered: 'Готов за изкупуване',
   buyback_completed: 'Buyback изпълнен',
   early_repayment_requested: 'Поискано предсрочно',
-  early_repayment_completed: 'Завършено предсрочно',
+  early_repayment_completed: 'Изплатено предсрочно',
   fee_applied: 'Приложена такса',
   status_changed: 'Статус променен',
 }
@@ -66,6 +66,10 @@ const eventTypeClass = {
   // buyback_completed is a positive terminal outcome (investor received funds).
   buyback_triggered: 'bg-blue-50 text-blue-700 ring-blue-200',
   buyback_completed: 'bg-green-50 text-green-700 ring-green-200',
+  // F3 — early_repayment_completed is a positive terminal outcome too
+  // (borrower paid off early; investor received capital + accrued interest
+  // through the current period boundary).
+  early_repayment_completed: 'bg-green-50 text-green-700 ring-green-200',
 }
 
 // Coverage-type labels for buyback event metadata rendering.
@@ -374,8 +378,21 @@ async function confirmInvest() {
                   </p>
 
                   <!-- F2 — buyback_completed (execution) metadata -->
-                  <p v-if="evt.metadata?.total_amount" class="text-xs text-blue-700 mt-1">
+                  <p v-if="evt.event_type === 'buyback_completed' && evt.metadata?.total_amount" class="text-xs text-blue-700 mt-1">
                     Изкупена сума: <span class="font-semibold">{{ formatAmount(evt.metadata.total_amount) }} €</span>
+                    <span v-if="evt.metadata.total_principal && evt.metadata.total_interest" class="text-gray-500">
+                      (главница: {{ formatAmount(evt.metadata.total_principal) }} €, лихва: {{ formatAmount(evt.metadata.total_interest) }} €)
+                    </span>
+                  </p>
+
+                  <!-- F3 — early_repayment_completed (execution) metadata.
+                       Same whitelist keys as F2 buyback (total_amount,
+                       total_principal, total_interest, investor_count,
+                       executed_at) plus F3-specific `from_status`. Filter by
+                       event_type so the "Изкупена сума" label above doesn't
+                       fire for F3 events. -->
+                  <p v-if="evt.event_type === 'early_repayment_completed' && evt.metadata?.total_amount" class="text-xs text-green-700 mt-1">
+                    Получена сума: <span class="font-semibold">{{ formatAmount(evt.metadata.total_amount) }} €</span>
                     <span v-if="evt.metadata.total_principal && evt.metadata.total_interest" class="text-gray-500">
                       (главница: {{ formatAmount(evt.metadata.total_principal) }} €, лихва: {{ formatAmount(evt.metadata.total_interest) }} €)
                     </span>
