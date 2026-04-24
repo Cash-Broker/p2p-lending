@@ -25,3 +25,13 @@ Thumbs.db
 .claude/worktrees/
 backup_phase_b.sql
 backup_before_f1.sql
+
+# Development documentation (kept local, not deployed)
+AUDIT_REPORT_*.md
+HANDOFF_*.md
+CLAUDE.md
+DECISIONS.md
+
+# Pentest artifacts (sensitive)
+pentest_*.php
+PENTEST_*.md
