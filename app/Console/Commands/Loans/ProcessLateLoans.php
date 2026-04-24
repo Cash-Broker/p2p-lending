@@ -184,6 +184,21 @@ class ProcessLateLoans extends Command
             }
         }
 
+        // 3b. Phase 3 P3-F5 — auto-close cleanly-completing active loans
+        // (never went late). Iterates status=active loans and transitions
+        // any with all-paid schedules to `repaid`. Mirrors the late-recovery
+        // rule R1 tiebreaker pattern. See DECISIONS.md P3-02.
+        $autoRepay = $updater->autoRepayCompletedLoans($loanIdsFilter);
+        $this->line(sprintf(
+            '  auto-repaid: %d completed active loan(s)',
+            count($autoRepay['auto_repaid']),
+        ));
+        if ($verbose) {
+            foreach ($autoRepay['auto_repaid'] as $loanId) {
+                $this->line("    loan #{$loanId} → repaid (all schedules paid)");
+            }
+        }
+
         // 4. Notifications — dispatch LoanWentLateNotification to every
         //    investor with a position in each newly-late loan.
         //
@@ -292,6 +307,10 @@ class ProcessLateLoans extends Command
             'last_late_check_schedules_marked' => (string) $newlyLateSchedules->count(),
             'last_late_check_loans_to_late' => (string) count($transitions['newly_late']),
             'last_late_check_loans_recovered' => (string) (count($transitions['recovered_to_active']) + count($transitions['recovered_to_repaid'])),
+            // P3-F5 — separate metric for auto-closed loans (completing cleanly
+            // without going late). Ops can watch this over time to estimate
+            // loan completion rate.
+            'last_late_check_auto_repaid' => (string) count($autoRepay['auto_repaid']),
             // Surfaces the safeguard hit count so support sees it in the
             // dashboard without grepping logs (see LoanStatusUpdaterService).
             'last_late_check_recovery_skipped_default' => (string) count($transitions['recovery_skipped_default']),

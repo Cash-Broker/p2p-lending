@@ -845,3 +845,128 @@ remediations as a new entry that references the old one).
   entry and AUDIT_REPORT_PHASE2.md §8 v1.1 follow-up commitments.
 
 ---
+
+## P3-01: FUNDING loan abandon — v1 manual, v1.1 automated `cancelled` status
+
+- **Date:** 2026-04-24
+- **Decision:** v1 ships Option A (minimal fix): `funding → draft`
+  transition allowed when `funded_amount == 0`, blocked when > 0.
+  Partial-funded abandon remains a documented manual procedure
+  (CLAUDE.md "Partial-funded loan abandon"). v1.1 implements a
+  dedicated `cancelled` status + pro-rata refund execution service
+  (Option B from the Phase 3 audit findings).
+- **Rationale:**
+  - **v1 scale.** Estimated ≤ 1 partial-funded stall per quarter
+    at launch volume (50–100 investors, 200–500 loans/year).
+    Manual per-investor refund through Filament Транзакции is
+    tedious but bounded and auditable.
+  - **v1.1 trigger conditions (any ONE brings the ticket forward):**
+    - Any real-world partial-funded stall case.
+    - Scale crosses 500 loans — accumulated edge cases become
+      material operational load.
+    - Regulator question about refund workflow auditability.
+  - **Effort estimate for v1.1 Option B:** 1–2 developer days.
+    Scope: new `Loan::STATUS_CANCELLED` state (new ALLOWED entry
+    from funding), `CancelRefundExecutionService` mirroring
+    `BuybackExecutionService` (pro-rata refund with
+    last-investor-remainder), Filament action + modal, investor
+    notification, tests, CLAUDE.md update.
+- **Compensating controls in v1:**
+  - Model-level guard (`booted()` updating hook) throws
+    `LogicException` if anyone tries `funding → draft` with
+    `funded_amount > 0`. Admin cannot skip the refund step even
+    via raw Filament form.
+  - Filament "Спри" (unpublish) action visibility extended to
+    include FUNDING with `funded_amount == 0` — immediate clean-up
+    path for the common zero-funded-after-rejected-withdrawal case.
+  - Documented manual procedure in CLAUDE.md step-by-step.
+  - Regression tests assert both the happy path (0 funded → draft
+    succeeds) and the guard (>0 funded → throws) in
+    `Phase3StateMachineMatrixTest`.
+- **Trade-offs accepted:**
+  - **Admin burden.** Manual per-investor refund entries are
+    tedious for scenarios with ≥ 5 investors. Infrequent at v1
+    scale.
+  - **Audit-trail shape.** Refunds appear as
+    `TYPE_REPAYMENT_PRINCIPAL` with a distinguishing reference
+    suffix (`:refund:`), NOT a dedicated `TYPE_REFUND` — re-uses
+    the existing type to avoid a migration. Reconciliation
+    scripts can filter by reference.
+  - **Reversibility.** Once admin runs raw SQL on
+    `funded_amount`, there's no automated rollback. Mitigated by
+    documenting the exact sequence.
+- **Owner of follow-up:** Backend lead. Ticket to file externally:
+  "Phase 3 v1.1: cancelled status + CancelRefundExecutionService".
+  Referenced by this entry and AUDIT_REPORT_PHASE3.md.
+
+---
+
+## P3-02: Auto-close cleanly-completing active loans
+
+- **Date:** 2026-04-24
+- **Decision:** `LoanStatusUpdaterService` gains
+  `autoRepayCompletedLoans()` — a third pass in the daily
+  `loans:process-late` cron (03:30). Iterates `status=active` loans,
+  transitions any whose schedules are all `paid` to `repaid`.
+  Mirrors the late-recovery rule R1 tiebreaker pattern and writes a
+  `loan_event(status_changed, active→repaid, triggered_by=system)`
+  with `metadata.auto_transitioned=true` and
+  `metadata.transition_reason='all_schedules_paid'` for audit.
+- **Root cause (Phase 3 P3-F5):** F1's late automation only handles
+  `active → late`, `late → active`, `late → repaid`. For loans that
+  complete cleanly WITHOUT ever going late, there is no
+  `active → repaid` logic anywhere. Every normally-completing loan
+  sits ACTIVE forever until admin manually transitions via the
+  Filament status Select. At 200–500 loans/year at v1 scale, this is
+  real operational burden.
+- **Why cron rather than hook onto RepaymentService:**
+  - **Transaction isolation.** Cron failure on a single loan does not
+    block live repayments. Hooking into `RepaymentService` would
+    couple cleanup to the critical path.
+  - **Pattern reuse.** F1 rule R1 tiebreaker already transitions
+    `late → repaid` when all schedules paid at recovery moment.
+    Extending the existing cron with a parallel pass is consistent
+    and low-risk.
+  - **Audit trail.** Cron runs emit `loan_events` with
+    `triggered_by=system`, distinguishing automatic closes from
+    manual admin closes. RepaymentService-triggered closures would
+    mask this distinction unless extra metadata is carried through.
+- **Safeguards (belt + braces):**
+  - `lockForUpdate` on the loan row — prevents race with manual
+    admin actions or concurrent cron runs.
+  - Re-check `status === active` inside the transaction.
+  - Reject if `schedule_count == 0` (F3-L2 data-inconsistency
+    edge — active-without-schedule; logs a warning so ops see it).
+  - Reject if any schedule is NOT in `paid` status (defensive
+    against `late` / `default` / `pending` leaking through).
+- **Dry-run support:** honours the existing `--dry-run` wrapper on
+  `loans:process-late`. `--loan=ID` restricts the pass to a single
+  target. `--detail` emits per-loan output.
+- **Observability:** new `platform_metrics` counter
+  `last_late_check_auto_repaid` on every cron run. External
+  monitoring via `/api/health/scheduler` picks it up at the next
+  audit of the health endpoint response shape (Phase 4 candidate).
+- **Trade-offs accepted:**
+  - **Cron-delayed close.** A loan's final repayment at 15:00 on
+    day X closes officially at 03:30 on day X+1. Acceptable
+    latency — investor's money already landed in wallet on the
+    repayment; status flip is cosmetic/reporting. If this ever
+    matters for UX, hook option remains available.
+  - **Uses generic `status_changed` event type.** No dedicated
+    enum slot for "auto-close on completion"; fallback is
+    semantically correct (all state changes without a specific
+    event type go through this). If analytics need to distinguish
+    auto-close events from other status changes, filter on
+    `metadata.auto_transitioned=true AND metadata.transition_reason
+    ='all_schedules_paid'`.
+- **Trigger conditions for revisiting:**
+  - If auto-close latency ever causes a support ticket, hook into
+    `RepaymentService::processRepayment` instead (inline close on
+    last-installment mark-paid).
+  - If `last_late_check_auto_repaid > 20/day` sustained — volume
+    indicates this is a high-frequency operation worth optimising.
+  - If a dedicated `TYPE_LOAN_COMPLETED` event type becomes
+    useful for reporting dashboards — add via migration.
+- **Owner of follow-up:** Backend lead.
+
+---

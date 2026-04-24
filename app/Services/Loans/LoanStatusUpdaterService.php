@@ -241,4 +241,111 @@ class LoanStatusUpdaterService
             return $newStatus;
         });
     }
+
+    /**
+     * Phase 3 P3-F5 fix — auto-close cleanly-completing active loans.
+     *
+     * Iterates `status=active` loans and transitions any whose schedules
+     * are ALL paid to `repaid`. Mirrors the rule R1 "tiebreaker" pattern
+     * from {@see maybeRecoverLoan} but for loans that never went late.
+     *
+     * Pre-audit state: cleanly-completing loans stayed `active` forever
+     * until admin manually transitioned them via the Filament status
+     * Select. At 200–500 loans/year that's real operational burden.
+     *
+     * Safeguards (belt + braces):
+     *   - `lockForUpdate` on the loan row — prevents races with manual
+     *     admin actions.
+     *   - re-check `status === active` inside the transaction (idempotent).
+     *   - reject loans with NO schedule (edge case — active-without-schedule
+     *     is the pre-existing F3-L2 data gap; don't touch).
+     *   - reject if any schedule status is NOT `paid` (defensive against
+     *     data inconsistency — e.g. a schedule in `late` or `default`
+     *     status should NOT trigger auto-repay; those should go through
+     *     the existing late-recovery or admin handling).
+     *
+     * Writes a `loan_event` with `event_type=status_changed` (generic
+     * transition — no dedicated enum slot reserved; using the fallback
+     * matches the spirit of F1's audit-trail pattern) + metadata
+     * identifying this as an auto-repay for ops review.
+     *
+     * @param  ?array<int>  $loanIdsFilter  optional subset for `--loan=ID`.
+     * @return array{auto_repaid: int[]}
+     */
+    public function autoRepayCompletedLoans(?array $loanIdsFilter = null): array
+    {
+        $result = ['auto_repaid' => []];
+
+        $activeQ = Loan::where('status', Loan::STATUS_ACTIVE);
+        if ($loanIdsFilter !== null) {
+            $activeQ->whereIn('id', $loanIdsFilter);
+        }
+
+        foreach ($activeQ->pluck('id') as $loanId) {
+            if ($this->maybeAutoRepayLoan($loanId)) {
+                $result['auto_repaid'][] = $loanId;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Attempt auto-repay on a single loan. Returns true iff the loan
+     * was transitioned. Idempotent under re-run.
+     */
+    private function maybeAutoRepayLoan(int $loanId): bool
+    {
+        return DB::transaction(function () use ($loanId) {
+            $loan = Loan::lockForUpdate()->find($loanId);
+            if (! $loan || $loan->status !== Loan::STATUS_ACTIVE) {
+                return false;
+            }
+
+            $totalSchedules = $loan->amortizationSchedules()->count();
+            if ($totalSchedules === 0) {
+                // F3-L2 data gap — active loan without schedule. Don't
+                // touch; admin manual fix needed via backfill artisan.
+                Log::warning('loans:process-late auto-repay skipped: active loan without schedule', [
+                    'loan_id' => $loanId,
+                ]);
+                return false;
+            }
+
+            $paidSchedules = $loan->amortizationSchedules()->where('status', 'paid')->count();
+            if ($paidSchedules !== $totalSchedules) {
+                return false;
+            }
+
+            // Defensive re-check: every schedule in `paid` status. If any
+            // are `late`, `default`, `pending` — the paid-count check above
+            // would catch it, but re-verify to cover inconsistent data.
+            $nonPaid = $loan->amortizationSchedules()
+                ->whereNotIn('status', ['paid'])
+                ->exists();
+            if ($nonPaid) {
+                return false;
+            }
+
+            $loan->transitionTo(Loan::STATUS_REPAID);
+
+            LoanEvent::create([
+                'loan_id' => $loanId,
+                'event_type' => LoanEvent::TYPE_STATUS_CHANGED,
+                'from_status' => Loan::STATUS_ACTIVE,
+                'to_status' => Loan::STATUS_REPAID,
+                'triggered_by' => LoanEvent::TRIGGERED_BY_SYSTEM,
+                'triggered_by_user_id' => null,
+                'metadata' => [
+                    'total_installments_paid' => $paidSchedules,
+                    'originator_id' => $loan->originator_id,
+                    'auto_transitioned' => true,
+                    'transition_reason' => 'all_schedules_paid',
+                ],
+                'occurred_at' => now(),
+            ]);
+
+            return true;
+        });
+    }
 }

@@ -1128,6 +1128,91 @@ from being created with zero/null ГПР.
   before the `minValue(0.01)` rule may still carry zero. Backfill
   is optional — UI handles it gracefully with the dash.
 
+## Operational procedures — manual recovery paths
+
+Documented admin workflows for scenarios the platform surfaces but
+does not automate. Each is known, bounded, and acceptable for v1
+scale. See individual phase audit reports for the discovery context.
+
+### Partial-funded loan abandon (Phase 3 P3-F2)
+
+**Scenario:** a loan reached `FUNDING` status (received ≥ 1
+investment) but did not attract enough investors to reach
+`loan.amount`. Demand dried up; the loan must be cancelled and
+partial investors refunded.
+
+**State machine:** `funding → draft` is permitted ONLY when
+`funded_amount == 0` (see `Loan::ALLOWED_TRANSITIONS` and the
+`booted()` updating hook guard added by P3-F2). For
+`funded_amount > 0`, the model throws `LogicException` to prevent
+stranding partial investors.
+
+**Manual recovery procedure:**
+
+1. **Contact partial investors externally.** Admin explains the
+   loan cannot fund and arranges per-investor refund schedule.
+2. **Per investor: create compensating transactions.** For each
+   investor with an `Investment` row on this loan:
+   - Filament → Транзакции → manual entry:
+     `TYPE_REPAYMENT_PRINCIPAL` for the investor's `investment.amount`
+     — moves money from `wallet.invested` back to `wallet.available`.
+     Reference: `loan:{loanId}:refund:investor:{userId}` (clear
+     audit trail distinguishing this from a real repayment).
+   - Reduce `loan.funded_amount` by the same amount (raw SQL OR
+     a one-off artisan console).
+3. **After all investors refunded**, `loan.funded_amount == 0`.
+4. **Admin uses Filament "Спри" action** on the loan (now visible
+   because funded_amount = 0). Transitions `funding → draft`.
+5. **Audit trail is preserved** via the per-investor transaction
+   rows + any manual `LoanEvent` entries the admin logs. Document
+   the external communication (emails, calls) in the admin note.
+
+**Why this is manual in v1:**
+
+Automating investor-refund-and-cancel (the "Option B"
+`cancelled` status from the Phase 3 audit) is a 1–2 day
+implementation (new status + pro-rata refund execution service
+mirroring F2 buyback). Deferred to **v1.1** — ticket referenced in
+DECISIONS.md P3-01. For v1 scale (estimated ≤ 1 partial-funded
+stall per quarter), manual recovery is acceptable.
+
+**NOT supported:** raw SQL resets that SKIP the transaction-row
+creation in step 2. The investor's wallet state would silently
+diverge from the transaction history, breaking reconciliation.
+
+### STATUS_DEFAULT transition (F1 manual handling)
+
+See Phase F1 section above — `late → default` is admin-only, no
+automation in v1.
+
+### Auto-close of cleanly-completing loans (Phase 3 P3-F5)
+
+The daily `loans:process-late` cron (03:30) includes a THIRD pass
+after its late-detection and recovery passes:
+`LoanStatusUpdaterService::autoRepayCompletedLoans()`. It iterates
+`status=active` loans and transitions any whose schedules are ALL
+`paid` to `repaid`. Mirrors the late-recovery tiebreaker pattern.
+
+**Why it exists:** F1's late automation covers `active → late`,
+`late → active`, `late → repaid`. There was NO `active → repaid`
+path for loans that completed cleanly without going late — they
+sat ACTIVE forever until admin manually transitioned them. See
+DECISIONS.md P3-02 for full rationale.
+
+**Cron output** gains a new line: `auto-repaid: N completed active
+loan(s)`. Metric `last_late_check_auto_repaid` is written.
+
+**Safeguards:** each transition is inside `DB::transaction` with
+`lockForUpdate`. Loans without amortization schedule (F3-L2 data
+gap) are skipped with a warning log. Any non-`paid` schedule
+status blocks the transition defensively.
+
+**Loan event:** each auto-close emits
+`loan_events(event_type=status_changed, from=active, to=repaid,
+triggered_by=system)` with `metadata.auto_transitioned=true` +
+`metadata.transition_reason='all_schedules_paid'` for audit /
+reporting.
+
 ## Currency
 - Everything in EUR
 - Format: 1,234.56 €
