@@ -42,12 +42,18 @@ class Loan extends Model
     // Statuses visible to investors (excludes draft).
     // bought_back is visible so investors see the final outcome of a loan
     // that was taken over by the originator.
+    // default is visible (Phase 3 P3-F4 fix) — investors holding a position
+    // in a loan that reaches DEFAULT must be able to see its detail page.
+    // Previously they'd see the loan in /api/portfolio (not status-filtered)
+    // but get 403 on /api/loans/{id}. Confusing UX, no security reason to
+    // hide the status from the holding investor.
     const INVESTOR_VISIBLE_STATUSES = [
         self::STATUS_PUBLISHED,
         self::STATUS_FUNDING,
         self::STATUS_FUNDED,
         self::STATUS_ACTIVE,
         self::STATUS_LATE,
+        self::STATUS_DEFAULT,
         self::STATUS_REPAID,
         self::STATUS_BOUGHT_BACK,
     ];
@@ -64,7 +70,11 @@ class Loan extends Model
     const ALLOWED_TRANSITIONS = [
         self::STATUS_DRAFT     => [self::STATUS_PUBLISHED],
         self::STATUS_PUBLISHED => [self::STATUS_DRAFT, self::STATUS_FUNDING],
-        self::STATUS_FUNDING   => [self::STATUS_FUNDED],
+        // P3-F2 (Phase 3 audit): FUNDING can be abandoned back to DRAFT
+        // ONLY when funded_amount == 0. Guards partial investors from
+        // being left stranded. The funded_amount check is enforced in
+        // the booted() updating hook below, not in canTransitionTo.
+        self::STATUS_FUNDING   => [self::STATUS_FUNDED, self::STATUS_DRAFT],
         self::STATUS_FUNDED    => [self::STATUS_ACTIVE],
         self::STATUS_ACTIVE    => [self::STATUS_LATE, self::STATUS_REPAID],
         self::STATUS_LATE      => [self::STATUS_ACTIVE, self::STATUS_DEFAULT, self::STATUS_REPAID, self::STATUS_BOUGHT_BACK],
@@ -97,6 +107,22 @@ class Loan extends Model
                 $to = $loan->status;
                 if (! $loan->canTransitionTo($to, $from)) {
                     throw new \LogicException("Invalid loan status transition: {$from} → {$to}.");
+                }
+
+                // P3-F2: funding → draft requires zero funded_amount.
+                // The ALLOWED_TRANSITIONS entry permits the structural
+                // transition; this guard enforces the business rule that
+                // partial investors MUST NOT be stranded by an abandon.
+                // If funded_amount > 0, the admin must process refunds
+                // (manual compensating transactions) before resetting.
+                if ($from === self::STATUS_FUNDING
+                    && $to === self::STATUS_DRAFT
+                    && bccomp((string) $loan->funded_amount, '0', 2) > 0) {
+                    throw new \LogicException(
+                        "Cannot abandon loan #{$loan->id} to draft while funded_amount > 0 "
+                        . "(current funded_amount = {$loan->funded_amount}). "
+                        . "Process investor refunds first — see CLAUDE.md 'Partial-funded abandon' procedure."
+                    );
                 }
             }
         });
