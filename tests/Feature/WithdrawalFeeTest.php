@@ -135,4 +135,97 @@ class WithdrawalFeeTest extends TestCase
         $this->assertSame('pending', $withdrawal->fresh()->status);
         $this->assertEquals('2.00', $user->wallet->fresh()->reserved);
     }
+
+    // ── Batch B — extended integration coverage ──
+
+    public function test_fee_transaction_description_mentions_iban_suffix_and_withdrawal_id(): void
+    {
+        Notification::fake();
+        PlatformSetting::set('fees_withdrawal_enabled', true);
+        $user = $this->createVerifiedInvestor(['available' => 500]);
+        $service = app(WithdrawalService::class);
+
+        $withdrawal = $service->createRequest($user->id, '100.00', 'BG80BNBG96611020345678');
+        $service->approve($withdrawal->id, 1);
+
+        $feeTx = Transaction::where('type', Transaction::TYPE_FEE)->firstOrFail();
+
+        // Description must carry the withdrawal id for admin audit and
+        // the IBAN suffix for quick operator cross-reference. No full
+        // IBAN (PII) in the description.
+        $this->assertStringContainsString("#{$withdrawal->id}", $feeTx->description);
+        $this->assertStringContainsString('****5678', $feeTx->description);
+        $this->assertStringNotContainsString('BG80BNBG9661', $feeTx->description);
+    }
+
+    public function test_multiple_sequential_withdrawals_get_distinct_fee_references(): void
+    {
+        Notification::fake();
+        PlatformSetting::set('fees_withdrawal_enabled', true);
+        $user = $this->createVerifiedInvestor(['available' => 1000]);
+        $service = app(WithdrawalService::class);
+
+        $w1 = $service->createRequest($user->id, '100.00', 'BG80BNBG96611020345678');
+        $service->approve($w1->id, 1);
+
+        $w2 = $service->createRequest($user->id, '150.00', 'BG80BNBG96611020345678');
+        $service->approve($w2->id, 1);
+
+        $feeRefs = Transaction::where('type', Transaction::TYPE_FEE)
+            ->orderBy('id')
+            ->pluck('reference')
+            ->toArray();
+
+        $this->assertSame([
+            "withdrawal_request:{$w1->id}:fee",
+            "withdrawal_request:{$w2->id}:fee",
+        ], $feeRefs);
+    }
+
+    public function test_fee_amount_uses_value_at_approval_time_not_request_time(): void
+    {
+        // Verifies the DECISIONS.md F4-01 "fee lookup inside DB::transaction"
+        // contract: charge reflects the CURRENT flag state, not what was
+        // live when the request was first created. Admin can defer an
+        // approval across a config flip; the flip wins.
+        Notification::fake();
+        $user = $this->createVerifiedInvestor(['available' => 500]);
+        $service = app(WithdrawalService::class);
+
+        // Request created while fee is OFF.
+        $withdrawal = $service->createRequest($user->id, '100.00', 'BG80BNBG96611020345678');
+
+        // Admin enables fee BEFORE clicking approve.
+        PlatformSetting::set('fees_withdrawal_enabled', true);
+
+        $service->approve($withdrawal->id, 1);
+
+        // Approval charged the fee because the flag was on AT approve time.
+        $this->assertDatabaseHas('transactions', [
+            'user_id' => $user->id,
+            'type'    => Transaction::TYPE_FEE,
+            'amount'  => 2.50,
+        ]);
+    }
+
+    public function test_reconcile_ledger_sees_fee_sum_when_flag_on(): void
+    {
+        // Guards the existing ReconcileLedger report — fees must show up
+        // in the TYPE_FEE sum bucket without any additional wiring. If
+        // this test breaks, something was moved from TYPE_FEE to a new
+        // constant and the daily reconciliation alert will go quiet.
+        Notification::fake();
+        PlatformSetting::set('fees_withdrawal_enabled', true);
+        $user = $this->createVerifiedInvestor(['available' => 500]);
+        $service = app(WithdrawalService::class);
+
+        $w1 = $service->createRequest($user->id, '100.00', 'BG80BNBG96611020345678');
+        $service->approve($w1->id, 1);
+        $w2 = $service->createRequest($user->id, '50.00', 'BG80BNBG96611020345678');
+        $service->approve($w2->id, 1);
+
+        $feeSum = Transaction::where('type', Transaction::TYPE_FEE)->sum('amount');
+
+        $this->assertEquals('5.00', number_format((float) $feeSum, 2, '.', ''));
+    }
 }

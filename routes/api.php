@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DepositController;
+use App\Http\Controllers\Api\FeeController;
 use App\Http\Controllers\Api\LoanController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PortfolioController;
@@ -27,6 +28,11 @@ Route::middleware('throttle:10,1')->group(function () {
 // scheduler. No auth — exposes only operational metrics, never PII or
 // financial data. Rate-limited to deflect abuse.
 Route::middleware('throttle:60,1')->get('/health/scheduler', SchedulerHealthController::class);
+
+// Public fee-config endpoint — SPA reads this to render the withdrawal
+// breakdown (gross / fee / net). Public because the fee schedule is
+// advertised on the landing FAQ / chatbot (public info). Rate-limited.
+Route::middleware('throttle:60,1')->get('/fees/config', FeeController::class);
 
 // Protected routes — authenticated users
 Route::middleware('auth:sanctum')->group(function () {

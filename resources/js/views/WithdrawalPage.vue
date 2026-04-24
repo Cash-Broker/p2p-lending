@@ -16,8 +16,28 @@ const submitLoading = ref(false)
 const showConfirm = ref(false)
 const success = ref(false)
 
+// Fee config — fetched from public /api/fees/config on mount. Defaults to
+// disabled if the API is unreachable so the UI degrades gracefully to
+// pre-F4 behaviour (no breakdown shown, full amount wires to bank).
+const feeConfig = ref({ withdrawal: { enabled: false, amount: '0.00' } })
+
 const availableBalance = computed(() => auth.user?.wallet?.available ?? '0.00')
 const isKycApproved = computed(() => auth.user?.kyc_status === 'approved')
+
+const feeEnabled = computed(() => feeConfig.value.withdrawal.enabled && parseFloat(feeConfig.value.withdrawal.amount) > 0)
+const feeAmount = computed(() => feeConfig.value.withdrawal.amount)
+const requestedAmount = computed(() => parseFloat(form.value.amount) || 0)
+const netAmount = computed(() => {
+  if (!feeEnabled.value) return requestedAmount.value
+  return Math.max(0, requestedAmount.value - parseFloat(feeAmount.value))
+})
+// Live display flag — only show breakdown when the user has typed an amount
+// (and a fee actually applies). Avoids a confusing "0.00 € такса" while the
+// input is still empty.
+const showFeeBreakdown = computed(() => feeEnabled.value && requestedAmount.value > 0)
+// Hard validation — a request where net would be <= 0 is doomed to fail at
+// the admin-approval step. Catch it now, before submit.
+const amountBelowFee = computed(() => feeEnabled.value && requestedAmount.value > 0 && requestedAmount.value <= parseFloat(feeAmount.value))
 
 const totalWithdrawn = computed(() => {
   return withdrawals.value
@@ -43,6 +63,13 @@ async function loadIbans() {
   } catch { /* */ }
 }
 
+async function loadFeeConfig() {
+  try {
+    const { data } = await api.get('/fees/config')
+    feeConfig.value = data
+  } catch { /* Endpoint unreachable — fall back to disabled-fee defaults. */ }
+}
+
 function onIbanSelect() {
   if (selectedIbanId.value === '') {
     form.value.iban = ''
@@ -53,7 +80,7 @@ function onIbanSelect() {
 
 async function load() {
   loading.value = true
-  await Promise.all([loadHistory(), loadIbans()])
+  await Promise.all([loadHistory(), loadIbans(), loadFeeConfig()])
   loading.value = false
 }
 
@@ -65,6 +92,10 @@ function openConfirm() {
   }
   if (parseFloat(form.value.amount) > parseFloat(availableBalance.value)) {
     errors.value = { amount: ['Недостатъчен свободен баланс.'] }
+    return
+  }
+  if (amountBelowFee.value) {
+    errors.value = { amount: [`Сумата трябва да надвишава таксата (${feeAmount.value} €).`] }
     return
   }
   if (!selectedIbanId.value && (!form.value.iban || form.value.iban.replace(/\s/g, '').length < 15)) {
@@ -177,6 +208,31 @@ onMounted(() => load())
                 <p v-if="errors.amount" class="mt-1 text-xs text-red-500">{{ errors.amount[0] }}</p>
               </div>
 
+              <!-- Fee breakdown — shown only when the withdrawal-fee flag is on
+                   AND the user has entered a non-empty amount. Hidden entirely
+                   when fees are disabled to keep the UI uncluttered. -->
+              <div
+                v-if="showFeeBreakdown"
+                class="rounded-xl border border-accent-200/70 bg-accent-50/30 p-3 text-sm space-y-1"
+                data-testid="fee-breakdown"
+              >
+                <div class="flex justify-between text-gray-600">
+                  <span>Заявявате</span>
+                  <span class="font-medium">{{ formatAmount(requestedAmount) }} €</span>
+                </div>
+                <div class="flex justify-between text-gray-600">
+                  <span>Такса при теглене</span>
+                  <span class="font-medium">−{{ formatAmount(feeAmount) }} €</span>
+                </div>
+                <div class="flex justify-between pt-1 border-t border-accent-200/70 text-navy-700 font-semibold">
+                  <span>Получавате</span>
+                  <span>{{ formatAmount(netAmount) }} €</span>
+                </div>
+                <p v-if="amountBelowFee" class="text-xs text-red-500 pt-1">
+                  Сумата трябва да надвишава таксата.
+                </p>
+              </div>
+
               <div>
                 <label class="block text-sm font-medium text-navy-700 mb-1">IBAN</label>
                 <!-- Saved IBANs dropdown -->
@@ -262,11 +318,26 @@ onMounted(() => load())
         <div class="fixed inset-0 bg-black/40" @click="showConfirm = false"></div>
         <div class="relative bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
           <h3 class="text-lg font-bold text-navy-700 mb-2">Потвърди теглене</h3>
-          <p class="text-sm text-gray-500 mb-6">
+          <p class="text-sm text-gray-500 mb-4">
             Сигурни ли сте, че искате да изтеглите
             <strong class="text-navy-700">{{ formatAmount(form.amount) }} €</strong>
             към <strong class="text-navy-700 font-mono text-xs">{{ selectedIbanId ? savedIbans.find(i => i.id === selectedIbanId)?.iban : form.iban }}</strong>?
           </p>
+
+          <div
+            v-if="showFeeBreakdown"
+            class="rounded-xl border border-accent-200/70 bg-accent-50/30 p-3 text-xs space-y-1 mb-6"
+            data-testid="fee-breakdown-modal"
+          >
+            <div class="flex justify-between text-gray-600">
+              <span>Такса при теглене</span>
+              <span class="font-medium">−{{ formatAmount(feeAmount) }} €</span>
+            </div>
+            <div class="flex justify-between pt-1 border-t border-accent-200/70 text-navy-700 font-semibold">
+              <span>Ще получите по сметка</span>
+              <span>{{ formatAmount(netAmount) }} €</span>
+            </div>
+          </div>
           <div class="flex gap-3">
             <button @click="showConfirm = false" class="flex-1 py-2.5 border border-gray-200 text-sm font-medium text-gray-600 rounded-xl">Отказ</button>
             <button @click="submitWithdrawal" :disabled="submitLoading" class="flex-1 py-2.5 bg-navy-700 hover:bg-navy-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
