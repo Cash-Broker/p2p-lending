@@ -473,3 +473,77 @@ remediations as a new entry that references the old one).
   `App\Rules\ValidIban::SEPA_COUNTRIES` should be revisited.
 
 ---
+
+## F4-01: Fees — virtual-ledger accounting, no platform-wallet bucket
+
+- **Date:** 2026-04-24
+- **Decision:** Withdrawal fees (and any future fee category) are
+  recorded as `Transaction::TYPE_FEE` rows on the INVESTOR's account.
+  The fee transaction debits the investor's `available` wallet bucket.
+  There is NO corresponding credit to a platform-owned wallet — the
+  fee simply "leaves the ledger" from the investor's perspective.
+- **Real-world mapping:**
+  - Admin verifies the withdrawal externally, keeps the fee portion in
+    the business bank account, wires the NET amount (`requested -
+    fee`) to the investor's IBAN.
+  - Platform ledger records two transactions in the same DB transaction:
+    `TYPE_WITHDRAWAL` (full amount out of reserved bucket) +
+    `TYPE_FEE` (fee out of available bucket).
+  - Admin's bank statement is the source of truth for accumulated
+    platform fee revenue — reconciliation reports sum `TYPE_FEE` rows
+    per period for cross-checking only.
+- **Rationale:**
+  - No dedicated "platform wallet" model in v1. A platform bucket
+    would require a new Wallet row with `user_id = null` (breaking the
+    NOT NULL FK), OR a dedicated owner-user account — either shape is
+    an invasive schema change for a single-tenant ledger.
+  - Virtual-ledger consistency: the platform is already an accounting
+    mirror of admin's bank account (see HANDOFF_F4.md §1 "Virtual
+    money model"). Fees follow the same pattern — the ledger records
+    the debit; the real money sits in admin's bank.
+  - Reconciliation is still possible: `SELECT SUM(amount) FROM
+    transactions WHERE type = 'fee' AND created_at BETWEEN ?` gives
+    the period fee accrual for audit vs. bank statement.
+- **Implementation shape (F4 Step 2+):**
+  - `Transaction::TYPE_FEE` is the ledger marker (constant exists
+    since F1; F4 makes it live).
+  - `WalletService::debit()` is the entry point — already type-agnostic
+    so no signature change; F4 Step 2 introduces a thin `FeeService`
+    that reads platform_settings, calculates the flat amount, and
+    calls `WalletService::debit(..., Transaction::TYPE_FEE, ...)`
+    inside the caller's DB::transaction.
+  - `reference` column on the fee transaction links to the parent
+    (e.g. `withdrawal_request:{id}:fee`) for cross-referencing in
+    reconciliation and support workflows.
+- **Feature-flag shape (per Q8 — per-category flags, not master):**
+  - `fees_withdrawal_enabled` (bool, default false) — master toggle
+    for the withdrawal category only.
+  - `fees_withdrawal_amount` (float, default 2.50, CHECK 0–100).
+  - Future categories (origination, service, late, early-repayment,
+    inactivity) each get their own `fees_<category>_enabled` +
+    parameter rows in their own migrations. No single master flag —
+    per-category toggles allow gradual adoption without all-or-nothing.
+- **Public copy:**
+  - FAQ (`FaqSection.vue`) + chatbot (`ChatbotWidget.vue`) were
+    amended in commit `f301c19` to "Платформата в момента не
+    начислява такси" — accurate for the default-off state.
+  - When `fees_withdrawal_enabled` flips to true, the copy must be
+    updated to describe the concrete fee (e.g. "2.50 € при теглене").
+    The FeesPage admin form carries a reminder banner to that effect.
+- **Trigger conditions for revisiting:**
+  - Multi-tenant expansion (distinct platform operators per tenant) —
+    would require per-tenant fee accounting, at which point a
+    platform-wallet model becomes worth the schema cost.
+  - Regulatory requirement to show fee income as its own ledger
+    account (some jurisdictions require fiduciary vs. operating
+    account separation at the ledger level).
+  - Reconciliation workflow friction — if the admin reports difficulty
+    cross-checking fee accruals vs. bank statements, add a dedicated
+    `platform_wallets` table in v1.1.
+- **Owner of follow-up:** Backend lead (on any of the above triggers).
+- **Effort estimate to introduce platform wallet:** 2-3 days —
+  new model + migration (nullable user_id with CHECK, OR distinct
+  platform_id column), new `TYPE_FEE` semantics (debit investor +
+  credit platform), reconciliation query updates, test coverage.
+
+---

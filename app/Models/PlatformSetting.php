@@ -55,4 +55,30 @@ class PlatformSetting extends Model
         $setting = static::where('key', $key)->first();
         return $setting ? $setting->typedValue() : $default;
     }
+
+    /**
+     * Convenience writer — persists a PHP value, coercing to the stored
+     * string shape based on the row's declared `type`. Throws if the
+     * key does not exist (creating keys should happen via migration so
+     * that every referenced setting has a known type + description +
+     * defense-in-depth CHECK, not accidentally via runtime writes).
+     *
+     * Auditability: the update() call routes through the Auditable
+     * trait, so every write lands in audit_logs with old/new + admin
+     * + IP + UA.
+     */
+    public static function set(string $key, mixed $value): void
+    {
+        $setting = static::where('key', $key)->firstOrFail();
+
+        $stringValue = match ($setting->type) {
+            self::TYPE_BOOL   => $value ? 'true' : 'false',
+            self::TYPE_INT    => (string) (int) $value,
+            self::TYPE_FLOAT  => number_format((float) $value, 2, '.', ''),
+            self::TYPE_JSON   => json_encode($value),
+            default           => (string) $value,
+        };
+
+        $setting->update(['value' => $stringValue]);
+    }
 }
