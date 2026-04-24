@@ -84,6 +84,40 @@ class LoanResource extends Resource
                 Forms\Components\TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
             ])->columns(2),
+
+            // F5 — Rates summary. Read-only, edit-page only (no record on create).
+            // Shows both investor + borrower rates + admin-only marge for pricing
+            // visibility. Derived values — NOT form fields — so nothing is stored.
+            \Filament\Schemas\Components\Section::make('Ставки')
+                ->description('Преглед на текущите лихвени нива за този кредит.')
+                ->schema([
+                    Forms\Components\Placeholder::make('rate_investor')
+                        ->label('Доходност (за инвеститор)')
+                        ->content(fn (?Loan $record) => $record?->interest_rate !== null
+                            ? number_format((float) $record->interest_rate, 2) . ' %'
+                            : '—'),
+                    Forms\Components\Placeholder::make('rate_apr')
+                        ->label('ГПР / APR (за кредитополучател)')
+                        ->content(fn (?Loan $record) => $record?->apr() !== null
+                            ? $record->apr() . ' %'
+                            : '—'),
+                    Forms\Components\Placeholder::make('rate_marge')
+                        ->label('Марж')
+                        ->helperText('Разликата между ГПР и Доходност — оригинаторският спред. Само за вътрешен преглед, не се показва на инвеститорите.')
+                        ->content(function (?Loan $record) {
+                            if ($record?->interest_rate === null || $record?->interest_rate_annual === null) {
+                                return '—';
+                            }
+                            $marge = bcsub(
+                                (string) $record->interest_rate_annual,
+                                (string) $record->interest_rate,
+                                2,
+                            );
+                            return $marge . ' %';
+                        }),
+                ])
+                ->columns(3)
+                ->visible(fn (?Loan $record): bool => $record !== null),
         ]);
     }
 
@@ -96,7 +130,16 @@ class LoanResource extends Resource
                 Tables\Columns\TextColumn::make('type')->label('Тип'),
                 Tables\Columns\TextColumn::make('amount')->label('Сума')->money('EUR')->sortable(),
                 Tables\Columns\TextColumn::make('funded_amount')->label('Финансирано')->money('EUR'),
-                Tables\Columns\TextColumn::make('interest_rate')->label('Доходност')->suffix('%'),
+                Tables\Columns\TextColumn::make('interest_rate')->label('Доходност')->suffix('%')->sortable(),
+                // F5 — ГПР (APR) column. Sortable on the underlying
+                // interest_rate_annual column. Falls back to "—" for any
+                // null / non-positive value (F1-L6 activation defense).
+                Tables\Columns\TextColumn::make('interest_rate_annual')
+                    ->label('ГПР (APR)')
+                    ->formatStateUsing(fn (Loan $record) => $record->apr() !== null
+                        ? $record->apr() . '%'
+                        : '—')
+                    ->sortable(),
                 Tables\Columns\TextColumn::make('term_months')->label('Срок')->suffix(' мес.'),
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
                     ->formatStateUsing(fn (string $state) => match ($state) { 'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се', 'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял', 'default' => 'Просрочен', 'repaid' => 'Изплатен', default => $state })

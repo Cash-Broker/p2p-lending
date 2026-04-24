@@ -20,6 +20,11 @@ class LoanResource extends JsonResource
             'amount' => $this->amount,
             'funded_amount' => $this->funded_amount,
             'interest_rate' => $this->interest_rate,
+            // F5 — Annual Percentage Rate (Годишен Процент на Разходите).
+            // Borrower-facing cost-of-credit metric. Null-safe: returns null
+            // when interest_rate_annual is unset / non-positive, which the
+            // SPA renders as "—". See DECISIONS.md F5-01.
+            'apr' => $this->apr(),
             'term_months' => $this->term_months,
             'type' => $this->type,
             'status' => $this->status,

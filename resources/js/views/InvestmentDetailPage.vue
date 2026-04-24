@@ -215,14 +215,21 @@ async function confirmInvest() {
               </span>
             </div>
 
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 border-y border-gray-100">
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 py-4 border-y border-gray-100">
               <div>
                 <p class="text-xs text-gray-400 mb-1">Сума</p>
                 <p class="text-lg font-bold text-navy-700">{{ formatAmount(loan.amount) }} €</p>
               </div>
-              <div>
+              <div title="Вашата годишна доходност от инвестицията в този кредит.">
                 <p class="text-xs text-gray-400 mb-1">Доходност</p>
                 <p class="text-lg font-bold text-accent-500">{{ loan.interest_rate }}%</p>
+              </div>
+              <div title="ГПР — Годишен Процент на Разходите. Общата цена на кредита за кредитополучателя (регулаторна ставка).">
+                <p class="text-xs text-gray-400 mb-1">ГПР</p>
+                <p class="text-lg font-bold text-navy-700">
+                  <span v-if="loan.apr">{{ loan.apr }}%</span>
+                  <span v-else class="text-gray-300">—</span>
+                </p>
               </div>
               <div>
                 <p class="text-xs text-gray-400 mb-1">Срок</p>
@@ -233,6 +240,10 @@ async function confirmInvest() {
                 <p class="text-lg font-bold text-navy-700">{{ loan.investors_count ?? 0 }}</p>
               </div>
             </div>
+            <p class="text-xs text-gray-400 mt-2 leading-relaxed">
+              <strong class="text-accent-500">Доходност</strong> — какво печелите вие от тази инвестиция.
+              <strong class="text-navy-700 ml-1">ГПР</strong> — какво плаща кредитополучателят (включва лихва и такси).
+            </p>
 
             <!-- Funding progress -->
             <div class="mt-4">
