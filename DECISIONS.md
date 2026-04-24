@@ -735,3 +735,113 @@ remediations as a new entry that references the old one).
 - **Owner of follow-up:** Backend lead (on triggers above).
 
 ---
+
+## P2-01: Pro-rata last-investor-remainder drift — clamping patch for v1
+
+- **Date:** 2026-04-24
+- **Decision:** `WalletService::creditAvailableFromInvested` clamps
+  `wallet.invested` at `0.00` when pro-rata drift would push it below
+  zero. The full requested amount still credits to `wallet.available`
+  normally. A `Log::warning` fires on every clamp event + two
+  `platform_metrics` counters (`last_prorata_clamp_fired_at`,
+  `prorata_clamps_total`) update for ops visibility. Surfaced by
+  Phase 2 Financial Correctness Audit (see AUDIT_REPORT_PHASE2.md
+  §3 Finding #2).
+- **Root cause.** The last-investor-remainder pro-rata pattern —
+  shared by `RepaymentService`, `BuybackCalculationService`,
+  `EarlyRepaymentCalculationService` — guarantees `Σ distributions ==
+  installment_total` per-installment exactly. It does NOT guarantee
+  `Σ per-investor distributions across ALL installments ==
+  investor.invested`. Non-last investors receive `floor(share)`
+  (systematically under-distributing); the last investor
+  systematically over-absorbs to preserve the per-installment total.
+  Over N installments, the last investor's cumulative principal
+  returned exceeds their original invested amount by 1–2 stotinki.
+  The wallet UPDATE then pushes `invested` below zero, violating the
+  `chk_wallets_invested_non_negative` DB CHECK — which rolls back the
+  ENTIRE `DB::transaction`, leaving the repayment/buyback/early-
+  repayment unable to complete.
+- **Historical evidence.** The bug was already biting F3 tests
+  pre-audit (`storage/logs/laravel.log` 2026-04-24 04:03:25 and
+  04:04:49: "Early repayment execute failed unexpectedly ...
+  `invested = -0.02`"). Phase 2 was the first systematic discovery
+  + fix.
+- **Why clamp rather than proper fix for v1:**
+  - **Scale.** v1 launch target is 50–100 investors, 200–500 loans
+    first year. Realistic clamp rate projection: ~5–10 events/month
+    (multi-investor loans with uneven ratios ≈ 30% × 200 active
+    loans × ~1 clamp per lifecycle ÷ 12 months ≈ 5). At 0.02 EUR
+    per event → ~0.10–0.20 EUR/month of platform-side drift.
+    Pessimistic upper bound (200 events/month → 4 EUR/month) still
+    materially insignificant at launch scale.
+  - **Timeline.** Proper fix (cumulative-aware pro-rata) is a 2–3
+    day redesign of three services' distribution logic. Clamp is a
+    ~20-line localised patch that unblocks production immediately.
+  - **Reversibility.** Clamp is additive. When v1.1 replaces it
+    with cumulative-aware distribution, clamp can stay as defence-
+    in-depth or be removed — no migration, no data-fix.
+  - **Money conservation at aggregate.** Platform money IS
+    conserved: every clamp offsets one investor's over-credit
+    against another investor's under-credit within the same loan.
+    Individual wallets drift ≤ 0.02 EUR; platform aggregate is
+    preserved within that tolerance.
+- **Trade-offs accepted:**
+  - **Per-investor drift.** Individual wallets may carry ±0.02 EUR
+    discrepancies between transaction-reconstructed balance and
+    stored wallet balance after a clamp fires. Detectable via
+    reconciliation scripts; not money loss, but visible to any
+    sufficiently-zoomed audit.
+  - **Cumulative platform drift.** Each clamp event adds ≤ 0.02
+    EUR to the `Σ wallets` == `Σ deposits − withdrawals − fees +
+    interest-in` invariant. Phase 2 audit sets scenario tolerance
+    at 0.50 EUR; realistic monthly projection at v1 scale is
+    < 0.20 EUR (pessimistic < 5 EUR).
+  - **Reconciliation complexity.** Any wallet-vs-transactions
+    reconciliation script must mirror the clamp logic to avoid
+    false-positive alerts.
+- **Compensating controls (all implemented in this commit):**
+  - Enhanced `Log::warning` on every clamp event with `user_id`,
+    `loan_id` (parsed from `reference` when available),
+    `requested_amount`, `drift_absorbed`, `reconciliation_id`
+    (UUID per event) for audit trail.
+  - `PlatformMetric::record('last_prorata_clamp_fired_at', now())`
+    — timestamp for "is this still happening?" monitoring.
+  - `PlatformMetric::record('prorata_clamps_total', count)` —
+    monotonic counter incremented per clamp; monthly delta
+    computable from archived metric snapshots. Read-modify-write
+    is acceptable at v1 scale (single-admin manual workflow, no
+    concurrent writers).
+  - Regression tests assert the new clamped behaviour
+    (`BuybackExecutionServiceTest`, `EarlyRepaymentExecutionServiceTest`).
+  - Phase 2 audit suite (`--testsuite=Audit`) re-run gate on any
+    change to pro-rata logic (contract test).
+- **v1.1 upgrade path — cumulative-aware pro-rata:**
+  - Track per-investor cumulative distribution within each loan.
+  - At the LAST unpaid installment, compute each investor's final
+    principal share as `(investor.invested − already_returned)`
+    rather than pro-rata floor. Guarantees
+    `Σ per-investor == invested` exactly.
+  - Alternative: Hamilton's largest-remainder method — distribute
+    floor shares to everyone, then give the remaining pennies to
+    investors with the largest fractional residues (also
+    eliminates drift structurally).
+  - Either approach eliminates the drift source; clamp logic can
+    be removed or kept as defence-in-depth.
+  - **Effort estimate:** 2–3 days (algorithm + test fixtures
+    extension + clamp removal + regression tests + AUDIT_REPORT
+    update).
+- **Trigger conditions for revisiting (any ONE brings v1.1 forward):**
+  - `prorata_clamps_total` growth > 1 event per week in production.
+  - Any investor complaint about balance not matching transaction
+    history (clamp leaking into user-visible UX).
+  - Scale crosses 500 loans OR 200 investors (drift becomes
+    materially visible at year-end reconciliation).
+  - Regulator audit question about the 0.02 EUR discrepancy.
+  - Any reconciliation-script false-positive attributable to
+    unbounded clamp accumulation (ops burden).
+- **Owner of follow-up:** Backend lead. External ticket to file:
+  "Pro-rata redesign (cumulative-aware distribution) — replace
+  P2-01 clamp with structural fix" — referenced by this P2-01
+  entry and AUDIT_REPORT_PHASE2.md §8 v1.1 follow-up commitments.
+
+---

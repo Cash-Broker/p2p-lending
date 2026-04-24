@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\PlatformMetric;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 /**
@@ -315,19 +318,41 @@ class WalletService
 
             $rawInvested = bcsub((string) $wallet->invested, $amount, 2);
             if (bccomp($rawInvested, '0', 2) < 0) {
-                // Clamp. Log the drift so ops can see cumulative rounding
-                // artifacts in the wild. Drift is almost always ≤ 0.02.
-                \Illuminate\Support\Facades\Log::warning(
+                // Clamp event — see DECISIONS.md P2-01. Enhanced log
+                // carries a reconciliation_id UUID (audit trail) + the
+                // parsed loan_id (reconciliation aide when ops grep by
+                // loan). Updates two platform_metrics counters so the
+                // rate + recency of drift is queryable without parsing
+                // log files. Metrics are best-effort — their failure
+                // must NOT break the wallet update.
+                $reconciliationId = (string) Str::uuid();
+                $loanId = $this->parseLoanIdFromReference($reference);
+
+                Log::warning(
                     'WalletService: invested bucket drift clamped at zero',
                     [
+                        'reconciliation_id'      => $reconciliationId,
                         'user_id'                => $userId,
+                        'loan_id'                => $loanId,
                         'type'                   => $type,
                         'requested_amount'       => $amount,
                         'wallet_invested_before' => (string) $wallet->invested,
-                        'drift_absorbed'         => $rawInvested, // negative magnitude shows drift
+                        'drift_absorbed'         => $rawInvested, // negative magnitude
                         'reference'              => $reference,
                     ],
                 );
+
+                try {
+                    PlatformMetric::record('last_prorata_clamp_fired_at', now()->toIso8601String());
+                    $current = (int) (PlatformMetric::read('prorata_clamps_total') ?? 0);
+                    PlatformMetric::record('prorata_clamps_total', (string) ($current + 1));
+                } catch (\Throwable $e) {
+                    Log::warning('Failed to record prorata clamp metric', [
+                        'reconciliation_id' => $reconciliationId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
                 $newInvested = '0.00';
             } else {
                 $newInvested = $rawInvested;
@@ -384,5 +409,23 @@ class WalletService
                 'user_agent' => request()?->userAgent(),
             ]);
         });
+    }
+
+    /**
+     * Best-effort loan_id extraction from a transaction reference string.
+     * Current convention is `loan:ID:...` (RepaymentService,
+     * BuybackExecutionService, EarlyRepaymentExecutionService). Returns
+     * null for references that don't carry a loan id
+     * (e.g. withdrawal/fee references).
+     */
+    private function parseLoanIdFromReference(?string $reference): ?int
+    {
+        if (! $reference) {
+            return null;
+        }
+        if (preg_match('/^loan:(\d+):/', $reference, $m)) {
+            return (int) $m[1];
+        }
+        return null;
     }
 }

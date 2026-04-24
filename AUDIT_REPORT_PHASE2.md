@@ -217,4 +217,52 @@ APP_BASE_PATH="$(pwd)" php artisan test --testsuite=Audit
 
 ---
 
-*End of work-in-progress report. Step 2 is the next action.*
+## 7. Known limitations (post-Phase 2)
+
+| # | Severity | Description |
+|---|---|---|
+| P2-L1 | MEDIUM | **Per-investor wallet reconstruction may show ±0.02 EUR drift for "last-investor" positions in multi-investor loans with uneven share ratios.** The clamp patch (DECISIONS.md P2-01) for Finding #2 preserves platform aggregate money conservation but introduces bounded per-investor accounting inconsistency. A reconciliation script comparing `wallet.available + invested` against `Σ (user's deposits − withdrawals − fees + interest-in − net-investment)` will legitimately show 0.01–0.02 EUR discrepancies for affected investors. This is a **documented design choice**, not a bug. Compensating controls: warning log + `platform_metrics` counter per clamp event; v1.1 structural fix committed with clear trigger conditions. |
+| P2-L2 | LOW | **Cumulative platform drift tolerance set at 0.50 EUR per audit scenario.** Tolerance reflects the P2-L1 design decision. Any scenario exceeding this threshold fails the audit (would indicate a genuine money-conservation leak beyond known clamp drift). At v1 scale, realistic monthly platform-level drift projected < 0.20 EUR (pessimistic < 5 EUR); scenario tolerance is generous enough to absorb pro-rata drift without masking new bugs. |
+| P2-L3 | LOW | **F2-L1 re-affirmed.** bcmath `ROUND_DOWN` truncation for monthly annuity payment is a design choice (see DECISIONS.md F5-01 §Formula). Not a bug; documented for transparency. No action needed. |
+
+## 8. v1.1 follow-up commitments (all created during Phase 2 audit)
+
+1. **[HIGH PRIORITY] Pro-rata redesign — cumulative-aware distribution.**
+   - Replace per-installment last-investor-remainder with cumulative
+     per-investor tracking OR Hamilton's largest-remainder method.
+   - Removes the drift-accumulation root cause; clamp in
+     `WalletService::creditAvailableFromInvested` can be removed or
+     retained as defence-in-depth.
+   - Effort: 2–3 days (algorithm + test fixtures + regression
+     tests + clamp removal + AUDIT_REPORT update).
+   - Trigger: first of
+     (a) clamp frequency > 1 event/week,
+     (b) any investor complaint about balance discrepancy,
+     (c) scale crosses 500 loans / 200 investors,
+     (d) regulator question about the drift.
+   - Tracked in: DECISIONS.md P2-01 revisit triggers.
+
+2. **[MEDIUM] Clamp-frequency admin dashboard widget.**
+   - Filament widget surfacing `PlatformMetric` entries for
+     `last_prorata_clamp_fired_at` and `prorata_clamps_total`.
+   - Candidate for Phase 4 (Observability Audit) — not launch-
+     blocking.
+   - Interim: log greps + raw `PlatformMetric::read()` queries.
+
+3. **[MEDIUM] Reconciliation script with clamp-aware tolerance.**
+   - Extend `php artisan ledger:reconcile` to compare per-user
+     wallet state vs. transaction reconstruction, tolerating
+     `(0.02 × known clamp count for that user)` EUR drift.
+   - Alerts on drift beyond that tolerance — catches unclamped
+     money leaks while suppressing expected clamp drift.
+   - Candidate for Phase 4 or immediate post-launch.
+
+4. **[LOW] F3-L2 schedule-generation inconsistency.**
+   - Pre-existing (not Phase-2-surfaced) — tracked in
+     `AUDIT_REPORT_PHASE_F3.md` §Known limitations. Phase 2 audit
+     scenarios work around it by creating clean loans via service
+     calls.
+
+---
+
+*End of Phase 2 Financial Correctness Audit report.*
