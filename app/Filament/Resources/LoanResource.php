@@ -183,7 +183,15 @@ class LoanResource extends Resource
                         Notification::make()->title('Публикуван')->success()->send();
                     }),
                 \Filament\Actions\Action::make('unpublish')->label('Спри')->icon('heroicon-o-pause-circle')->color('warning')
-                    ->visible(fn (Loan $r) => $r->status === Loan::STATUS_PUBLISHED && bccomp($r->funded_amount, '0', 2) <= 0)->requiresConfirmation()
+                    // P3-F2 (Phase 3): extended to cover FUNDING loans too
+                    // (funded_amount == 0), not just PUBLISHED. An
+                    // investor whose withdrawal was rejected could leave
+                    // the loan in FUNDING with funded_amount=0 — this
+                    // action now unsticks it. Model-level guard re-checks
+                    // funded_amount on the save.
+                    ->visible(fn (Loan $r) => in_array($r->status, [Loan::STATUS_PUBLISHED, Loan::STATUS_FUNDING], true)
+                        && bccomp((string) $r->funded_amount, '0', 2) <= 0)
+                    ->requiresConfirmation()
                     ->action(function (Loan $r) {
                         DB::transaction(function () use ($r) {
                             $loan = Loan::where('id', $r->id)->lockForUpdate()->firstOrFail();
