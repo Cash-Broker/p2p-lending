@@ -285,4 +285,98 @@ class LoanEventsApiTest extends TestCase
         // originator_id kept admin-only even in buyback_triggered events
         $this->assertArrayNotHasKey('originator_id', $metadata);
     }
+
+    // ═════════════════════════════════════════════════════════════════
+    // F3 — Early-repayment metadata whitelist extensions.
+    // ═════════════════════════════════════════════════════════════════
+
+    public function test_metadata_whitelist_filters_adversarial_early_repayment_keys(): void
+    {
+        $loan = $this->makeLoan();
+        $investor = $this->makeInvestor();
+        Investment::create(['user_id' => $investor->id, 'loan_id' => $loan->id, 'amount' => '50', 'invested_at' => now()]);
+
+        $admin = User::factory()->create();
+        $admin->forceFill(['role' => 'admin'])->save();
+
+        LoanEvent::create([
+            'loan_id' => $loan->id, 'event_type' => 'early_repayment_completed',
+            'from_status' => 'active', 'to_status' => 'repaid',
+            'triggered_by' => 'admin', 'triggered_by_user_id' => $admin->id,
+            'metadata' => [
+                // whitelisted — must appear
+                'from_status'     => 'active',
+                'total_amount'    => '550.25',
+                'total_principal' => '487.50',
+                'total_interest'  => '62.75',
+                'investor_count'  => 3,
+                'executed_at'     => '2026-04-25T10:00:00+00:00',
+                // NOT whitelisted — must NOT leak
+                'executed_by_admin_id' => $admin->id,
+                'internal_admin_note'  => 'borrower phoned at 14:00',
+                'bank_transfer_ref'    => 'ABC123',
+            ],
+            'occurred_at' => now(),
+        ]);
+
+        $response = $this->actingAs($investor)->getJson("/api/loans/{$loan->id}/events");
+
+        $response->assertOk();
+        $metadata = $response->json('data.0.metadata');
+
+        // Whitelisted keys present
+        $this->assertArrayHasKey('from_status', $metadata);
+        $this->assertArrayHasKey('total_amount', $metadata);
+        $this->assertArrayHasKey('total_principal', $metadata);
+        $this->assertArrayHasKey('total_interest', $metadata);
+        $this->assertArrayHasKey('investor_count', $metadata);
+        $this->assertArrayHasKey('executed_at', $metadata);
+
+        // Adversarial keys filtered out
+        $this->assertArrayNotHasKey('executed_by_admin_id', $metadata,
+            'admin identity must NEVER leak through early_repayment_completed metadata');
+        $this->assertArrayNotHasKey('internal_admin_note', $metadata);
+        $this->assertArrayNotHasKey('bank_transfer_ref', $metadata);
+    }
+
+    public function test_whitelisted_early_repayment_completed_metadata_passes_through(): void
+    {
+        // Positive control — all 6 whitelisted F3 keys surface correctly.
+        $loan = $this->makeLoan();
+        $investor = $this->makeInvestor();
+        Investment::create(['user_id' => $investor->id, 'loan_id' => $loan->id, 'amount' => '50', 'invested_at' => now()]);
+
+        $admin = User::factory()->create();
+        $admin->forceFill(['role' => 'admin'])->save();
+
+        LoanEvent::create([
+            'loan_id' => $loan->id, 'event_type' => 'early_repayment_completed',
+            'from_status' => 'late', 'to_status' => 'repaid',
+            'triggered_by' => 'admin', 'triggered_by_user_id' => $admin->id,
+            'metadata' => [
+                'from_status'     => 'late',
+                'total_amount'    => '1120.00',
+                'total_principal' => '1100.00',
+                'total_interest'  => '20.00',
+                'investor_count'  => 2,
+                'executed_at'     => '2026-04-25T14:30:00+00:00',
+                'executed_by_admin_id' => $admin->id,
+            ],
+            'occurred_at' => now(),
+        ]);
+
+        $response = $this->actingAs($investor)->getJson("/api/loans/{$loan->id}/events");
+
+        $response->assertOk();
+        $metadata = $response->json('data.0.metadata');
+
+        $this->assertSame('late', $metadata['from_status']);
+        $this->assertSame('1120.00', $metadata['total_amount']);
+        $this->assertSame('1100.00', $metadata['total_principal']);
+        $this->assertSame('20.00', $metadata['total_interest']);
+        $this->assertSame(2, $metadata['investor_count']);
+        $this->assertSame('2026-04-25T14:30:00+00:00', $metadata['executed_at']);
+
+        $this->assertArrayNotHasKey('executed_by_admin_id', $metadata);
+    }
 }
