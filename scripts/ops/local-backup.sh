@@ -1,0 +1,131 @@
+#!/bin/bash
+#
+# P2P Lending — daily local MySQL backup with encryption + rotation + Telegram.
+#
+# Pipeline: mysqldump → gzip → openssl AES-256 → /var/backups/mysql/
+# - Transactionally consistent dump (--single-transaction)
+# - Encrypted at rest (aes-256-cbc with PBKDF2)
+# - 30-day rotation (older files auto-deleted)
+# - Symlink "latest.sql.gz.enc" → newest backup (for easy SCP from laptop)
+# - Telegram notification on success (INFO tier — silent)
+# - Telegram notification on failure (CRITICAL tier — push)
+#
+# Schedule: daily at 02:30 UTC (BEFORE ledger:reconcile at 03:00).
+# Cron entry (added during deploy):
+#     30 2 * * * /usr/local/bin/p2p-local-backup
+#
+# Read /docs/runbooks/backup-restore-bg.md for the operator-facing
+# Bulgarian runbook (download via SCP, restore procedure, etc.).
+
+set -euo pipefail
+
+APP_DIR="${APP_DIR:-/var/www/p2p-lending}"
+BACKUP_DIR="${BACKUP_DIR:-/var/backups/mysql}"
+RETENTION_DAYS="${RETENTION_DAYS:-30}"
+LOG_FILE="${LOG_FILE:-/var/log/p2p-local-backup.log}"
+
+# --- Read DB + backup encryption + Telegram credentials from .env ---
+read_env() {
+    grep "^$1=" "$APP_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
+}
+
+DB_HOST=$(read_env DB_HOST)
+DB_PORT=$(read_env DB_PORT)
+DB_DATABASE=$(read_env DB_DATABASE)
+DB_USERNAME=$(read_env DB_USERNAME)
+DB_PASSWORD=$(read_env DB_PASSWORD)
+BACKUP_PASS=$(read_env BACKUP_ENCRYPTION_PASS)
+TG_TOKEN=$(read_env TELEGRAM_BOT_TOKEN)
+TG_CHAT=$(read_env TELEGRAM_CHAT_ID)
+
+DB_PORT="${DB_PORT:-3306}"
+
+# --- Validate required ---
+for v in DB_HOST DB_DATABASE DB_USERNAME DB_PASSWORD BACKUP_PASS; do
+    if [ -z "${!v:-}" ]; then
+        echo "ERROR: $v missing in $APP_DIR/.env" >&2
+        # Try to send Telegram alert if those creds are present
+        if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT:-}" ]; then
+            curl -sS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+                --data-urlencode "chat_id=${TG_CHAT}" \
+                --data-urlencode "parse_mode=HTML" \
+                --data-urlencode "text=🔴 <b>BACKUP CONFIG ERROR</b>%0A%0A$v missing in .env. Daily backup will not run." \
+                > /dev/null 2>&1 || true
+        fi
+        exit 1
+    fi
+done
+
+# --- Setup ---
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
+
+TIMESTAMP=$(date -u +%Y-%m-%d)
+OUTFILE="$BACKUP_DIR/${TIMESTAMP}.sql.gz.enc"
+LOG_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+log() {
+    echo "[$LOG_TS] $1" >> "$LOG_FILE"
+}
+
+notify_telegram() {
+    [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ] && return 0
+    curl -sS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+        --data-urlencode "chat_id=${TG_CHAT}" \
+        --data-urlencode "parse_mode=HTML" \
+        --data-urlencode "disable_notification=$2" \
+        --data-urlencode "text=$1" \
+        > /dev/null 2>&1 || true
+}
+
+START=$(date +%s)
+log "Backup started → $OUTFILE"
+
+# --- Backup pipeline: dump → gzip → encrypt ---
+# Pipefail (set -e at top) makes ANY of these fail abort the whole pipeline.
+if MYSQL_PWD="$DB_PASSWORD" mysqldump \
+        --host="$DB_HOST" \
+        --port="$DB_PORT" \
+        --user="$DB_USERNAME" \
+        --single-transaction \
+        --routines \
+        --triggers \
+        --events \
+        --hex-blob \
+        --default-character-set=utf8mb4 \
+        "$DB_DATABASE" 2>> "$LOG_FILE" \
+    | gzip -c \
+    | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 100000 -pass "pass:$BACKUP_PASS" \
+    > "$OUTFILE.tmp" \
+    && mv "$OUTFILE.tmp" "$OUTFILE"; then
+
+    chmod 600 "$OUTFILE"
+
+    SIZE_BYTES=$(stat -c%s "$OUTFILE")
+    SIZE_HUMAN=$(du -h "$OUTFILE" | cut -f1)
+
+    # Update "latest" symlink for easy SCP
+    ln -sfn "$(basename "$OUTFILE")" "$BACKUP_DIR/latest.sql.gz.enc"
+
+    END=$(date +%s)
+    DURATION=$((END - START))
+    log "Backup OK: $OUTFILE ($SIZE_HUMAN, ${DURATION}s)"
+
+    # Rotation — delete files older than RETENTION_DAYS
+    REMOVED=$(find "$BACKUP_DIR" -maxdepth 1 -name "*.sql.gz.enc" -type f -mtime +"$RETENTION_DAYS" 2>/dev/null | wc -l)
+    if [ "$REMOVED" -gt 0 ]; then
+        find "$BACKUP_DIR" -maxdepth 1 -name "*.sql.gz.enc" -type f -mtime +"$RETENTION_DAYS" -delete 2>/dev/null
+        log "Rotation: removed $REMOVED file(s) older than $RETENTION_DAYS days"
+    fi
+
+    TOTAL_FILES=$(ls -1 "$BACKUP_DIR"/*.sql.gz.enc 2>/dev/null | wc -l)
+
+    notify_telegram "🟡 <b>Daily Backup готов</b>%0A%0A📁 Файл: <code>${TIMESTAMP}.sql.gz.enc</code>%0A📦 Размер: ${SIZE_HUMAN}%0A⏱ Време: ${DURATION}s%0A🗂 Общо в /var/backups/mysql/: ${TOTAL_FILES} файла (max ${RETENTION_DAYS})%0A%0A<b>За теглене на лаптоп:</b>%0A<code>scp -i ~/.ssh/id_ed25519_p2p yordan@178.104.78.0:/var/backups/mysql/latest.sql.gz.enc ~/p2p-backups/</code>" "true"
+    exit 0
+else
+    rm -f "$OUTFILE.tmp"
+    log "Backup FAILED — check $LOG_FILE for mysqldump errors"
+    notify_telegram "🔴 <b>BACKUP FAILED</b>%0A%0Amysqldump или encryption pipeline пропадна.%0A%0A<b>Виж логовете на сървъра:</b>%0A<code>tail -50 ${LOG_FILE}</code>%0A%0AПроверете състоянието на MySQL и свободното място на диска." "false"
+    exit 1
+fi
