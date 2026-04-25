@@ -107,6 +107,7 @@ class BuybackExecutionService
     public function __construct(
         private WalletService $walletService,
         private BuybackCalculationService $calculator,
+        private \App\Services\TelegramService $telegram,
     ) {}
 
     /**
@@ -123,7 +124,7 @@ class BuybackExecutionService
      */
     public function execute(int $loanId, int $adminId): BuybackResult
     {
-        return DB::transaction(function () use ($loanId, $adminId) {
+        $result = DB::transaction(function () use ($loanId, $adminId) {
             /** @var Loan $loan */
             $loan = Loan::where('id', $loanId)->lockForUpdate()->firstOrFail();
 
@@ -254,5 +255,27 @@ class BuybackExecutionService
 
             return $result;
         });
+
+        // Telegram alert (HIGH tier) — fired AFTER transaction commits, so
+        // we don't notify on rollback. Best-effort: failures here don't
+        // affect the buyback result returned to the caller.
+        try {
+            $this->telegram->high(
+                'Buyback изпълнен',
+                "Кредит #{$result->loanId} изкупен обратно от оригинатора.\n"
+                ."Сума: {$result->totalAmount} € (главница {$result->totalPrincipal} + лихва {$result->totalInterest}).",
+                [
+                    'loan_id'        => $result->loanId,
+                    'investors'      => $result->investorCount,
+                    'coverage'       => $result->coverageType,
+                    'from_status'    => $result->fromStatus,
+                    'admin_id'       => $result->executedByAdminId,
+                ],
+            );
+        } catch (\Throwable $ignored) {
+            // Logged inside TelegramService.
+        }
+
+        return $result;
     }
 }

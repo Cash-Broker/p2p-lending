@@ -11,7 +11,17 @@ use Illuminate\Support\Facades\Log;
 
 class DepositService
 {
-    public function __construct(private WalletService $walletService) {}
+    public function __construct(
+        private WalletService $walletService,
+        private \App\Services\TelegramService $telegram,
+    ) {}
+
+    /**
+     * Threshold above which deposits trigger a Telegram HIGH alert.
+     * Higher than the withdrawal threshold because deposits skew larger
+     * (one-time funding, not periodic withdrawals).
+     */
+    private const TELEGRAM_BIG_DEPOSIT_EUR = '5000.00';
 
     public function createRequest(int $userId, string $amount): DepositRequest
     {
@@ -54,6 +64,25 @@ class DepositService
             $deposit->user->notify(new DepositApprovedNotification($deposit->amount, $deposit->reference_code));
         } catch (\Throwable $e) {
             Log::warning('Failed to send deposit approved notification', ['deposit_id' => $deposit->id, 'error' => $e->getMessage()]);
+        }
+
+        // Telegram alert (HIGH tier) — only for big deposits.
+        if (bccomp($deposit->amount, self::TELEGRAM_BIG_DEPOSIT_EUR, 2) >= 0) {
+            try {
+                $this->telegram->high(
+                    'Голям депозит потвърден',
+                    "Депозит #{$deposit->id} на {$deposit->amount} € кредитиран по сметка.",
+                    [
+                        'deposit_id' => $deposit->id,
+                        'user_id'    => $deposit->user_id,
+                        'amount_eur' => $deposit->amount,
+                        'reference'  => $deposit->reference_code,
+                        'admin_id'   => $adminId,
+                    ],
+                );
+            } catch (\Throwable $ignored) {
+                // Logged inside TelegramService.
+            }
         }
 
         return $deposit;

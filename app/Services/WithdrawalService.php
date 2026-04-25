@@ -15,7 +15,14 @@ class WithdrawalService
     public function __construct(
         private WalletService $walletService,
         private FeeService $feeService,
+        private \App\Services\TelegramService $telegram,
     ) {}
+
+    /**
+     * Threshold above which withdrawals trigger a Telegram HIGH alert.
+     * In EUR. Tunable; if changed, document in CLAUDE.md.
+     */
+    private const TELEGRAM_BIG_WITHDRAWAL_EUR = '1000.00';
 
     /**
      * Create a withdrawal request and RESERVE the amount.
@@ -122,6 +129,26 @@ class WithdrawalService
             $withdrawal->user->notify(new WithdrawalApprovedNotification($withdrawal->amount));
         } catch (\Throwable $e) {
             Log::warning('Failed to send withdrawal approved notification', ['withdrawal_id' => $withdrawal->id, 'error' => $e->getMessage()]);
+        }
+
+        // Telegram alert (HIGH tier) — only for big withdrawals (>= threshold).
+        // Small withdrawals are routine and would generate noise.
+        if (bccomp($withdrawal->amount, self::TELEGRAM_BIG_WITHDRAWAL_EUR, 2) >= 0) {
+            try {
+                $this->telegram->high(
+                    'Голямо теглене одобрено',
+                    "Теглене #{$withdrawal->id} на {$withdrawal->amount} € одобрено от admin.",
+                    [
+                        'withdrawal_id' => $withdrawal->id,
+                        'user_id'       => $withdrawal->user_id,
+                        'amount_eur'    => $withdrawal->amount,
+                        'iban_suffix'   => '****'.substr($withdrawal->iban, -4),
+                        'admin_id'      => $adminId,
+                    ],
+                );
+            } catch (\Throwable $ignored) {
+                // Logged inside TelegramService.
+            }
         }
 
         return $withdrawal;

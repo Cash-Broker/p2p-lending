@@ -87,6 +87,7 @@ class EarlyRepaymentExecutionService
     public function __construct(
         private WalletService $walletService,
         private EarlyRepaymentCalculationService $calculator,
+        private \App\Services\TelegramService $telegram,
     ) {}
 
     /**
@@ -104,7 +105,7 @@ class EarlyRepaymentExecutionService
      */
     public function execute(int $loanId, int $adminId): EarlyRepaymentResult
     {
-        return DB::transaction(function () use ($loanId, $adminId) {
+        $result = DB::transaction(function () use ($loanId, $adminId) {
             /** @var Loan $loan */
             $loan = Loan::where('id', $loanId)->lockForUpdate()->firstOrFail();
 
@@ -240,5 +241,24 @@ class EarlyRepaymentExecutionService
 
             return $result;
         });
+
+        // Telegram alert (HIGH tier) — fired AFTER transaction commits.
+        try {
+            $this->telegram->high(
+                'Ранно погасяване изпълнено',
+                "Кредит #{$result->loanId} погасен предсрочно.\n"
+                ."Сума: {$result->totalAmount} € (главница {$result->totalPrincipal} + лихва {$result->totalInterest}).",
+                [
+                    'loan_id'     => $result->loanId,
+                    'investors'   => $result->investorCount,
+                    'from_status' => $result->fromStatus,
+                    'admin_id'    => $result->executedByAdminId,
+                ],
+            );
+        } catch (\Throwable $ignored) {
+            // Logged inside TelegramService.
+        }
+
+        return $result;
     }
 }
