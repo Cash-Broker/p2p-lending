@@ -41,6 +41,18 @@ return Application::configure(basePath: dirname(__DIR__))
             ->withoutOverlapping(60)
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/loans-detect-buyback-eligible.log'));
+
+        // Telegram daily digest — INFO tier, silent (no push). Sends a brief
+        // morning summary to the admin: new registrations, KYC pending,
+        // deposits awaiting confirmation, withdrawals awaiting processing,
+        // buyback queue size, late loan count.
+        // Runs at 09:00 in app timezone (Europe/Sofia per .env). If
+        // TELEGRAM_BOT_TOKEN is not configured, the command is a no-op.
+        $schedule->command('telegram:digest')
+            ->dailyAt('09:00')
+            ->withoutOverlapping(15)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/telegram-digest.log'));
     })
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -61,5 +73,39 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Mirror uncaught exceptions to Telegram (CRITICAL tier).
+        // Skipped for HTTP 4xx (validation, auth errors etc.) — these are
+        // expected and would cause noise. Only 5xx-class server errors land
+        // in Telegram.
+        $exceptions->reportable(function (\Throwable $e) {
+            if ($e instanceof \Illuminate\Validation\ValidationException) {
+                return;
+            }
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                $status = $e->getStatusCode();
+                if ($status >= 400 && $status < 500) {
+                    return;
+                }
+            }
+            try {
+                $svc = app(\App\Services\TelegramService::class);
+                if (! $svc->isConfigured()) {
+                    return;
+                }
+                $request = request();
+                $url = $request ? ($request->method().' '.$request->fullUrl()) : 'CLI / queue';
+                $userId = optional(auth()->user())->id ?? '(none)';
+                $svc->critical(
+                    'Production Exception',
+                    mb_substr(get_class($e).': '.$e->getMessage(), 0, 800),
+                    [
+                        'url' => mb_substr($url, 0, 200),
+                        'user_id' => $userId,
+                        'file' => basename($e->getFile()).':'.$e->getLine(),
+                    ],
+                );
+            } catch (\Throwable $ignored) {
+                // Telegram dispatch must never break the original error flow.
+            }
+        });
     })->create();
