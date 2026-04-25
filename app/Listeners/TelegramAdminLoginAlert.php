@@ -38,10 +38,11 @@ class TelegramAdminLoginAlert
         $ip = $request?->ip() ?? 'unknown';
         $userAgent = $request?->userAgent() ?? 'unknown';
 
+        // The admin_trusted_ips table has no `confirmed_at` column; the
+        // mere presence of a row is what marks the IP as trusted.
         $isTrusted = AdminTrustedIp::query()
             ->where('user_id', $user->id)
             ->where('ip_address', $ip)
-            ->whereNotNull('confirmed_at')
             ->exists();
 
         $title = $isTrusted ? 'Admin вход (доверен IP)' : 'Admin вход — НЕпознат IP';
