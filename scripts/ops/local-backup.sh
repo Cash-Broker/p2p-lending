@@ -46,10 +46,13 @@ for v in DB_HOST DB_DATABASE DB_USERNAME DB_PASSWORD BACKUP_PASS; do
         echo "ERROR: $v missing in $APP_DIR/.env" >&2
         # Try to send Telegram alert if those creds are present
         if [ -n "${TG_TOKEN:-}" ] && [ -n "${TG_CHAT:-}" ]; then
+            CONFIG_ERR_MSG="🔴 <b>BACKUP CONFIG ERROR</b>
+
+$v missing in .env. Daily backup will not run."
             curl -sS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
                 --data-urlencode "chat_id=${TG_CHAT}" \
                 --data-urlencode "parse_mode=HTML" \
-                --data-urlencode "text=🔴 <b>BACKUP CONFIG ERROR</b>%0A%0A$v missing in .env. Daily backup will not run." \
+                --data-urlencode "text=$CONFIG_ERR_MSG" \
                 > /dev/null 2>&1 || true
         fi
         exit 1
@@ -121,11 +124,28 @@ if MYSQL_PWD="$DB_PASSWORD" mysqldump \
 
     TOTAL_FILES=$(ls -1 "$BACKUP_DIR"/*.sql.gz.enc 2>/dev/null | wc -l)
 
-    notify_telegram "🟡 <b>Daily Backup готов</b>%0A%0A📁 Файл: <code>${TIMESTAMP}.sql.gz.enc</code>%0A📦 Размер: ${SIZE_HUMAN}%0A⏱ Време: ${DURATION}s%0A🗂 Общо в /var/backups/mysql/: ${TOTAL_FILES} файла (max ${RETENTION_DAYS})%0A%0A<b>За теглене на лаптоп:</b>%0A<code>scp -i ~/.ssh/id_ed25519_p2p yordan@178.104.78.0:/var/backups/mysql/latest.sql.gz.enc ~/p2p-backups/</code>" "true"
+    SUCCESS_MSG="🟡 <b>Daily Backup готов</b>
+
+📁 Файл: <code>${TIMESTAMP}.sql.gz.enc</code>
+📦 Размер: ${SIZE_HUMAN}
+⏱ Време: ${DURATION}s
+🗂 Общо в /var/backups/mysql/: ${TOTAL_FILES} файла (max ${RETENTION_DAYS})
+
+<b>За теглене на лаптоп:</b>
+<code>scp -i ~/.ssh/id_ed25519_p2p yordan@178.104.78.0:/var/backups/mysql/latest.sql.gz.enc ~/p2p-backups/</code>"
+    notify_telegram "$SUCCESS_MSG" "true"
     exit 0
 else
     rm -f "$OUTFILE.tmp"
     log "Backup FAILED — check $LOG_FILE for mysqldump errors"
-    notify_telegram "🔴 <b>BACKUP FAILED</b>%0A%0Amysqldump или encryption pipeline пропадна.%0A%0A<b>Виж логовете на сървъра:</b>%0A<code>tail -50 ${LOG_FILE}</code>%0A%0AПроверете състоянието на MySQL и свободното място на диска." "false"
+    FAIL_MSG="🔴 <b>BACKUP FAILED</b>
+
+mysqldump или encryption pipeline пропадна.
+
+<b>Виж логовете на сървъра:</b>
+<code>tail -50 ${LOG_FILE}</code>
+
+Проверете състоянието на MySQL и свободното място на диска."
+    notify_telegram "$FAIL_MSG" "false"
     exit 1
 fi
