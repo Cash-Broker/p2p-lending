@@ -23,6 +23,7 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 backup_phase_b.sql
 backup_before_f1.sql
 
