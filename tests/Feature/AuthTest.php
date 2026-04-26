@@ -159,6 +159,38 @@ class AuthTest extends TestCase
         \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SendPasswordResetEmail::class);
     }
 
+    public function test_password_reset_named_route_resolves(): void
+    {
+        // Regression guard: Laravel's default ResetPassword notification calls
+        // route('password.reset', ['token' => ..., 'email' => ...]) inside
+        // resetUrl(). Without the named route registered in routes/web.php,
+        // every queued password-reset dispatch throws RouteNotFoundException
+        // — surfaced via Telegram exception reporter as a CRITICAL on every
+        // forgot-password attempt. This test pins the named route's existence.
+        $url = route('password.reset', [
+            'token' => 'abcd1234',
+            'email' => 'test@example.com',
+        ]);
+
+        $this->assertStringContainsString('/reset-password/abcd1234', $url);
+        $this->assertStringContainsString('email=test', $url);
+    }
+
+    public function test_send_password_reset_email_job_dispatches_without_route_error(): void
+    {
+        // End-to-end guard: dispatches the actual job (no Queue::fake) so
+        // Laravel's Password broker runs Password::sendResetLink, which
+        // builds the ResetPassword notification, which calls
+        // route('password.reset', ...). If the named route is missing or
+        // mis-shaped, this throws inside the job — exactly the production
+        // CRITICAL we just fixed.
+        User::factory()->create(['email' => 'real@example.com']);
+
+        \App\Jobs\SendPasswordResetEmail::dispatchSync('real@example.com');
+
+        $this->assertTrue(true); // No exception above = pass.
+    }
+
     public function test_forgot_password_returns_same_response_for_unknown_email(): void
     {
         \Illuminate\Support\Facades\Queue::fake();

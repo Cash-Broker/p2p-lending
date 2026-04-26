@@ -13,6 +13,17 @@ use Illuminate\Support\Facades\Storage;
 // login page from the `app.blade.php` shell.
 Route::get('/login', fn () => view('app'))->name('login');
 
+// Stub `password.reset` named route — Laravel's default ResetPassword
+// notification calls `route('password.reset', ['token' => ..., 'email' => ...])`
+// to build the email link. Without this stub, every queued password-reset
+// dispatch throws RouteNotFoundException — surfaced via the Telegram
+// exception reporter as a CRITICAL on every forgot-password attempt.
+//
+// The path matches the Vue SPA's router (`/reset-password/:token`); Vue
+// reads the token from the path and the email from the query string,
+// then POSTs to /api/reset-password.
+Route::get('/reset-password/{token}', fn () => view('app'))->name('password.reset');
+
 // Mark an IP as trusted for an admin user. Reached from the "trust this IP"
 // link in the admin login alert email. Signed URL gates access — the link is
 // authentication-equivalent, expires in 7 days, and can be sent only to the
