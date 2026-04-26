@@ -14,19 +14,22 @@ class DepositController extends Controller
     public function __construct(private DepositService $depositService) {}
 
     /**
-     * Get deposit info: bank details and user's reference code.
-     * If no pending deposit exists, create one so the user always has a reference code.
+     * Return the user's active deposit code + bank details.
+     *
+     * The reference code is a per-DepositRequest random DEP-XXXXXXXX value,
+     * not a sequential function of user_id. The same code is reused across
+     * /api/deposit calls until it expires (30 days) or gets approved/rejected,
+     * at which point a fresh code is minted. The user pastes this code into
+     * the bank wire reference; admin matches the wire to the user via the
+     * code (not by guessing from sender name).
      */
     public function index(Request $request): JsonResponse
     {
-        $user = $request->user();
-
-        // Reference code is deterministic per user — no need to create a deposit request.
-        // The investor uses this code in their bank transfer description so admin can match it.
-        $referenceCode = 'P2P-' . str_pad($user->id, 6, '0', STR_PAD_LEFT);
+        $deposit = $this->depositService->getOrCreateActiveCode($request->user()->id);
 
         return response()->json([
-            'reference_code' => $referenceCode,
+            'reference_code' => $deposit->reference_code,
+            'expires_at' => $deposit->expires_at,
             'bank_details' => [
                 'bank_name' => 'P2P Invest Bank',
                 'iban' => 'BG80BNBG96611020345678',
@@ -38,6 +41,9 @@ class DepositController extends Controller
 
     public function history(Request $request): JsonResponse
     {
+        // Filter `amount > 0` excludes the placeholder rows that
+        // getOrCreateActiveCode creates with NULL amount — investors only
+        // see deposits that actually happened, not their unused codes.
         $deposits = DepositRequest::where('user_id', $request->user()->id)
             ->where('amount', '>', 0)
             ->latest()

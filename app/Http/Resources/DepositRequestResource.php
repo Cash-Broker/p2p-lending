@@ -15,6 +15,7 @@ class DepositRequestResource extends JsonResource
             'reference_code' => $this->reference_code,
             'status' => $this->status,
             'confirmed_at' => $this->confirmed_at,
+            'expires_at' => $this->expires_at,
             'created_at' => $this->created_at,
         ];
     }
