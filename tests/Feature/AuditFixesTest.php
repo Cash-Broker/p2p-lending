@@ -360,4 +360,62 @@ class AuditFixesTest extends TestCase
         $exitCode = Artisan::call('ledger:reconcile');
         $this->assertEquals(1, $exitCode, 'Reconciliation should fail on corrupted data');
     }
+
+    // ── Audit H4: audit_logs DB-level immutability ──
+
+    public function test_audit_logs_db_trigger_blocks_update(): void
+    {
+        // Defense-in-depth: even raw SQL UPDATE on audit_logs (e.g. from
+        // a compromised admin shell or leaked DB credentials) must fail.
+        // App-layer guards in AuditLogResource prevent this through
+        // Filament UI; this trigger catches everything else.
+        if (config('database.default') === 'sqlite') {
+            $this->markTestSkipped('SQLite does not support SIGNAL — trigger only applies to MySQL/MariaDB.');
+        }
+
+        // Generate an audit_logs row by mutating an Auditable model.
+        $user = User::factory()->create();
+        $user->update(['name' => 'Updated Name']);
+
+        $auditId = \DB::table('audit_logs')->latest('id')->value('id');
+        $this->assertNotNull($auditId, 'Auditable trait must have written a row');
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectExceptionMessage('Audit logs are immutable and cannot be updated');
+
+        // Bypass model events entirely — this is the attack scenario:
+        // raw DB access trying to rewrite history.
+        \DB::table('audit_logs')->where('id', $auditId)->update(['user_id' => 999]);
+    }
+
+    public function test_audit_logs_db_trigger_blocks_delete(): void
+    {
+        if (config('database.default') === 'sqlite') {
+            $this->markTestSkipped('SQLite does not support SIGNAL — trigger only applies to MySQL/MariaDB.');
+        }
+
+        $user = User::factory()->create();
+        $user->update(['name' => 'Updated Name']);
+
+        $auditId = \DB::table('audit_logs')->latest('id')->value('id');
+        $this->assertNotNull($auditId);
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectExceptionMessage('Audit logs are immutable and cannot be deleted');
+
+        \DB::table('audit_logs')->where('id', $auditId)->delete();
+    }
+
+    public function test_audit_logs_inserts_still_work(): void
+    {
+        // Sanity check: triggers must NOT block INSERT, only UPDATE/DELETE.
+        // Auditable trait depends on inserts working on every model event.
+        $countBefore = \DB::table('audit_logs')->count();
+
+        $user = User::factory()->create();
+
+        $countAfter = \DB::table('audit_logs')->count();
+        $this->assertGreaterThan($countBefore, $countAfter,
+            'Auditable trait must still write audit_logs rows after the immutability triggers are installed');
+    }
 }
