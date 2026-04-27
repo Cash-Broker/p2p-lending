@@ -38,13 +38,24 @@ class ProcessRepayment extends Page
                         ->searchable()->required()->live(),
                     Forms\Components\TextInput::make('principal_amount')->label('Главница (€)')->numeric()->required()->minValue(0)->step(0.01),
                     Forms\Components\TextInput::make('interest_amount')->label('Лихва (€)')->numeric()->required()->minValue(0)->step(0.01),
+                    // Required (audit H6 fix). Without a schedule_id, the
+                    // RepaymentService duplicate guard at RepaymentService.php:46-56
+                    // is bypassed — a double-submit (network retry, browser back +
+                    // resubmit, double-click) silently distributes the SAME
+                    // payment twice to investors, leaving the loan owing money
+                    // the platform must then write off. Forcing the admin to
+                    // pick a specific installment activates the guard at the
+                    // service AND triggers the in-form pre-flight check below.
                     Forms\Components\Select::make('amortization_schedule_id')->label('Ред от погасителен план')
                         ->options(function (callable $get) {
                             $loanId = $get('loan_id');
                             if (! $loanId) return [];
                             return \App\Models\AmortizationSchedule::where('loan_id', $loanId)->where('status', 'pending')->get()
                                 ->mapWithKeys(fn($s) => [$s->id => $s->due_date->format('d.m.Y') . " — {$s->total} €"]);
-                        })->nullable()->reactive(),
+                        })
+                        ->required()
+                        ->validationMessages(['required' => 'Изберете конкретна вноска от плана. Без това системата не може да предотврати случайно двойно разпределяне.'])
+                        ->reactive(),
                 ])->columns(2),
             ])
             ->statePath('data');
