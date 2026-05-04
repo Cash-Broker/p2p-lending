@@ -25,9 +25,10 @@
         <div>
           <p class="text-sm font-semibold text-navy-700 mb-4">Правна информация</p>
           <ul class="space-y-2.5">
-            <li><a href="#" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Условия за ползване</a></li>
-            <li><a href="#" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Политика за поверителност</a></li>
-            <li><a href="#" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Бисквитки</a></li>
+            <li><router-link to="/legal/terms" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Общи условия</router-link></li>
+            <li><router-link to="/legal/privacy" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Политика за поверителност</router-link></li>
+            <li><router-link to="/legal/risk" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Декларация за риска</router-link></li>
+            <li><router-link to="/legal/cookies" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Политика за бисквитки</router-link></li>
           </ul>
         </div>
         <div>

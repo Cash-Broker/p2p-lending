@@ -41,6 +41,28 @@ const routes = [
     component: () => import('../views/auth/EmailVerificationPage.vue'),
   },
 
+  // Legal pages — public, no auth required
+  {
+    path: '/legal/terms',
+    name: 'legal-terms',
+    component: () => import('../views/legal/TermsPage.vue'),
+  },
+  {
+    path: '/legal/privacy',
+    name: 'legal-privacy',
+    component: () => import('../views/legal/PrivacyPage.vue'),
+  },
+  {
+    path: '/legal/cookies',
+    name: 'legal-cookies',
+    component: () => import('../views/legal/CookiesPage.vue'),
+  },
+  {
+    path: '/legal/risk',
+    name: 'legal-risk',
+    component: () => import('../views/legal/RiskPage.vue'),
+  },
+
   // App pages (with sidebar layout)
   {
     path: '/',

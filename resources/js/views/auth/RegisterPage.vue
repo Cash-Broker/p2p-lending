@@ -117,10 +117,10 @@ async function submit() {
               />
               <span class="text-xs text-gray-500 leading-relaxed">
                 Съгласявам се с
-                <a href="#" class="text-accent-500 hover:text-accent-600 underline">Условията за ползване</a>,
-                <a href="#" class="text-accent-500 hover:text-accent-600 underline">Политиката за поверителност</a>
-                и <a href="#" class="text-accent-500 hover:text-accent-600 underline">Предупреждението за риск</a>.
-                Разбирам, че инвестирането в кредити носи риск.
+                <router-link to="/legal/terms" target="_blank" class="text-accent-500 hover:text-accent-600 underline">Общите условия</router-link>,
+                <router-link to="/legal/privacy" target="_blank" class="text-accent-500 hover:text-accent-600 underline">Политиката за поверителност</router-link>
+                и <router-link to="/legal/risk" target="_blank" class="text-accent-500 hover:text-accent-600 underline">Декларацията за риска</router-link>.
+                Съгласен съм с обработката на личните ми данни за целите на регистрацията и услугите на платформата.
               </span>
             </label>
             <p v-if="errors.terms_accepted" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.terms_accepted[0] }}</p>
