@@ -1,29 +1,30 @@
 <script setup>
+// Pre-launch: real partner agreements not yet finalised, so per-originator
+// volume / loan-count / avgYield / employee numbers below are placeholders
+// and must NOT be shown to visitors. Once we sign real originators, populate
+// these from a backend endpoint or seed config and re-enable the commented
+// rows in the template.
 const originators = [
   {
     name: 'ФинКредит ООД',
-    description: 'Водеща финансова институция с над 20 години опит в кредитирането. Над 100 физически офиса в цялата страна. Листвана на фондовата борса. Buyback гаранция при забава над 60 дни.',
-    loans: 230,
-    volume: '1.8M',
+    description: 'Водеща финансова институция с дългогодишен опит в кредитирането и широка офис мрежа в страната. Buyback гаранция при забава над 60 дни.',
+    /* loans: 230, volume: '1.8M', */
     facts: {
       type: 'Потребителски, обезпечени',
       country: 'България',
       buyback: 'Да (60+ дни)',
-      avgYield: '9.5%',
-      employees: '1,200+',
+      /* avgYield: '9.5%', employees: '1,200+', */
     },
   },
   {
     name: 'ПроИмот Кредит АД',
-    description: 'Иновативна финтех компания специализирана в мостови кредити, обезпечени с недвижими имоти. Използва AI за оценка на риска. 4 години опит, 6% пазарен дял.',
-    loans: 120,
-    volume: '950K',
+    description: 'Финтех компания, специализирана в мостови кредити, обезпечени с недвижими имоти. Използва AI за оценка на риска.',
+    /* loans: 120, volume: '950K', */
     facts: {
       type: 'Мостови, обезпечени с имоти',
       country: 'България',
       buyback: 'Да (90+ дни)',
-      avgYield: '12.8%',
-      employees: '85',
+      /* avgYield: '12.8%', employees: '85', */
     },
   },
 ]
@@ -50,11 +51,14 @@ const originators = [
             </div>
             <div>
               <h3 class="font-bold text-navy-700 text-lg">{{ orig.name }}</h3>
-              <div class="flex items-center gap-3 mt-1">
-                <span class="text-xs text-gray-400">{{ orig.loans }} кредита</span>
-                <span class="text-gray-200">|</span>
-                <span class="text-xs text-gray-400">{{ orig.volume }} € обем</span>
-              </div>
+              <p class="text-xs text-gray-400 mt-1">Партньорска финансова институция</p>
+              <!-- Pre-launch: per-originator counts hidden until real data
+                <div class="flex items-center gap-3 mt-1">
+                  <span class="text-xs text-gray-400">{{ orig.loans }} кредита</span>
+                  <span class="text-gray-200">|</span>
+                  <span class="text-xs text-gray-400">{{ orig.volume }} € обем</span>
+                </div>
+              -->
             </div>
           </div>
 
@@ -72,18 +76,20 @@ const originators = [
                   <td class="px-4 py-2 text-gray-400 whitespace-nowrap">Държава</td>
                   <td class="px-4 py-2 text-navy-700 font-medium text-right">{{ orig.facts.country }}</td>
                 </tr>
-                <tr class="border-b border-gray-100">
+                <tr>
                   <td class="px-4 py-2 text-gray-400 whitespace-nowrap">Buyback</td>
                   <td class="px-4 py-2 text-navy-700 font-medium text-right">{{ orig.facts.buyback }}</td>
                 </tr>
-                <tr class="border-b border-gray-100">
-                  <td class="px-4 py-2 text-gray-400 whitespace-nowrap">Средна доходност</td>
-                  <td class="px-4 py-2 text-accent-500 font-bold text-right">{{ orig.facts.avgYield }}</td>
-                </tr>
-                <tr>
-                  <td class="px-4 py-2 text-gray-400 whitespace-nowrap">Служители</td>
-                  <td class="px-4 py-2 text-navy-700 font-medium text-right">{{ orig.facts.employees }}</td>
-                </tr>
+                <!-- Pre-launch: hidden until real per-originator data is available
+                  <tr class="border-b border-gray-100">
+                    <td class="px-4 py-2 text-gray-400 whitespace-nowrap">Средна доходност</td>
+                    <td class="px-4 py-2 text-accent-500 font-bold text-right">{{ orig.facts.avgYield }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2 text-gray-400 whitespace-nowrap">Служители</td>
+                    <td class="px-4 py-2 text-navy-700 font-medium text-right">{{ orig.facts.employees }}</td>
+                  </tr>
+                -->
               </tbody>
             </table>
           </div>

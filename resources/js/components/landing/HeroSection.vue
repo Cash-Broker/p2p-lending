@@ -16,7 +16,7 @@
             <span class="text-accent-400">ASSET</span>
           </h1>
           <p class="mt-6 text-lg text-gray-500 leading-relaxed">
-            Платформа за P2P инвестиции с достъп до кредити от утвърдени финансови институции.
+            Платформа за P2P инвестиции с достъп до кредити от утвърдени финансови институции. Прозрачност, диверсификация и контрол върху портфейла Ви.
           </p>
           <div class="mt-8 flex flex-wrap gap-4">
             <router-link to="/register" class="inline-flex items-center px-7 py-3.5 bg-accent-400 hover:bg-accent-500 text-white font-semibold rounded-xl transition-colors text-sm shadow-lg shadow-accent-400/25">
@@ -29,7 +29,7 @@
           </div>
         </div>
 
-        <!-- Right — stats cards -->
+        <!-- Right — motivational quote (replaces pre-launch fake stats; see below) -->
         <div class="relative">
           <div class="absolute inset-0 -z-10">
             <svg viewBox="0 0 500 500" class="w-full h-full opacity-[0.04]">
@@ -40,51 +40,50 @@
             </svg>
           </div>
 
-          <div class="grid grid-cols-2 gap-4">
-            <div class="col-span-2 rounded-2xl bg-navy-700 p-6 sm:p-8 text-white">
-              <div class="flex items-center justify-between">
-                <div>
-                  <p class="text-navy-200 text-sm font-medium">Общо инвестирани</p>
-                  <p class="text-3xl sm:text-4xl font-bold mt-1">2.4M&nbsp;€</p>
-                </div>
-                <div class="flex size-12 items-center justify-center rounded-xl bg-white/10">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
-                </div>
-              </div>
-              <div class="mt-6 flex items-end gap-1 h-12">
-                <div class="w-full rounded-sm bg-white/15 h-[30%]"></div>
-                <div class="w-full rounded-sm bg-white/15 h-[45%]"></div>
-                <div class="w-full rounded-sm bg-white/15 h-[35%]"></div>
-                <div class="w-full rounded-sm bg-white/15 h-[60%]"></div>
-                <div class="w-full rounded-sm bg-white/15 h-[50%]"></div>
-                <div class="w-full rounded-sm bg-white/15 h-[75%]"></div>
-                <div class="w-full rounded-sm bg-white/15 h-[65%]"></div>
-                <div class="w-full rounded-sm bg-white/20 h-[85%]"></div>
-                <div class="w-full rounded-sm bg-accent-400 h-full"></div>
-              </div>
-            </div>
-
-            <div class="rounded-2xl bg-gray-50 border border-gray-100 p-6">
-              <div class="flex size-10 items-center justify-center rounded-lg bg-navy-700/10 text-navy-700 mb-3">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" /></svg>
-              </div>
-              <p class="text-2xl font-bold text-navy-700">1,200+</p>
-              <p class="text-sm text-gray-500 mt-1">инвеститори</p>
-            </div>
-
-            <div class="rounded-2xl bg-gray-50 border border-gray-100 p-6">
-              <div class="flex size-10 items-center justify-center rounded-lg bg-accent-400/10 text-accent-500 mb-3">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18 9 11.25l4.306 4.306a11.95 11.95 0 0 1 5.814-5.518l2.74-1.22m0 0-5.94-2.281m5.94 2.28-2.28 5.941" /></svg>
-              </div>
-              <p class="text-2xl font-bold text-navy-700">до 12%</p>
-              <p class="text-sm text-gray-500 mt-1">годишна доходност</p>
-            </div>
+          <div class="rounded-3xl bg-navy-700 p-8 sm:p-10 text-white">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              class="size-10 text-accent-400 mb-5 opacity-80"
+              aria-hidden="true"
+            >
+              <path d="M4.583 17.321C3.553 16.227 3 15 3 13.011c0-3.5 2.457-6.637 6.03-8.188l.893 1.378c-3.335 1.804-3.987 4.145-4.247 5.621.537-.278 1.24-.375 1.929-.311 1.804.167 3.226 1.648 3.226 3.489a3.5 3.5 0 0 1-3.5 3.5c-1.073 0-2.099-.49-2.748-1.179zm10 0C13.553 16.227 13 15 13 13.011c0-3.5 2.457-6.637 6.03-8.188l.893 1.378c-3.335 1.804-3.987 4.145-4.247 5.621.537-.278 1.24-.375 1.929-.311 1.804.167 3.226 1.648 3.226 3.489a3.5 3.5 0 0 1-3.5 3.5c-1.073 0-2.099-.49-2.748-1.179z"/>
+            </svg>
+            <p class="text-xl sm:text-2xl font-semibold leading-relaxed tracking-tight">
+              Цената е това, което плащаш.
+              <span class="text-accent-400">Стойността е това, което получаваш.</span>
+            </p>
+            <p class="mt-5 text-sm text-navy-200">— Уорън Бъфет</p>
           </div>
 
           <p class="mt-6 text-sm text-gray-400 text-center leading-relaxed">
-            Присъединете се към над 1,200 инвеститори, които вече печелят пасивен доход чрез нашата платформа.
+            Започни своето инвестиционно пътуване с прозрачност и контрол.
           </p>
         </div>
+
+        <!--
+          ─── Pre-launch (commented out): real stats cards ────────────────────
+          Uncomment below + remove the quote card above when production has
+          real data (Σ deposits, distinct investor count, configured max yield).
+          Wire to a public stats endpoint rather than hard-coding — fake numbers
+          on a regulated platform are a misrepresentation risk.
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="col-span-2 rounded-2xl bg-navy-700 p-6 sm:p-8 text-white">
+              ...big "Общо инвестирани" card with chart bars...
+            </div>
+            <div class="rounded-2xl bg-gray-50 border border-gray-100 p-6">
+              ...investor count card...
+            </div>
+            <div class="rounded-2xl bg-gray-50 border border-gray-100 p-6">
+              ...avg yield card...
+            </div>
+          </div>
+          <p class="mt-6 text-sm text-gray-400 text-center leading-relaxed">
+            Присъединете се към над 1,200 инвеститори, които вече печелят пасивен доход чрез нашата платформа.
+          </p>
+        -->
       </div>
     </div>
   </section>

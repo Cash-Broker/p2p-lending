@@ -1,4 +1,17 @@
 <script setup>
+// ─────────────────────────────────────────────────────────────────────────────
+// Pre-launch state: platform has no real investors / volume yet, so the four
+// hard-coded stats below were misleading. Until we have real numbers from the
+// production database, this section displays motivational quotes instead.
+//
+// To re-enable when real stats exist:
+//   1. Uncomment the script + animation below.
+//   2. Swap the `<template>` block back to the count-up grid.
+//   3. Wire `platformStats` to a backend endpoint (e.g. /api/public/stats)
+//      that returns Σ-deposits, distinct user_id count, etc.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/* DISABLED — pre-launch
 import { ref, onMounted, onUnmounted } from 'vue'
 
 const statsRef = ref(null)
@@ -45,19 +58,26 @@ onMounted(() => {
 onUnmounted(() => {
   observer?.disconnect()
 })
+*/
 </script>
 
 <template>
-  <section ref="statsRef" class="bg-navy-700">
-    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-14 sm:py-16">
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-8 lg:gap-4">
-        <div v-for="(stat, i) in platformStats" :key="i" class="text-center">
-          <p class="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-tight">
-            {{ animatedValues[i] }}{{ stat.suffix }}
-          </p>
-          <p class="mt-2 text-sm sm:text-base text-navy-200">{{ stat.label }}</p>
-        </div>
-      </div>
+  <section class="bg-navy-700">
+    <div class="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-16 sm:py-20 text-center">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        class="size-8 text-accent-400 mx-auto mb-6 opacity-80"
+        aria-hidden="true"
+      >
+        <path d="M4.583 17.321C3.553 16.227 3 15 3 13.011c0-3.5 2.457-6.637 6.03-8.188l.893 1.378c-3.335 1.804-3.987 4.145-4.247 5.621.537-.278 1.24-.375 1.929-.311 1.804.167 3.226 1.648 3.226 3.489a3.5 3.5 0 0 1-3.5 3.5c-1.073 0-2.099-.49-2.748-1.179zm10 0C13.553 16.227 13 15 13 13.011c0-3.5 2.457-6.637 6.03-8.188l.893 1.378c-3.335 1.804-3.987 4.145-4.247 5.621.537-.278 1.24-.375 1.929-.311 1.804.167 3.226 1.648 3.226 3.489a3.5 3.5 0 0 1-3.5 3.5c-1.073 0-2.099-.49-2.748-1.179z"/>
+      </svg>
+      <p class="text-2xl sm:text-3xl font-semibold text-white leading-relaxed tracking-tight">
+        Най-добрият момент да започнеш да инвестираш беше преди години.
+        <span class="text-accent-400">Вторият най-добър — е сега.</span>
+      </p>
+      <p class="mt-4 text-sm text-navy-200">— китайска поговорка</p>
     </div>
   </section>
 </template>

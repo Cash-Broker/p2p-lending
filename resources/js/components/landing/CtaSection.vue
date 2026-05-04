@@ -4,7 +4,7 @@
       <div class="rounded-3xl bg-navy-700 px-8 py-16 sm:px-16 sm:py-20 text-center">
         <h2 class="text-3xl sm:text-4xl font-bold text-white">Готов ли си да инвестираш?</h2>
         <p class="mt-4 text-navy-200 text-lg max-w-xl mx-auto">
-          Присъедини се към над 1,200 инвеститори, които вече получават доходност от кредити.
+          Колкото по-рано започнеш, толкова повече сложната лихва работи за теб. Регистрацията е безплатна и отнема 2 минути.
         </p>
         <div class="mt-8 flex flex-wrap justify-center gap-4">
           <router-link to="/register" class="inline-flex items-center px-8 py-3.5 bg-accent-400 hover:bg-accent-500 text-white font-semibold rounded-xl transition-colors text-sm">
