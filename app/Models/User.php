@@ -20,12 +20,16 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable, Auditable;
 
+    public const TYPE_INDIVIDUAL   = 'individual';
+    public const TYPE_LEGAL_ENTITY = 'legal_entity';
+
     protected $fillable = [
         'name',
         'email',
         'password',
         'phone',
         'kyc_document_path',
+        'account_type',
     ];
 
     // role and kyc_status are intentionally NOT fillable —
@@ -34,6 +38,7 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
     protected $attributes = [
         'role' => 'investor',
         'kyc_status' => 'pending',
+        'account_type' => self::TYPE_INDIVIDUAL,
     ];
 
     protected $hidden = [
@@ -107,5 +112,20 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
     public function savedIbans(): HasMany
     {
         return $this->hasMany(SavedIban::class);
+    }
+
+    public function legalEntityProfile(): HasOne
+    {
+        return $this->hasOne(LegalEntityProfile::class);
+    }
+
+    public function isLegalEntity(): bool
+    {
+        return $this->account_type === self::TYPE_LEGAL_ENTITY;
+    }
+
+    public function isIndividual(): bool
+    {
+        return $this->account_type === self::TYPE_INDIVIDUAL;
     }
 }

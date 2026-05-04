@@ -36,9 +36,49 @@ class AuthController extends Controller
                 'name' => $request->name,
                 'email' => $request->email,
                 'password' => $request->password,
+                'account_type' => $request->input('account_type', User::TYPE_INDIVIDUAL),
             ]);
 
             $user->wallet()->create();
+
+            // For legal-entity registrations: persist company profile + at least
+            // one Ultimate Beneficial Owner (UBO). Both are inside the same
+            // transaction as the user/wallet — partial registration is invalid
+            // state for AML compliance, so atomicity is mandatory.
+            if ($user->isLegalEntity()) {
+                $profile = $user->legalEntityProfile()->create([
+                    'legal_name'           => $request->input('legal_name'),
+                    'legal_form'           => $request->input('legal_form'),
+                    'eik'                  => $request->input('eik'),
+                    'vat_number'           => $request->input('vat_number'),
+                    'address_country'      => strtoupper($request->input('address_country')),
+                    'address_city'         => $request->input('address_city'),
+                    'address_postcode'     => $request->input('address_postcode'),
+                    'address_street'       => $request->input('address_street'),
+                    'company_email'        => $request->input('company_email'),
+                    'company_phone'        => $request->input('company_phone'),
+                    'representative_role'  => $request->input('representative_role'),
+                    'representative_egn'   => $request->input('representative_egn'),
+                    'representative_dob'   => $request->input('representative_dob'),
+                    'pep_status'           => (bool) $request->input('pep_status'),
+                    'pep_details'          => $request->input('pep_details'),
+                    'source_of_funds'      => $request->input('source_of_funds'),
+                    'source_of_funds_other' => $request->input('source_of_funds_other'),
+                ]);
+
+                foreach ($request->input('beneficial_owners', []) as $ubo) {
+                    $profile->beneficialOwners()->create([
+                        'full_name'         => $ubo['full_name'],
+                        'national_id'       => $ubo['national_id'] ?? null,
+                        'date_of_birth'     => $ubo['date_of_birth'] ?? null,
+                        'nationality'       => strtoupper($ubo['nationality']),
+                        'ownership_percent' => $ubo['ownership_percent'],
+                        'control_type'      => $ubo['control_type'],
+                        'pep_status'        => (bool) ($ubo['pep_status'] ?? false),
+                        'pep_details'       => $ubo['pep_details'] ?? null,
+                    ]);
+                }
+            }
 
             // Record legal consent — evidence that user accepted terms at this
             // moment, from this IP, with this browser. Without this record,

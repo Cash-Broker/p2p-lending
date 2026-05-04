@@ -17,6 +17,7 @@ class UserResource extends JsonResource
             'role' => $this->role,
             'kyc_status' => $this->kyc_status,
             'phone' => $this->phone,
+            'account_type' => $this->account_type,
             'wallet' => new WalletResource($this->whenLoaded('wallet')),
             'created_at' => $this->created_at,
         ];
