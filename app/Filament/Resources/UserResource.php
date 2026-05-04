@@ -29,6 +29,11 @@ class UserResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('name')->label('Име')->searchable(),
                 Tables\Columns\TextColumn::make('email')->label('Имейл')->searchable(),
+                Tables\Columns\BadgeColumn::make('account_type')->label('Тип акаунт')
+                    ->formatStateUsing(fn (string $state) => match ($state) { 'individual' => 'Физическо', 'legal_entity' => 'Юридическо', default => $state })
+                    ->colors(['gray' => 'individual', 'success' => 'legal_entity']),
+                Tables\Columns\TextColumn::make('legalEntityProfile.legal_name')->label('Фирма')
+                    ->placeholder('—')->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\BadgeColumn::make('role')->label('Роля')
                     ->formatStateUsing(fn (string $state) => match ($state) { 'investor' => 'Инвеститор', 'admin' => 'Админ', default => $state })
                     ->colors(['primary' => 'investor', 'danger' => 'admin']),
@@ -39,6 +44,8 @@ class UserResource extends Resource
                 Tables\Columns\TextColumn::make('created_at')->label('Регистрация')->date('d.m.Y'),
             ])
             ->filters([
+                Tables\Filters\SelectFilter::make('account_type')->label('Тип акаунт')
+                    ->options(['individual' => 'Физическо лице', 'legal_entity' => 'Юридическо лице']),
                 Tables\Filters\SelectFilter::make('role')->options(['investor' => 'Инвеститор', 'admin' => 'Админ']),
                 Tables\Filters\SelectFilter::make('kyc_status')->options(['pending' => 'Очакващ', 'submitted' => 'Изпратен', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен']),
             ])
@@ -81,10 +88,20 @@ class UserResource extends Resource
             \Filament\Schemas\Components\Section::make('Профил')->schema([
                 Infolists\Components\TextEntry::make('name')->label('Име'),
                 Infolists\Components\TextEntry::make('email')->label('Имейл'),
+                Infolists\Components\TextEntry::make('phone')->label('Телефон')->default('—'),
+                Infolists\Components\TextEntry::make('account_type')->label('Тип акаунт')->badge()
+                    ->formatStateUsing(fn (string $state) => match ($state) { 'individual' => 'Физическо', 'legal_entity' => 'Юридическо', default => $state })
+                    ->color(fn (string $state) => match ($state) { 'legal_entity' => 'success', default => 'gray' }),
                 Infolists\Components\TextEntry::make('role')->label('Роля')->badge(),
                 Infolists\Components\TextEntry::make('kyc_status')->label('KYC')->badge(),
                 Infolists\Components\TextEntry::make('created_at')->label('Регистрация')->date('d.m.Y'),
             ])->columns(3),
+
+            \Filament\Schemas\Components\Section::make('Фирмени данни')->schema([
+                Infolists\Components\TextEntry::make('legalEntityProfile.legal_name')->label('Име на фирмата'),
+                Infolists\Components\TextEntry::make('legalEntityProfile.eik')->label('ЕИК')->copyable()->fontFamily('mono'),
+            ])->columns(2)->visible(fn ($record) => $record->isLegalEntity() && $record->legalEntityProfile),
+
             \Filament\Schemas\Components\Section::make('Портфейл')->schema([
                 Infolists\Components\TextEntry::make('wallet.available')->label('Свободни')->money('EUR'),
                 Infolists\Components\TextEntry::make('wallet.invested')->label('Инвестирани')->money('EUR'),
@@ -93,12 +110,18 @@ class UserResource extends Resource
             \Filament\Schemas\Components\Section::make('KYC документ')->schema([
                 Infolists\Components\TextEntry::make('kyc_status')->label('Статус')->badge()
                     ->color(fn (string $state) => match ($state) { 'approved' => 'success', 'submitted' => 'info', 'rejected' => 'danger', default => 'warning' }),
-                Infolists\Components\TextEntry::make('phone')->label('Телефон')->default('—'),
                 Infolists\Components\ViewEntry::make('kyc_document_path')->label('Документ')
                     ->view('filament.components.kyc-image')
                     ->columnSpanFull(),
             ])->columns(2)->visible(fn ($record) => $record->kyc_document_path !== null),
         ]);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            UserResource\RelationManagers\ConsentRecordsRelationManager::class,
+        ];
     }
 
     public static function getPages(): array
