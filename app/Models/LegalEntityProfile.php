@@ -7,11 +7,17 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Company-side data for a legal-entity investor (1:1 with `users`).
+ * Company-side profile for a legal-entity investor (1:1 with `users`).
  *
- * `eik` and `vat_number` are encrypted at rest. Other fields (legal_name,
- * address, contact) are not — the trade register publishes those, so
- * encrypting them adds operational cost without privacy benefit.
+ * Registration captures only `legal_name` + `eik` (per the simplified onboarding
+ * UX). The remaining columns — address, representative ID, PEP status, source
+ * of funds — are populated later in a post-registration KYC workflow and the
+ * 2026_05_04_130000_relax_legal_entity_profile_columns migration made them
+ * nullable on the table to allow the deferred fill-in.
+ *
+ * `eik`, `vat_number`, `representative_egn` are encrypted at rest. The constant
+ * arrays below remain so the deferred KYC form can offer the same canonical
+ * dropdown options.
  */
 class LegalEntityProfile extends Model
 {

@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\BeneficialOwner;
-use App\Models\ConsentRecord;
 use App\Models\LegalEntityProfile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -20,56 +19,29 @@ class LegalEntityRegistrationTest extends TestCase
     }
 
     /**
-     * Build a valid registration payload for a legal-entity investor.
+     * Minimal payload matching the simplified onboarding form: company name,
+     * EIK, contact-person first/last name, email, phone, password, terms.
      *
-     * EIK 201035515 and EGN 9006151000 are real-world valid checksums
-     * (mod-11 verified by hand). Don't replace with random digits — the
-     * validator will reject them.
+     * EIK 201035515 is a real-world valid mod-11 checksum — don't replace
+     * with random digits or ValidEik will reject the request.
      */
     private function validLegalEntityPayload(array $overrides = []): array
     {
-        return array_replace_recursive([
+        return array_merge([
             'account_type'           => 'legal_entity',
-
-            'name'                   => 'Иван Иванов',
+            'first_name'             => 'Иван',
+            'last_name'              => 'Иванов',
             'email'                  => 'rep@vamaasset.bg',
+            'phone'                  => '+359 88 123 4567',
             'password'               => 'Password123!',
             'password_confirmation'  => 'Password123!',
             'terms_accepted'         => true,
-
             'legal_name'             => 'ВАМА АСЕТ',
-            'legal_form'             => 'EOOD',
             'eik'                    => '201035515',
-            'vat_number'             => 'BG201035515',
-
-            'address_country'        => 'BG',
-            'address_city'           => 'София',
-            'address_postcode'       => '1000',
-            'address_street'         => 'ул. Васил Левски 1',
-
-            'company_email'          => 'office@vamaasset.bg',
-            'company_phone'          => '+359 88 123 4567',
-
-            'representative_role'    => 'upravitel',
-            'representative_egn'     => '9006151000',
-
-            'pep_status'             => false,
-            'source_of_funds'        => 'business_income',
-
-            'beneficial_owners' => [
-                [
-                    'full_name'         => 'Иван Иванов Иванов',
-                    'national_id'       => '9006151000',
-                    'nationality'       => 'BG',
-                    'ownership_percent' => 100,
-                    'control_type'      => 'direct',
-                    'pep_status'        => false,
-                ],
-            ],
         ], $overrides);
     }
 
-    public function test_legal_entity_registration_creates_user_profile_and_ubo_atomically(): void
+    public function test_legal_entity_registration_creates_user_and_profile_atomically(): void
     {
         $response = $this->postJson('/api/register', $this->validLegalEntityPayload());
 
@@ -81,22 +53,29 @@ class LegalEntityRegistrationTest extends TestCase
         $this->assertTrue($user->isLegalEntity());
         $this->assertNotNull($user->wallet, 'Wallet must be created in the same transaction');
 
+        // first_name + last_name concatenated into the user.name column by
+        // RegisterRequest::prepareForValidation() — downstream code keeps
+        // using $user->name without branching on account type.
+        $this->assertEquals('Иван Иванов', $user->name);
+        $this->assertEquals('+359 88 123 4567', $user->phone);
+
         $profile = $user->legalEntityProfile;
         $this->assertNotNull($profile);
         $this->assertEquals('ВАМА АСЕТ', $profile->legal_name);
-        $this->assertEquals('EOOD', $profile->legal_form);
-        $this->assertEquals('201035515', $profile->eik);                  // decrypted via cast
-        $this->assertEquals('BG201035515', $profile->vat_number);         // decrypted via cast
-        $this->assertEquals('upravitel', $profile->representative_role);
-        $this->assertEquals('9006151000', $profile->representative_egn); // decrypted via cast
+        $this->assertEquals('201035515', $profile->eik); // decrypted via cast
 
-        $this->assertCount(1, $profile->beneficialOwners);
-        $ubo = $profile->beneficialOwners->first();
-        $this->assertEquals('Иван Иванов Иванов', $ubo->full_name);
-        $this->assertEquals('9006151000', $ubo->national_id);
-        $this->assertEquals('100.00', $ubo->ownership_percent);
+        // AML data is captured in a deferred KYC workflow — at registration
+        // these are NULL by design (the relax-columns migration allows it).
+        $this->assertNull($profile->legal_form);
+        $this->assertNull($profile->address_city);
+        $this->assertNull($profile->source_of_funds);
 
-        // All three consent records still recorded (legal-entity flow doesn't break it)
+        // No UBO records at registration; populated later in the deferred flow.
+        $this->assertCount(0, $profile->beneficialOwners);
+        $this->assertEquals(0, BeneficialOwner::count());
+
+        // The 3 consent records are still recorded (legal-entity flow doesn't
+        // bypass the universal consent-ledger requirement).
         $this->assertCount(3, $user->consentRecords);
     }
 
@@ -110,85 +89,40 @@ class LegalEntityRegistrationTest extends TestCase
         $this->assertDatabaseMissing('users', ['email' => 'rep@vamaasset.bg']);
     }
 
-    public function test_legal_entity_registration_rejects_invalid_egn(): void
+    public function test_legal_entity_registration_requires_first_and_last_name(): void
     {
         $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
-            'representative_egn' => '1234567890', // wrong checksum + invalid date
+            'first_name' => '',
+            'last_name'  => '',
         ]));
 
-        $response->assertStatus(422)->assertJsonValidationErrors(['representative_egn']);
+        $response->assertStatus(422)->assertJsonValidationErrors(['first_name', 'last_name']);
     }
 
-    public function test_legal_entity_registration_requires_at_least_one_ubo(): void
+    public function test_legal_entity_registration_requires_phone(): void
     {
-        $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
-            'beneficial_owners' => [],
-        ]));
+        $payload = $this->validLegalEntityPayload();
+        unset($payload['phone']);
 
-        $response->assertStatus(422)->assertJsonValidationErrors(['beneficial_owners']);
-        $this->assertDatabaseMissing('users', ['email' => 'rep@vamaasset.bg']);
+        $response = $this->postJson('/api/register', $payload);
+
+        $response->assertStatus(422)->assertJsonValidationErrors(['phone']);
     }
 
-    public function test_legal_entity_registration_rejects_ubo_with_no_id_and_no_dob(): void
+    public function test_legal_entity_registration_requires_legal_name_and_eik(): void
     {
         $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
-            'beneficial_owners' => [[
-                'full_name'         => 'No ID Person',
-                'nationality'       => 'BG',
-                'ownership_percent' => 50,
-                'control_type'      => 'direct',
-                'pep_status'        => false,
-            ]],
+            'legal_name' => '',
+            'eik'        => '',
         ]));
 
-        $response->assertStatus(422)->assertJsonValidationErrors([
-            'beneficial_owners.0.national_id',
-            'beneficial_owners.0.date_of_birth',
-        ]);
-    }
-
-    public function test_legal_entity_registration_rejects_ownership_over_100_percent(): void
-    {
-        $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
-            'beneficial_owners' => [[
-                'full_name'         => 'Too Greedy',
-                'national_id'       => '9006151000',
-                'nationality'       => 'BG',
-                'ownership_percent' => 101,
-                'control_type'      => 'direct',
-                'pep_status'        => false,
-            ]],
-        ]));
-
-        $response->assertStatus(422)->assertJsonValidationErrors([
-            'beneficial_owners.0.ownership_percent',
-        ]);
-    }
-
-    public function test_pep_status_true_requires_details(): void
-    {
-        $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
-            'pep_status' => true,
-            'pep_details' => '', // missing
-        ]));
-
-        $response->assertStatus(422)->assertJsonValidationErrors(['pep_details']);
-    }
-
-    public function test_source_of_funds_other_requires_description(): void
-    {
-        $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
-            'source_of_funds' => 'other',
-            'source_of_funds_other' => '', // missing
-        ]));
-
-        $response->assertStatus(422)->assertJsonValidationErrors(['source_of_funds_other']);
+        $response->assertStatus(422)->assertJsonValidationErrors(['legal_name', 'eik']);
     }
 
     public function test_individual_registration_still_works_unchanged(): void
     {
-        // Sanity: legacy individual flow keeps the same shape and creates no
-        // legal-entity profile.
+        // Sanity: the single-name-field individual path is unaffected by the
+        // legal-entity simplification.
         $response = $this->postJson('/api/register', [
             'account_type'          => 'individual',
             'name'                  => 'John Doe',
@@ -206,15 +140,13 @@ class LegalEntityRegistrationTest extends TestCase
         $this->assertTrue($user->isIndividual());
         $this->assertNull($user->legalEntityProfile);
         $this->assertEquals(0, LegalEntityProfile::count());
-        $this->assertEquals(0, BeneficialOwner::count());
     }
 
-    public function test_account_type_defaults_to_individual_when_omitted(): void
+    public function test_account_type_is_required(): void
     {
-        // Backward compatibility: a request without account_type should be
-        // treated as individual (legacy clients won't know to send the field).
-        // RegisterRequest currently requires account_type — this test pins the
-        // requirement so we notice if we ever relax it.
+        // Backward-compat probe: a request without account_type returns 422
+        // rather than silently defaulting. The frontend always sends it; this
+        // test pins the requirement so we notice if we ever relax it.
         $response = $this->postJson('/api/register', [
             'name'                  => 'Legacy Client',
             'email'                 => 'legacy@example.com',
