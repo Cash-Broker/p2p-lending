@@ -20,11 +20,11 @@ class WithdrawalApprovedNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("Теглене одобрено — {$this->amount} € — P2P Invest")
+            ->subject("Теглене одобрено — {$this->amount} € — Vamaasset")
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line("Вашето теглене от {$this->amount} € е одобрено.")
             ->line('Средствата ще бъдат преведени по банковата ви сметка в рамките на 1-2 работни дни.')
-            ->salutation('Поздрави, екипът на P2P Invest');
+            ->salutation('Поздрави, екипът на Vamaasset');
     }
 
     public function toArray(object $notifiable): array

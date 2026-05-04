@@ -9,8 +9,8 @@ const mobileMenuOpen = ref(false)
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
       <div class="flex h-16 items-center justify-between">
         <a href="/" class="flex items-center gap-2">
-          <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">P2</div>
-          <span class="text-lg font-bold text-navy-700">P2P Invest</span>
+          <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">V</div>
+          <span class="text-lg font-bold text-navy-700">Vamaa<span class="text-accent-400">sset</span></span>
         </a>
 
         <nav class="hidden md:flex items-center gap-8">

@@ -20,12 +20,12 @@ class DepositApprovedNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("Депозит одобрен — {$this->amount} € — P2P Invest")
+            ->subject("Депозит одобрен — {$this->amount} € — Vamaasset")
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line("Вашият депозит от {$this->amount} € (ref: {$this->referenceCode}) е одобрен.")
             ->line('Средствата са налични в акаунта ви.')
             ->action('Виж баланс', config('app.url') . '/dashboard')
-            ->salutation('Поздрави, екипът на P2P Invest');
+            ->salutation('Поздрави, екипът на Vamaasset');
     }
 
     public function toArray(object $notifiable): array

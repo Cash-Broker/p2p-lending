@@ -111,7 +111,7 @@ class ReconcileLedger extends Command
         try {
             Mail::raw($this->formatEmailBody($count, $details), function ($message) use ($adminEmail, $count) {
                 $message->to($adminEmail)
-                    ->subject("[P2P Invest ALERT] Ledger mismatch detected — {$count} wallet(s)");
+                    ->subject("[Vamaasset ALERT] Ledger mismatch detected — {$count} wallet(s)");
             });
 
             $this->info("Alert email sent to {$adminEmail}");

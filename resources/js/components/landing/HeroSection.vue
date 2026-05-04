@@ -12,8 +12,8 @@
             Активни инвестиционни възможности
           </div>
           <h1 class="text-4xl sm:text-5xl lg:text-[3.5rem] font-extrabold text-navy-700 leading-tight tracking-tight">
-            Инвестирай в кредити.<br/>
-            <span class="text-accent-400">Получавай доходност.</span>
+            VAMA<br/>
+            <span class="text-accent-400">ASSET</span>
           </h1>
           <p class="mt-6 text-lg text-gray-500 leading-relaxed">
             Платформа за P2P инвестиции с достъп до кредити от утвърдени финансови институции.

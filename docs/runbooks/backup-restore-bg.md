@@ -1,6 +1,6 @@
 # Backup / Restore — практическо ръководство
 
-Този документ описва ежедневния backup процес на платформата P2P Invest и стъпките за теглене и възстановяване.
+Този документ описва ежедневния backup процес на платформата Vamaasset и стъпките за теглене и възстановяване.
 
 ---
 
@@ -98,7 +98,7 @@ scp -i ~/.ssh/id_ed25519_p2p \
 
 1. **Password manager** (1Password, Bitwarden, Apple Keychain, Google Password Manager).
 2. **Принтирана на хартия** в чекмеджето вкъщи / трезор.
-3. **На USB stick** в плик с надпис „P2P Invest backup decryption pass".
+3. **На USB stick** в плик с надпис „Vamaasset backup decryption pass".
 
 Ако загубиш паролата → backup-ите стават безполезни.
 Ако някой я открадне → backup файловете могат да се прочетат → не я споделяй никъде.

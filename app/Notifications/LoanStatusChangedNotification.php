@@ -28,11 +28,11 @@ class LoanStatusChangedNotification extends Notification
         $label = $statusLabels[$this->newStatus] ?? $this->newStatus;
 
         return (new MailMessage)
-            ->subject("Кредит #{$this->loanId} — статус: {$label} — P2P Invest")
+            ->subject("Кредит #{$this->loanId} — статус: {$label} — Vamaasset")
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line("Статусът на кредит #{$this->loanId}, в който имате инвестиция, е променен на \"{$label}\".")
             ->action('Виж портфолио', config('app.url') . '/portfolio')
-            ->salutation('Поздрави, екипът на P2P Invest');
+            ->salutation('Поздрави, екипът на Vamaasset');
     }
 
     public function toArray(object $notifiable): array

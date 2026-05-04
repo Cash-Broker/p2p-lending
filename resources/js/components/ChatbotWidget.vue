@@ -53,10 +53,10 @@ function sendFreeText() {
     <!-- Header -->
     <div class="flex items-center justify-between px-4 py-3 bg-navy-700 text-white shrink-0">
       <div class="flex items-center gap-2">
-        <div class="flex size-8 items-center justify-center rounded-lg bg-white/20 text-sm font-bold">P2</div>
+        <div class="flex size-8 items-center justify-center rounded-lg bg-white/20 text-sm font-bold">V</div>
         <div>
           <p class="text-sm font-semibold">Имате въпрос?</p>
-          <p class="text-xs text-navy-200">P2P Invest поддръжка</p>
+          <p class="text-xs text-navy-200">Vamaasset поддръжка</p>
         </div>
       </div>
       <button @click="isOpen = false" class="text-white/60 hover:text-white">

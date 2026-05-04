@@ -26,14 +26,14 @@ class RepaymentReceivedNotification extends Notification
         $total = bcadd($this->principalAmount, $this->interestAmount, 2);
 
         return (new MailMessage)
-            ->subject("Получено погашение — {$total} € — P2P Invest")
+            ->subject("Получено погашение — {$total} € — Vamaasset")
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line("Получихте погашение по кредит #{$this->loanId}.")
             ->line("Главница: {$this->principalAmount} €")
             ->line("Лихва: {$this->interestAmount} €")
             ->line("Общо: {$total} €")
             ->action('Виж портфолио', config('app.url') . '/portfolio')
-            ->salutation('Поздрави, екипът на P2P Invest');
+            ->salutation('Поздрави, екипът на Vamaasset');
     }
 
     public function toArray(object $notifiable): array

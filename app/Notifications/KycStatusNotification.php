@@ -21,21 +21,21 @@ class KycStatusNotification extends Notification
     {
         if ($this->status === 'approved') {
             return (new MailMessage)
-                ->subject('KYC верификация одобрена — P2P Invest')
+                ->subject('KYC верификация одобрена — Vamaasset')
                 ->greeting("Здравейте, {$notifiable->name}!")
                 ->line('Вашата KYC верификация е одобрена.')
                 ->line('Вече имате пълен достъп до платформата — можете да депозирате, инвестирате и теглите средства.')
                 ->action('Започни да инвестираш', config('app.url') . '/invest')
-                ->salutation('Поздрави, екипът на P2P Invest');
+                ->salutation('Поздрави, екипът на Vamaasset');
         }
 
         return (new MailMessage)
-            ->subject('KYC верификация отхвърлена — P2P Invest')
+            ->subject('KYC верификация отхвърлена — Vamaasset')
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line('Вашата KYC верификация е отхвърлена.')
             ->line('Моля, качете нов документ с по-добро качество на снимката.')
             ->action('Качи нов документ', config('app.url') . '/profile')
-            ->salutation('Поздрави, екипът на P2P Invest');
+            ->salutation('Поздрави, екипът на Vamaasset');
     }
 
     public function toArray(object $notifiable): array

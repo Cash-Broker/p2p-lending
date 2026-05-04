@@ -102,7 +102,7 @@ class EarlyRepaymentReceivedNotification extends Notification implements ShouldQ
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("Инвестиция #{$this->loan->id} е предсрочно погасена — P2P Invest")
+            ->subject("Инвестиция #{$this->loan->id} е предсрочно погасена — Vamaasset")
             ->markdown('emails.early-repayment-received', [
                 'name'              => $notifiable->name,
                 'loanId'            => $this->loan->id,

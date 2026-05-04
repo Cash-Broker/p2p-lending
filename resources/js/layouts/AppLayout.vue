@@ -98,8 +98,8 @@ async function logout() {
     >
       <!-- Logo -->
       <div class="h-16 flex items-center gap-2 px-5 border-b border-gray-100 shrink-0">
-        <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">P2</div>
-        <span class="text-lg font-bold text-navy-700">P2P Invest</span>
+        <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">V</div>
+        <span class="text-lg font-bold text-navy-700">Vamaa<span class="text-accent-400">sset</span></span>
       </div>
 
       <!-- Nav -->

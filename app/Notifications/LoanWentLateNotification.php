@@ -123,7 +123,7 @@ class LoanWentLateNotification extends Notification implements ShouldQueue
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("Инвестиция #{$this->loan->id} е в закъснение — P2P Invest")
+            ->subject("Инвестиция #{$this->loan->id} е в закъснение — Vamaasset")
             ->markdown('emails.loan-went-late', [
                 'name' => $notifiable->name,
                 'loanId' => $this->loan->id,

@@ -26,7 +26,7 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
-            ->brandName('P2P Invest Admin')
+            ->brandName('Vamaasset Admin')
             ->colors([
                 'primary' => Color::hex('#1B2A4A'),
                 'success' => Color::hex('#22C55E'),

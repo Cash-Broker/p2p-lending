@@ -20,12 +20,12 @@ class WithdrawalRejectedNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         $mail = (new MailMessage)
-            ->subject("Теглене отхвърлено — P2P Invest")
+            ->subject("Теглене отхвърлено — Vamaasset")
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line("Вашето теглене от {$this->amount} € е отхвърлено.");
         if ($this->reason) $mail->line("Причина: {$this->reason}");
         return $mail->line('Средствата са върнати в акаунта ви.')
-            ->salutation('Поздрави, екипът на P2P Invest');
+            ->salutation('Поздрави, екипът на Vamaasset');
     }
 
     public function toArray(object $notifiable): array

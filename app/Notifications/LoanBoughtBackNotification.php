@@ -105,7 +105,7 @@ class LoanBoughtBackNotification extends Notification implements ShouldQueue
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("Инвестиция #{$this->loan->id} е изкупена — P2P Invest")
+            ->subject("Инвестиция #{$this->loan->id} е изкупена — Vamaasset")
             ->markdown('emails.loan-bought-back', [
                 'name'              => $notifiable->name,
                 'loanId'            => $this->loan->id,

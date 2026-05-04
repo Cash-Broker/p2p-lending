@@ -30,8 +30,8 @@ async function submit() {
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
         <router-link to="/" class="inline-flex items-center gap-2">
-          <div class="flex size-10 items-center justify-center rounded-xl bg-navy-700 text-white text-sm font-bold">P2</div>
-          <span class="text-xl font-bold text-navy-700">P2P Invest</span>
+          <div class="flex size-10 items-center justify-center rounded-xl bg-navy-700 text-white text-sm font-bold">V</div>
+          <span class="text-xl font-bold text-navy-700">Vamaa<span class="text-accent-400">sset</span></span>
         </router-link>
       </div>
 

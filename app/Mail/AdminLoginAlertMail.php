@@ -48,7 +48,7 @@ class AdminLoginAlertMail extends Mailable implements ShouldQueue
             : '[Admin Login - NEW IP - VERIFY!]';
 
         return new Envelope(
-            subject: $tag . ' P2P Invest',
+            subject: $tag . ' Vamaasset',
         );
     }
 

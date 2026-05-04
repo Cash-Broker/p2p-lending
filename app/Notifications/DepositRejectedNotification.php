@@ -20,12 +20,12 @@ class DepositRejectedNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         $mail = (new MailMessage)
-            ->subject("Депозит отхвърлен — P2P Invest")
+            ->subject("Депозит отхвърлен — Vamaasset")
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line("Вашият депозит от {$this->amount} € е отхвърлен.");
         if ($this->reason) $mail->line("Причина: {$this->reason}");
         return $mail->line('Моля, свържете се с нас за повече информация.')
-            ->salutation('Поздрави, екипът на P2P Invest');
+            ->salutation('Поздрави, екипът на Vamaasset');
     }
 
     public function toArray(object $notifiable): array

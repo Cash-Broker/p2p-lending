@@ -4,8 +4,8 @@
       <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-8 py-12 sm:py-16">
         <div class="sm:col-span-2 lg:col-span-1">
           <div class="flex items-center gap-2 mb-4">
-            <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">P2</div>
-            <span class="text-lg font-bold text-navy-700">P2P Invest</span>
+            <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">V</div>
+            <span class="text-lg font-bold text-navy-700">Vamaa<span class="text-accent-400">sset</span></span>
           </div>
           <p class="text-sm text-gray-400 leading-relaxed">
             Платформа за peer-to-peer инвестиции в кредити от утвърдени финансови институции.
@@ -45,12 +45,12 @@
           <strong class="text-gray-500">Предупреждение за риск:</strong>
           Инвестирането в кредити носи риск. Инвестираните средства не са гарантирани от гаранционни схеми.
           Миналите резултати не са гаранция за бъдещи доходи. Не инвестирайте повече от 10% от нетното си богатство.
-          P2P Invest не предоставя инвестиционни съвети.
+          Vamaasset не предоставя инвестиционни съвети.
         </p>
       </div>
 
       <div class="border-t border-gray-100 py-5 flex flex-col sm:flex-row items-center justify-between gap-2">
-        <p class="text-xs text-gray-400">&copy; {{ new Date().getFullYear() }} P2P Invest. Всички права запазени.</p>
+        <p class="text-xs text-gray-400">&copy; {{ new Date().getFullYear() }} Vamaasset. Всички права запазени.</p>
         <p class="text-xs text-gray-400">Направено в България</p>
       </div>
     </div>

@@ -81,7 +81,7 @@ class BuybackEligibleAdminNotification extends Notification implements ShouldQue
     {
         $newly = $this->newlyEligibleCount;
         $subject = sprintf(
-            '[P2P Invest] %d %s buyback-eligible %s — Buyback Queue',
+            '[Vamaasset] %d %s buyback-eligible %s — Buyback Queue',
             $newly,
             $newly === 1 ? 'нов' : 'нови',
             $newly === 1 ? 'кредит' : 'кредита',
