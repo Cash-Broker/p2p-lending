@@ -31,9 +31,9 @@ class DepositController extends Controller
             'reference_code' => $deposit->reference_code,
             'expires_at' => $deposit->expires_at,
             'bank_details' => [
-                'bank_name' => 'P2P Invest Bank',
-                'iban' => 'BG80BNBG96611020345678',
-                'bic' => 'BNBGBGSD',
+                'bank_name' => 'Postbank',
+                'iban' => 'BG33BPBI79421429061401',
+                'bic' => 'BPBIBGSF',
                 'beneficiary' => 'P2P Invest ООД',
             ],
         ]);
