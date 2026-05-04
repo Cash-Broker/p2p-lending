@@ -34,7 +34,7 @@ class DepositController extends Controller
                 'bank_name' => 'Postbank',
                 'iban' => 'BG33BPBI79421429061401',
                 'bic' => 'BPBIBGSF',
-                'beneficiary' => 'P2P Invest ООД',
+                'beneficiary' => 'ВАМА АСЕТ ЕООД',
             ],
         ]);
     }
