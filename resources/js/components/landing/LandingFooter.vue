@@ -39,9 +39,17 @@ const auth = useAuthStore()
         <div>
           <p class="text-sm font-semibold text-navy-700 mb-4">Контакти</p>
           <ul class="space-y-2.5">
-            <li><span class="text-sm text-gray-500">info@p2pinvest.bg</span></li>
-            <li><span class="text-sm text-gray-500">+359 2 123 4567</span></li>
-            <li><span class="text-sm text-gray-500">София, България</span></li>
+            <!-- Phone + email withheld until the public-comms channel is signed off:
+              <li><span class="text-sm text-gray-500">info@p2pinvest.bg</span></li>
+              <li><span class="text-sm text-gray-500">+359 2 123 4567</span></li>
+            -->
+            <li>
+              <address class="text-sm text-gray-500 leading-relaxed not-italic">
+                БЪЛГАРИЯ, гр. Пловдив (4000),<br>
+                р-н Централен,<br>
+                ул. Капитан Райчо, 59, ет. 2, ап. 12
+              </address>
+            </li>
           </ul>
         </div>
       </div>
