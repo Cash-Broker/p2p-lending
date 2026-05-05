@@ -17,6 +17,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | SEO Indexability
+    |--------------------------------------------------------------------------
+    |
+    | Master switch for whether search engines and AI crawlers may index the
+    | site. Defaults to FALSE so a forgotten or fresh .env keeps the platform
+    | invisible — fail-safe. Flip to TRUE only at launch, after legal review,
+    | and confirm robots.txt is also flipped. The SecurityHeaders middleware
+    | reads this to set X-Robots-Tag, and app.blade.php reads it to flip the
+    | <meta name="robots"> tag.
+    |
+    */
+
+    'seo_indexable' => filter_var(env('SEO_INDEXABLE', false), FILTER_VALIDATE_BOOLEAN),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------
     |

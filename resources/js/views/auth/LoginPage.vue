@@ -2,6 +2,13 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import { useDocumentMeta } from '../../composables/useDocumentMeta'
+
+useDocumentMeta({
+  title: 'Вход',
+  description: 'Влезте в акаунта си в Vamaasset.',
+  path: '/login',
+})
 
 const route = useRoute()
 const router = useRouter()

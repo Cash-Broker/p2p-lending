@@ -23,3 +23,43 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pre-launch SEO + security headers.
+#
+# The X-Robots-Tag header is defence-in-depth on top of robots.txt and the
+# `<meta name="robots" content="noindex,nofollow">` in the HTML head — even
+# if one channel is misconfigured the other two still keep the platform out
+# of search results. REMOVE the X-Robots-Tag block at launch (and flip the
+# robots.txt and meta tag at the same time).
+# ─────────────────────────────────────────────────────────────────────────────
+<IfModule mod_headers.c>
+    # Hard noindex while pre-launch — hits every response, not just HTML.
+    Header set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
+
+    # Security baseline (safe defaults; tighten via dedicated CSP package).
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+
+    # HSTS — production only (don't accidentally pin localhost).
+    # Uncomment after first successful HTTPS deploy.
+    # Header set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+    # Aggressive caching for hashed build assets (Vite emits content-hashed
+    # filenames so far-future caching is safe).
+    <FilesMatch "\.(?:js|css|woff2?|ttf|eot|otf)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+    # Icons / manifest can be cached but not as aggressively (we'll edit the
+    # manifest more often than the build pipeline rebuilds JS).
+    <FilesMatch "\.(?:png|jpg|jpeg|gif|svg|ico|webp|webmanifest)$">
+        Header set Cache-Control "public, max-age=2592000"
+    </FilesMatch>
+</IfModule>
+
+# Compress text responses where mod_deflate is available.
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css text/javascript application/javascript application/json application/xml text/xml image/svg+xml
+</IfModule>

@@ -16,6 +16,9 @@ use Symfony\Component\HttpFoundation\Response;
  *   itself can introduce XSS vectors in some browsers
  * Strict-Transport-Security — forces HTTPS for 1 year (added only in production)
  * Permissions-Policy — disables camera, microphone, geolocation access
+ * X-Robots-Tag — pre-launch hard-block for search engines + AI crawlers.
+ *   Defence-in-depth on top of robots.txt and the noindex meta tag in HTML.
+ *   Toggle off via SEO_INDEXABLE=true in env at launch (after legal review).
  */
 class SecurityHeaders
 {
@@ -28,6 +31,14 @@ class SecurityHeaders
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
         $response->headers->set('X-XSS-Protection', '0');
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+        // Pre-launch crawler block. The env flag defaults to FALSE so the
+        // header stays in place even if someone forgets to copy the env var
+        // to a new server — fail-safe orientation. To go live, set
+        // SEO_INDEXABLE=true in the production .env and redeploy.
+        if (! config('app.seo_indexable', false)) {
+            $response->headers->set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+        }
 
         if (app()->isProduction()) {
             $response->headers->set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');

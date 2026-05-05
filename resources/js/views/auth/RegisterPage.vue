@@ -2,6 +2,13 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import { useDocumentMeta } from '../../composables/useDocumentMeta'
+
+useDocumentMeta({
+  title: 'Регистрация',
+  description: 'Създайте безплатен акаунт в Vamaasset за физически или юридически лица.',
+  path: '/register',
+})
 
 const router = useRouter()
 const auth = useAuthStore()

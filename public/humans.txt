@@ -1,0 +1,13 @@
+/* TEAM */
+
+Operator: ВАМА АСЕТ ЕООД
+ЕИК: 201035515
+Site: https://vamaasset.bg
+
+/* SITE */
+
+Last update: 2026-05-04
+Language: Български / Bulgarian
+Doctype: HTML5
+Standards: WCAG 2.1 AA (target)
+Components: Vue 3, Laravel 12, Filament 4, Tailwind CSS, MySQL

@@ -1,4 +1,5 @@
 <script setup>
+import { useDocumentMeta } from '../composables/useDocumentMeta'
 import LandingHeader from '../components/landing/LandingHeader.vue'
 import HeroSection from '../components/landing/HeroSection.vue'
 import StatsBar from '../components/landing/StatsBar.vue'
@@ -9,6 +10,12 @@ import OriginatorsSection from '../components/landing/OriginatorsSection.vue'
 import FaqSection from '../components/landing/FaqSection.vue'
 import CtaSection from '../components/landing/CtaSection.vue'
 import LandingFooter from '../components/landing/LandingFooter.vue'
+
+useDocumentMeta({
+  // Homepage uses the document defaults (set in app.blade.php), so we just
+  // pin the canonical path and let the title/description fall through.
+  path: '/',
+})
 </script>
 
 <template>

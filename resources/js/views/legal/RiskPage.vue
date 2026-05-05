@@ -1,5 +1,12 @@
 <script setup>
+import { useDocumentMeta } from '../../composables/useDocumentMeta'
 import LegalLayout from './LegalLayout.vue'
+
+useDocumentMeta({
+  title: 'Декларация за риска',
+  description: 'Съществените инвестиционни рискове при използване на Vamaasset, включително риск от пълна загуба на инвестираните средства.',
+  path: '/legal/risk',
+})
 </script>
 
 <template>

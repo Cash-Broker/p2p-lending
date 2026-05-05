@@ -1,5 +1,12 @@
 <script setup>
+import { useDocumentMeta } from '../../composables/useDocumentMeta'
 import LegalLayout from './LegalLayout.vue'
+
+useDocumentMeta({
+  title: 'Общи условия',
+  description: 'Общите условия и условията за ползване на платформата Vamaasset, в сила от 4 май 2026 г.',
+  path: '/legal/terms',
+})
 </script>
 
 <template>

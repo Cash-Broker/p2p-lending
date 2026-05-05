@@ -1,5 +1,12 @@
 <script setup>
+import { useDocumentMeta } from '../../composables/useDocumentMeta'
 import LegalLayout from './LegalLayout.vue'
+
+useDocumentMeta({
+  title: 'Политика за бисквитки',
+  description: 'Какви бисквитки използва Vamaasset, как се управляват и колко дълго се съхраняват.',
+  path: '/legal/cookies',
+})
 </script>
 
 <template>

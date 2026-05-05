@@ -1,0 +1,26 @@
+{
+  "name": "Vamaasset — P2P инвестиции в кредити",
+  "short_name": "Vamaasset",
+  "description": "Платформа за P2P инвестиции с достъп до кредити от утвърдени финансови институции. Прозрачност, диверсификация и контрол върху портфейла Ви.",
+  "lang": "bg-BG",
+  "scope": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#1B2A4A",
+  "background_color": "#FDFDFC",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

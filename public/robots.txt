@@ -1,4 +1,44 @@
+# Vamaasset — vamaasset.bg
+#
+# Pre-launch: ALL crawlers are blocked. The platform is not yet publicly
+# active and does not have regulatory authorisation for public solicitation,
+# so it must remain invisible to search engines until launch.
+#
+# At launch, replace this file with the post-launch version below the
+# `--- LAUNCH ---` divider. Do NOT loosen these rules without (a) updated
+# legal review and (b) confirming X-Robots-Tag header is also flipped off.
+
 User-agent: *
 Disallow: /
-Disallow: /admin
-Disallow: /filament
+
+# Block AI scrapers explicitly even during the closed period — some ignore
+# Disallow on the wildcard agent.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: PerplexityBot
+Disallow: /
+
+# --- LAUNCH ---
+# Uncomment and remove everything above on the day we go live.
+#
+# User-agent: *
+# Disallow: /admin
+# Disallow: /api
+# Disallow: /verify-email
+# Disallow: /reset-password
+# Allow: /
+#
+# Sitemap: https://vamaasset.bg/sitemap.xml

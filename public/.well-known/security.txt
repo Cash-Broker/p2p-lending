@@ -1,0 +1,8 @@
+# RFC 9116 — security disclosure contact for vamaasset.bg
+# Update Expires before the date below to avoid serving a stale policy.
+
+Contact: mailto:security@vamaasset.bg
+Expires: 2027-05-04T00:00:00.000Z
+Preferred-Languages: bg, en
+Canonical: https://vamaasset.bg/.well-known/security.txt
+Policy: https://vamaasset.bg/legal/privacy

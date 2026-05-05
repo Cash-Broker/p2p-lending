@@ -1,5 +1,12 @@
 <script setup>
+import { useDocumentMeta } from '../../composables/useDocumentMeta'
 import LegalLayout from './LegalLayout.vue'
+
+useDocumentMeta({
+  title: 'Политика за поверителност',
+  description: 'Как ВАМА АСЕТ ЕООД обработва лични данни — основания, цели, срокове, права на субектите и контакти за GDPR заявки.',
+  path: '/legal/privacy',
+})
 </script>
 
 <template>
