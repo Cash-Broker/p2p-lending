@@ -7,9 +7,9 @@ const mobileMenuOpen = ref(false)
 <template>
   <header class="fixed top-0 inset-x-0 z-50 bg-white/80 backdrop-blur-lg border-b border-gray-100">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-      <div class="flex h-24 items-center justify-between">
+      <div class="flex h-16 items-center justify-between">
         <a href="/" class="flex items-center" aria-label="Vamaasset — начална страница">
-          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-20 w-auto" width="80" height="80" />
+          <img :src="'/logo/logo-mark.png'" alt="Vamaasset" class="h-12 w-auto" width="56" height="48" />
         </a>
 
         <nav class="hidden md:flex items-center gap-8">

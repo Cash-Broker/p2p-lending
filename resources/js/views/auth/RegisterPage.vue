@@ -73,7 +73,7 @@ async function submit() {
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
         <router-link to="/" class="inline-flex items-center" aria-label="Vamaasset — начална страница">
-          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-32 w-auto" width="128" height="128" />
+          <img :src="'/logo/logo-mark.png'" alt="Vamaasset" class="h-20 w-auto" width="93" height="80" />
         </router-link>
       </div>
 
