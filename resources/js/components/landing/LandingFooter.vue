@@ -16,7 +16,6 @@
           <ul class="space-y-2.5">
             <li><a href="#how-it-works" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Как работи</a></li>
             <li><a href="#loans" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Кредити</a></li>
-            <li><a href="#originators" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Оригинатори</a></li>
             <li><a href="#faq" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Въпроси</a></li>
             <li><a href="#" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">За нас</a></li>
           </ul>

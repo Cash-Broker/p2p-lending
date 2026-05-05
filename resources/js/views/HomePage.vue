@@ -6,7 +6,12 @@ import StatsBar from '../components/landing/StatsBar.vue'
 import HowItWorks from '../components/landing/HowItWorks.vue'
 import WhyUs from '../components/landing/WhyUs.vue'
 import InvestmentOpportunities from '../components/landing/InvestmentOpportunities.vue'
-import OriginatorsSection from '../components/landing/OriginatorsSection.vue'
+// OriginatorsSection is intentionally NOT rendered on the public landing —
+// originator info (names, volumes, buyback policies) is gated behind
+// authentication. Authenticated investors see real originators on /invest
+// and /invest/:id. The component file is kept so it can be re-imported on
+// a "/originators" private page later if we add one.
+// import OriginatorsSection from '../components/landing/OriginatorsSection.vue'
 import FaqSection from '../components/landing/FaqSection.vue'
 import CtaSection from '../components/landing/CtaSection.vue'
 import LandingFooter from '../components/landing/LandingFooter.vue'
@@ -26,7 +31,7 @@ useDocumentMeta({
     <HowItWorks />
     <WhyUs />
     <InvestmentOpportunities />
-    <OriginatorsSection />
+    <!-- <OriginatorsSection /> auth-gated; see import block above -->
     <FaqSection />
     <CtaSection />
     <LandingFooter />
