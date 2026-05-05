@@ -97,9 +97,9 @@ async function logout() {
       :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
     >
       <!-- Logo -->
-      <div class="h-20 flex items-center px-5 border-b border-gray-100 shrink-0">
+      <div class="h-24 flex items-center px-5 border-b border-gray-100 shrink-0">
         <router-link to="/dashboard" class="flex items-center" aria-label="Vamaasset — табло">
-          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-16 w-auto" width="64" height="64" />
+          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-20 w-auto" width="80" height="80" />
         </router-link>
       </div>
 
@@ -142,7 +142,7 @@ async function logout() {
     <!-- Main area -->
     <div class="lg:pl-64">
       <!-- Top header -->
-      <header class="sticky top-0 z-30 h-20 bg-white/80 backdrop-blur-lg border-b border-gray-100 flex items-center justify-between px-4 sm:px-6 lg:px-8">
+      <header class="sticky top-0 z-30 h-24 bg-white/80 backdrop-blur-lg border-b border-gray-100 flex items-center justify-between px-4 sm:px-6 lg:px-8">
         <!-- Mobile hamburger -->
         <button aria-label="Отвори меню" class="lg:hidden flex items-center justify-center size-10 text-gray-600" @click="sidebarOpen = true">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>

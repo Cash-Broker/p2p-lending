@@ -21,7 +21,7 @@ async function resend() {
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
         <router-link to="/" class="inline-flex items-center" aria-label="Vamaasset — начална страница">
-          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-24 w-auto" width="96" height="96" />
+          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-32 w-auto" width="128" height="128" />
         </router-link>
       </div>
 

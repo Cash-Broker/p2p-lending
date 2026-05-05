@@ -4,7 +4,7 @@
       <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-8 py-12 sm:py-16">
         <div class="sm:col-span-2 lg:col-span-1">
           <div class="flex items-center mb-4">
-            <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-20 w-auto" width="80" height="80" />
+            <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-28 w-auto" width="112" height="112" />
           </div>
           <p class="text-sm text-gray-400 leading-relaxed">
             Платформа за peer-to-peer инвестиции в кредити от утвърдени финансови институции.
