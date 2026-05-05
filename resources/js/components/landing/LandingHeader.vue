@@ -18,6 +18,7 @@ const mobileMenuOpen = ref(false)
           <a href="#how-it-works" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Как работи</a>
           <a href="#advantages" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">За инвеститори</a>
           <a href="#loans" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Кредити</a>
+          <a v-if="auth.isAuthenticated" href="#originators" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Партньори</a>
           <a href="#faq" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Въпроси</a>
         </nav>
 
@@ -41,6 +42,7 @@ const mobileMenuOpen = ref(false)
         <a href="#how-it-works" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">Как работи</a>
         <a href="#advantages" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">За инвеститори</a>
         <a href="#loans" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">Кредити</a>
+        <a v-if="auth.isAuthenticated" href="#originators" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">Партньори</a>
         <a href="#faq" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">Въпроси</a>
         <div class="flex gap-3 pt-3 border-t border-gray-100 px-3">
           <template v-if="auth.isAuthenticated">

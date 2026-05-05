@@ -1,20 +1,22 @@
 <script setup>
 import { useDocumentMeta } from '../composables/useDocumentMeta'
+import { useAuthStore } from '../stores/auth'
 import LandingHeader from '../components/landing/LandingHeader.vue'
 import HeroSection from '../components/landing/HeroSection.vue'
 import StatsBar from '../components/landing/StatsBar.vue'
 import HowItWorks from '../components/landing/HowItWorks.vue'
 import WhyUs from '../components/landing/WhyUs.vue'
 import InvestmentOpportunities from '../components/landing/InvestmentOpportunities.vue'
-// OriginatorsSection is intentionally NOT rendered on the public landing —
-// originator info (names, volumes, buyback policies) is gated behind
-// authentication. Authenticated investors see real originators on /invest
-// and /invest/:id. The component file is kept so it can be re-imported on
-// a "/originators" private page later if we add one.
-// import OriginatorsSection from '../components/landing/OriginatorsSection.vue'
+// Originator names + buyback policies are commercial info we only want to
+// show to people who've passed the registration gate. Guests get the
+// non-originator version of the landing; authenticated users see the
+// originators block on the same scroll.
+import OriginatorsSection from '../components/landing/OriginatorsSection.vue'
 import FaqSection from '../components/landing/FaqSection.vue'
 import CtaSection from '../components/landing/CtaSection.vue'
 import LandingFooter from '../components/landing/LandingFooter.vue'
+
+const auth = useAuthStore()
 
 useDocumentMeta({
   // Homepage uses the document defaults (set in app.blade.php), so we just
@@ -31,7 +33,7 @@ useDocumentMeta({
     <HowItWorks />
     <WhyUs />
     <InvestmentOpportunities />
-    <!-- <OriginatorsSection /> auth-gated; see import block above -->
+    <OriginatorsSection v-if="auth.isAuthenticated" />
     <FaqSection />
     <CtaSection />
     <LandingFooter />

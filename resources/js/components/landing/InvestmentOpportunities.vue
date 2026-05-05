@@ -80,7 +80,7 @@ const loans = [
           <div class="flex items-start justify-between mb-4">
             <div>
               <h3 class="font-bold text-navy-700">{{ loan.type }}</h3>
-              <!-- Originator hidden: visible only after registration. -->
+              <p v-if="auth.isAuthenticated" class="text-sm text-gray-400 mt-0.5">{{ loan.originator }}</p>
             </div>
             <span
               class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold"
