@@ -6,6 +6,48 @@
 @source '../**/*.js';
 @source '../**/*.vue';
 
+/*
+ * Inter, self-hosted from public/fonts/inter/.
+ * Same source as Google Fonts (rsms/inter) but served from our origin so the
+ * strict CSP `font-src 'self'` holds and we don't leak visitor IPs to Google.
+ * `font-display: swap` shows fallback text immediately rather than a FOIT.
+ */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-SemiBold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url('/fonts/inter/Inter-ExtraBold.woff2') format('woff2');
+}
+
 a, button, [role="button"] {
   cursor: pointer;
 }

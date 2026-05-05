@@ -101,10 +101,13 @@
     </script>
     @endverbatim
 
-    {{-- Performance: preconnect to font origins (DNS + TLS handshake done early) --}}
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    {{--
+        Inter is self-hosted from /fonts/inter/ — see resources/css/app.css.
+        Preloading the regular weight (used everywhere) saves one round trip
+        on the first paint. The `crossorigin` attribute is required for fonts
+        even when same-origin or the preload is ignored.
+    --}}
+    <link rel="preload" href="/fonts/inter/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
 
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
