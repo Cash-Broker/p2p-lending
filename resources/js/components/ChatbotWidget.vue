@@ -53,8 +53,8 @@ function sendFreeText() {
     <!-- Header -->
     <div class="flex items-center justify-between px-4 py-3 bg-navy-700 text-white shrink-0">
       <div class="flex items-center gap-2">
-        <div class="flex size-8 items-center justify-center rounded-lg bg-white p-1">
-          <img :src="'/logo/logo.png'" alt="Vamaasset" class="size-full object-contain" width="32" height="32" />
+        <div class="flex size-10 items-center justify-center rounded-lg bg-white p-1">
+          <img :src="'/logo/logo.png'" alt="Vamaasset" class="size-full object-contain" width="40" height="40" />
         </div>
         <div>
           <p class="text-sm font-semibold">Имате въпрос?</p>
