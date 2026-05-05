@@ -74,7 +74,13 @@
         JSON-LD: Organization schema. When launch happens, fill in
         address, telephone, email, sameAs (social profiles) so Google's
         Knowledge Panel has rich data to render.
+
+        @verbatim is critical here — JSON-LD uses `@context` and `@type`
+        which Blade would otherwise parse as directive calls (`@context`
+        is a real Laravel directive since L11). Without the wrapper the
+        compiled view dies with `unexpected end of file, expecting endif`.
     --}}
+    @verbatim
     <script type="application/ld+json">
     {
         "@context": "https://schema.org",
@@ -93,6 +99,7 @@
         "knowsLanguage": ["bg-BG"]
     }
     </script>
+    @endverbatim
 
     {{-- Performance: preconnect to font origins (DNS + TLS handshake done early) --}}
     <link rel="preconnect" href="https://fonts.googleapis.com">
