@@ -1,4 +1,8 @@
 <script setup>
+import { useAuthStore } from '../../stores/auth'
+
+const auth = useAuthStore()
+
 const loans = [
   {
     type: 'Мостов кредит',
@@ -125,8 +129,8 @@ const loans = [
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="mr-1.5 size-4"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
             Напълно финансиран
           </div>
-          <router-link v-else to="/register" class="mt-5 flex items-center justify-center w-full py-2.5 text-sm font-semibold text-navy-700 border border-gray-200 rounded-xl hover:border-navy-200 hover:bg-navy-50 transition-colors">
-            Виж детайли
+          <router-link v-else :to="auth.isAuthenticated ? '/invest' : '/register'" class="mt-5 flex items-center justify-center w-full py-2.5 text-sm font-semibold text-navy-700 border border-gray-200 rounded-xl hover:border-navy-200 hover:bg-navy-50 transition-colors">
+            {{ auth.isAuthenticated ? 'Виж пазара' : 'Виж детайли' }}
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="ml-1.5 size-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
           </router-link>
         </div>

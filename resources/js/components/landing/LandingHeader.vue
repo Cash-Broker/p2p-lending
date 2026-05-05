@@ -1,6 +1,8 @@
 <script setup>
 import { ref } from 'vue'
+import { useAuthStore } from '../../stores/auth'
 
+const auth = useAuthStore()
 const mobileMenuOpen = ref(false)
 </script>
 
@@ -20,8 +22,13 @@ const mobileMenuOpen = ref(false)
         </nav>
 
         <div class="hidden md:flex items-center gap-3">
-          <router-link to="/login" class="text-sm font-medium text-navy-700 hover:text-navy-600 transition-colors px-4 py-2">Вход</router-link>
-          <router-link to="/register" class="text-sm font-medium text-white bg-navy-700 hover:bg-navy-600 transition-colors px-5 py-2 rounded-lg">Регистрация</router-link>
+          <template v-if="auth.isAuthenticated">
+            <router-link to="/dashboard" class="text-sm font-medium text-white bg-navy-700 hover:bg-navy-600 transition-colors px-5 py-2 rounded-lg">Към таблото</router-link>
+          </template>
+          <template v-else>
+            <router-link to="/login" class="text-sm font-medium text-navy-700 hover:text-navy-600 transition-colors px-4 py-2">Вход</router-link>
+            <router-link to="/register" class="text-sm font-medium text-white bg-navy-700 hover:bg-navy-600 transition-colors px-5 py-2 rounded-lg">Регистрация</router-link>
+          </template>
         </div>
 
         <button :aria-label="mobileMenuOpen ? 'Затвори меню' : 'Отвори меню'" class="md:hidden flex items-center justify-center size-10 text-gray-600" @click="mobileMenuOpen = !mobileMenuOpen">
@@ -36,8 +43,13 @@ const mobileMenuOpen = ref(false)
         <a href="#loans" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">Кредити</a>
         <a href="#faq" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">Въпроси</a>
         <div class="flex gap-3 pt-3 border-t border-gray-100 px-3">
-          <router-link to="/login" class="flex-1 text-center text-sm font-medium text-navy-700 border border-navy-700 px-4 py-2 rounded-lg">Вход</router-link>
-          <router-link to="/register" class="flex-1 text-center text-sm font-medium text-white bg-navy-700 px-4 py-2 rounded-lg">Регистрация</router-link>
+          <template v-if="auth.isAuthenticated">
+            <router-link to="/dashboard" class="flex-1 text-center text-sm font-medium text-white bg-navy-700 px-4 py-2 rounded-lg">Към таблото</router-link>
+          </template>
+          <template v-else>
+            <router-link to="/login" class="flex-1 text-center text-sm font-medium text-navy-700 border border-navy-700 px-4 py-2 rounded-lg">Вход</router-link>
+            <router-link to="/register" class="flex-1 text-center text-sm font-medium text-white bg-navy-700 px-4 py-2 rounded-lg">Регистрация</router-link>
+          </template>
         </div>
       </div>
     </div>
