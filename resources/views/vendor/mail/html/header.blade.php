@@ -1,9 +1,8 @@
 @props(['url'])
 <tr>
 <td class="header">
-<a href="{{ $url }}" style="display: inline-block;">
-<span style="display: inline-block; background-color: #1B2A4A; color: #ffffff; font-size: 14px; font-weight: bold; border-radius: 8px; padding: 6px 10px; margin-right: 6px; vertical-align: middle;">V</span>
-<span style="color: #1B2A4A; font-size: 19px; font-weight: bold; vertical-align: middle;">Vamaa<span style="color: #22C55E;">sset</span></span>
+<a href="{{ $url }}" style="display: inline-block; text-decoration: none;">
+<img src="{{ url('/logo/logo.png') }}" alt="Vamaasset" width="64" height="64" style="display: block; height: 64px; width: auto; max-width: 100%; border: 0; outline: none; text-decoration: none;">
 </a>
 </td>
 </tr>

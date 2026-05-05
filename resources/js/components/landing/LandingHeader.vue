@@ -8,9 +8,8 @@ const mobileMenuOpen = ref(false)
   <header class="fixed top-0 inset-x-0 z-50 bg-white/80 backdrop-blur-lg border-b border-gray-100">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
       <div class="flex h-16 items-center justify-between">
-        <a href="/" class="flex items-center gap-2">
-          <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">V</div>
-          <span class="text-lg font-bold text-navy-700">Vamaa<span class="text-accent-400">sset</span></span>
+        <a href="/" class="flex items-center" aria-label="Vamaasset — начална страница">
+          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-12 w-auto" width="48" height="48" />
         </a>
 
         <nav class="hidden md:flex items-center gap-8">

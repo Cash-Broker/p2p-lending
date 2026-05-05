@@ -29,9 +29,8 @@ async function submit() {
   <div class="min-h-screen flex items-center justify-center bg-gray-50 px-4">
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
-        <router-link to="/" class="inline-flex items-center gap-2">
-          <div class="flex size-10 items-center justify-center rounded-xl bg-navy-700 text-white text-sm font-bold">V</div>
-          <span class="text-xl font-bold text-navy-700">Vamaa<span class="text-accent-400">sset</span></span>
+        <router-link to="/" class="inline-flex items-center" aria-label="Vamaasset — начална страница">
+          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-16 w-auto" width="64" height="64" />
         </router-link>
       </div>
 

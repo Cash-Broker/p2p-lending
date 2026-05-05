@@ -97,9 +97,10 @@ async function logout() {
       :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
     >
       <!-- Logo -->
-      <div class="h-16 flex items-center gap-2 px-5 border-b border-gray-100 shrink-0">
-        <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">V</div>
-        <span class="text-lg font-bold text-navy-700">Vamaa<span class="text-accent-400">sset</span></span>
+      <div class="h-16 flex items-center px-5 border-b border-gray-100 shrink-0">
+        <router-link to="/dashboard" class="flex items-center" aria-label="Vamaasset — табло">
+          <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-12 w-auto" width="48" height="48" />
+        </router-link>
       </div>
 
       <!-- Nav -->

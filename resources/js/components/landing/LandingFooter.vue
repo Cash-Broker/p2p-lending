@@ -3,9 +3,8 @@
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
       <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-8 py-12 sm:py-16">
         <div class="sm:col-span-2 lg:col-span-1">
-          <div class="flex items-center gap-2 mb-4">
-            <div class="flex size-8 items-center justify-center rounded-lg bg-navy-700 text-white text-sm font-bold">V</div>
-            <span class="text-lg font-bold text-navy-700">Vamaa<span class="text-accent-400">sset</span></span>
+          <div class="flex items-center mb-4">
+            <img :src="'/logo/logo.png'" alt="Vamaasset" class="h-14 w-auto" width="56" height="56" />
           </div>
           <p class="text-sm text-gray-400 leading-relaxed">
             Платформа за peer-to-peer инвестиции в кредити от утвърдени финансови институции.
