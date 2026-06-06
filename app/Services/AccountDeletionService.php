@@ -87,6 +87,10 @@ class AccountDeletionService
             $user->notifications()->delete();
             $user->wallet()->delete();
 
+            // Revoke any API tokens so a stolen token can't keep acting as the
+            // now-anonymized account until its natural expiry.
+            $user->tokens()->delete();
+
             Log::info('Account anonymized successfully', ['user_id' => $userId]);
         });
     }

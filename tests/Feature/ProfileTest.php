@@ -78,6 +78,28 @@ class ProfileTest extends TestCase
             ->assertJson(['message' => 'Password changed successfully.']);
     }
 
+    public function test_change_password_revokes_existing_api_tokens(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'password' => bcrypt('OldPass123!'),
+        ]);
+        $user->wallet()->create();
+
+        // Simulate a previously-issued (potentially stolen) API token.
+        $user->createToken('mobile');
+        $this->assertSame(1, $user->tokens()->count());
+
+        $this->actingAs($user)->putJson('/api/profile/password', [
+            'current_password' => 'OldPass123!',
+            'password' => 'NewPass456!',
+            'password_confirmation' => 'NewPass456!',
+        ])->assertOk();
+
+        // The stolen token must not survive the password change.
+        $this->assertSame(0, $user->fresh()->tokens()->count());
+    }
+
     public function test_change_password_fails_wrong_current(): void
     {
         $user = User::factory()->create([

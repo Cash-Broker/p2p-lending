@@ -65,6 +65,9 @@ class ProcessRepayment extends Page
     {
         $data = $this->form->getState();
 
+        $principal = number_format((float) $data['principal_amount'], 2, '.', '');
+        $interest = number_format((float) $data['interest_amount'], 2, '.', '');
+
         // Duplicate guard — prevent double-posting same schedule
         if (! empty($data['amortization_schedule_id'])) {
             $schedule = \App\Models\AmortizationSchedule::find($data['amortization_schedule_id']);
@@ -74,18 +77,35 @@ class ProcessRepayment extends Page
                     ->danger()->send();
                 return;
             }
+
+            // Amount-vs-plan guard. The service marks the WHOLE schedule row
+            // 'paid' regardless of the amounts typed, so a fat-finger (e.g.
+            // 1000.00 instead of 100.00, or interest typed into the principal
+            // box) would over-/under-pay investors AND still close the
+            // installment as fully settled. Require the entered amounts to
+            // match the selected installment's planned principal/interest.
+            if ($schedule && (
+                bccomp($principal, (string) $schedule->principal, 2) !== 0
+                || bccomp($interest, (string) $schedule->interest, 2) !== 0
+            )) {
+                Notification::make()->title('Сумите не съвпадат с плана')
+                    ->body("Избраната вноска изисква главница {$schedule->principal} € и лихва {$schedule->interest} €. "
+                        . "Коригирайте сумите или изберете друга вноска.")
+                    ->danger()->send();
+                return;
+            }
         }
 
         try {
             app(RepaymentService::class)->processRepayment(
                 (int) $data['loan_id'],
-                number_format((float) $data['principal_amount'], 2, '.', ''),
-                number_format((float) $data['interest_amount'], 2, '.', ''),
+                $principal,
+                $interest,
                 $data['amortization_schedule_id'] ? (int) $data['amortization_schedule_id'] : null,
             );
 
             $loan = Loan::find($data['loan_id']);
-            $total = bcadd($data['principal_amount'], $data['interest_amount'], 2);
+            $total = bcadd($principal, $interest, 2);
 
             Notification::make()->title('Погашение обработено')
                 ->body("Кредит #{$loan->id}: {$total} € разпределени.")

@@ -184,13 +184,22 @@ class AuthController extends Controller
 
                 $user->save();
 
+                // Revoke all API tokens so a leaked/stolen bearer token does
+                // not survive a full forgot-password recovery (setRememberToken
+                // above already kills "remember me" cookies).
+                $user->tokens()->delete();
+
                 event(new PasswordReset($user));
             }
         );
 
         if ($status !== Password::PASSWORD_RESET) {
+            // Collapse all failure statuses (passwords.user vs passwords.token)
+            // into ONE generic message so the response can't be used to
+            // enumerate which emails exist — matching forgotPassword's
+            // enumeration-proof behaviour.
             throw ValidationException::withMessages([
-                'email' => [__($status)],
+                'email' => ['Невалиден или изтекъл линк за смяна на парола.'],
             ]);
         }
 

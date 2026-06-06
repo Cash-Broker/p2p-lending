@@ -32,9 +32,17 @@ class ProfileController extends Controller
 
     public function changePassword(ChangePasswordRequest $request): JsonResponse
     {
-        $request->user()->update([
+        $user = $request->user();
+
+        $user->update([
             'password' => Hash::make($request->password),
         ]);
+
+        // Revoke every Sanctum token so a stolen/leaked token cannot survive
+        // a password change — the whole point of changing a password after a
+        // suspected compromise is to lock the attacker out. The current
+        // session is preserved by the SPA cookie guard (not a token).
+        $user->tokens()->delete();
 
         return response()->json(['message' => 'Password changed successfully.']);
     }
