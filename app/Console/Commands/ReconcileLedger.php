@@ -41,14 +41,40 @@ class ReconcileLedger extends Command
                 $repayInterest = $sums[Transaction::TYPE_REPAYMENT_INTEREST] ?? '0.00';
                 $fees = $sums[Transaction::TYPE_FEE] ?? '0.00';
 
-                // Expected available+reserved = deposits - withdrawals - investments + repay_principal + repay_interest - fees
-                $credits = bcadd(bcadd($deposits, $repayPrincipal, 2), $repayInterest, 2);
+                // Buyback (F2) and early-repayment (F3) distributions move money
+                // through the SAME wallet buckets as scheduled repayments:
+                //   *_principal → invested → available  (like repayment_principal)
+                //   *_interest  → available + earned    (like repayment_interest)
+                // They MUST be folded into the reconciliation or every wallet that
+                // ever received a buyback / early repayment reports a permanent
+                // false mismatch — silencing the alert that guards real money.
+                $buybackPrincipal = $sums[Transaction::TYPE_BUYBACK_PRINCIPAL] ?? '0.00';
+                $buybackInterest = $sums[Transaction::TYPE_BUYBACK_INTEREST] ?? '0.00';
+                $earlyPrincipal = $sums[Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL] ?? '0.00';
+                $earlyInterest = $sums[Transaction::TYPE_EARLY_REPAYMENT_INTEREST] ?? '0.00';
+
+                // All principal-return types behave alike (invested → available);
+                // all interest types behave alike (→ available + earned).
+                $principalReturns = bcadd(bcadd($repayPrincipal, $buybackPrincipal, 2), $earlyPrincipal, 2);
+                $interestReturns = bcadd(bcadd($repayInterest, $buybackInterest, 2), $earlyInterest, 2);
+
+                // Expected available+reserved = deposits + all principal returns
+                //   + all interest returns - withdrawals - investments - fees
+                $credits = bcadd(bcadd($deposits, $principalReturns, 2), $interestReturns, 2);
                 $debits = bcadd(bcadd($withdrawals, $investments, 2), $fees, 2);
                 $expectedAvailablePlusReserved = bcsub($credits, $debits, 2);
                 $actualAvailablePlusReserved = bcadd($wallet->available, $wallet->reserved, 2);
 
-                $expectedInvested = bcsub($investments, $repayPrincipal, 2);
-                $expectedEarned = $repayInterest;
+                // Floor at zero to mirror WalletService's documented pro-rata
+                // clamp (DECISIONS.md P2-01): the last investor's invested bucket
+                // is clamped to 0 rather than going negative when cumulative
+                // principal returns exceed their original stake by 1–2 stotinki.
+                // Without this floor the clamp would itself trip a false mismatch.
+                $expectedInvested = bcsub($investments, $principalReturns, 2);
+                if (bccomp($expectedInvested, '0', 2) < 0) {
+                    $expectedInvested = '0.00';
+                }
+                $expectedEarned = $interestReturns;
 
                 $errors = [];
 

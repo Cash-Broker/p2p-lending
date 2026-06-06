@@ -8,6 +8,7 @@ use App\Listeners\TelegramFailedLoginAlert;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
@@ -21,6 +22,22 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Real-money safety net: every DB-level integrity guarantee on this
+        // platform — non-negative wallet CHECK constraints, transaction-ledger
+        // immutability triggers, audit-log immutability triggers — is
+        // MySQL/MariaDB-only and is silently SKIPPED on SQLite (see the
+        // `getDriverName() !== 'sqlite'` guards in the migrations). Running
+        // production on SQLite would therefore strip away the last line of
+        // defence against negative balances and a mutable ledger WITHOUT any
+        // error. Fail loudly at boot instead of discovering it after money moves.
+        if (app()->environment('production') && DB::getDriverName() === 'sqlite') {
+            throw new \RuntimeException(
+                'Refusing to boot in production on SQLite: wallet CHECK constraints and '
+                .'transaction/audit-log immutability triggers are MySQL/MariaDB-only and '
+                .'are skipped on SQLite. Configure a MySQL 8.0.16+ / MariaDB 10.2.1+ connection.'
+            );
+        }
+
         // Financial platform password policy — applies globally to Password::defaults()
         // which is used in RegisterRequest, reset password, and any future password fields.
         // Requirements: 8+ chars, mixed case, at least 1 number, at least 1 symbol.

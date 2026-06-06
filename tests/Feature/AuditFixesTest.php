@@ -361,6 +361,43 @@ class AuditFixesTest extends TestCase
         $this->assertEquals(1, $exitCode, 'Reconciliation should fail on corrupted data');
     }
 
+    /**
+     * Regression: buyback (F2) and early-repayment (F3) distributions move
+     * money through the same wallet buckets as scheduled repayments. Before
+     * the fix, ReconcileLedger ignored those four transaction types, so every
+     * wallet that ever received a buyback / early repayment reported a
+     * permanent FALSE mismatch — silencing the alert that guards real money.
+     *
+     * We build a fully-consistent ledger using WalletService (the documented
+     * single source of truth) and assert reconciliation stays clean.
+     */
+    public function test_ledger_reconciliation_accounts_for_buyback_and_early_repayment(): void
+    {
+        Notification::fake();
+
+        $wallet = app(\App\Services\WalletService::class);
+
+        // ── Investor A: receives an originator buyback ──
+        $a = $this->createVerifiedInvestor();
+        $wallet->credit($a->id, '200.00', Transaction::TYPE_DEPOSIT, 'Deposit', 'deposit_request:1');
+        $wallet->invest($a->id, '100.00', 'Investment in loan #1', 'investment:1');
+        // Originator honours the guarantee: principal back + interest.
+        $wallet->buybackPrincipal($a->id, '100.00', 'Buyback principal for loan #1', 'loan:1:buyback:user:'.$a->id);
+        $wallet->buybackInterest($a->id, '15.00', 'Buyback interest for loan #1', 'loan:1:buyback:user:'.$a->id);
+
+        // ── Investor B: receives an early repayment ──
+        $b = $this->createVerifiedInvestor();
+        $wallet->credit($b->id, '300.00', Transaction::TYPE_DEPOSIT, 'Deposit', 'deposit_request:2');
+        $wallet->invest($b->id, '250.00', 'Investment in loan #2', 'investment:2');
+        $wallet->earlyRepayPrincipal($b->id, '250.00', 'Early repayment principal for loan #2', 'loan:2:early_repayment:user:'.$b->id);
+        $wallet->earlyRepayInterest($b->id, '12.50', 'Early repayment interest for loan #2', 'loan:2:early_repayment:user:'.$b->id);
+
+        // Both wallets are internally consistent with their ledgers, so
+        // reconciliation must pass (exit 0). Pre-fix this returned 1.
+        $exitCode = Artisan::call('ledger:reconcile');
+        $this->assertEquals(0, $exitCode, 'Reconciliation must account for buyback + early-repayment transaction types');
+    }
+
     // ── Audit H4: audit_logs DB-level immutability ──
 
     public function test_audit_logs_db_trigger_blocks_update(): void
