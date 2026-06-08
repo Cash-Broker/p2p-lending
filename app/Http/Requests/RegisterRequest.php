@@ -25,6 +25,15 @@ class RegisterRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
+        // account_type is optional on the wire: when omitted (or blank) we
+        // default to an individual account, matching AuthController's fallback
+        // and the User model's default attribute. Keeps field-less individual
+        // registration working for older clients while Rule::in still rejects
+        // any explicitly-invalid value.
+        if (! $this->filled('account_type')) {
+            $this->merge(['account_type' => User::TYPE_INDIVIDUAL]);
+        }
+
         if (
             $this->input('account_type') === User::TYPE_LEGAL_ENTITY
             && ! $this->filled('name')

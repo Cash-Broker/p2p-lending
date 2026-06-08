@@ -79,6 +79,36 @@ class AuthTest extends TestCase
             ->assertJsonValidationErrors('password');
     }
 
+    public function test_registration_without_account_type_defaults_to_individual(): void
+    {
+        // account_type is optional on the wire — when omitted the API must
+        // default to an individual account (RegisterRequest + AuthController
+        // fallback). Guards the registration contract for clients that never
+        // send the field.
+        $response = $this->postJson('/api/register', $this->validRegistrationData([
+            'email' => 'noaccounttype@example.com',
+        ]));
+
+        $response->assertStatus(201);
+
+        $user = User::where('email', 'noaccounttype@example.com')->first();
+        $this->assertNotNull($user, 'User was not created');
+        $this->assertSame(User::TYPE_INDIVIDUAL, $user->account_type);
+    }
+
+    public function test_registration_rejects_invalid_account_type(): void
+    {
+        // Defaulting absent values to individual must not weaken the guard:
+        // an explicitly-invalid account_type is still rejected by Rule::in.
+        $response = $this->postJson('/api/register', $this->validRegistrationData([
+            'email' => 'badtype@example.com',
+            'account_type' => 'not_a_real_type',
+        ]));
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors('account_type');
+    }
+
     // ── Login ──
 
     public function test_user_can_login_with_correct_credentials(): void

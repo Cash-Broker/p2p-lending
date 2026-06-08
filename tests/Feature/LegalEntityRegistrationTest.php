@@ -142,11 +142,13 @@ class LegalEntityRegistrationTest extends TestCase
         $this->assertEquals(0, LegalEntityProfile::count());
     }
 
-    public function test_account_type_is_required(): void
+    public function test_omitting_account_type_defaults_to_individual(): void
     {
-        // Backward-compat probe: a request without account_type returns 422
-        // rather than silently defaulting. The frontend always sends it; this
-        // test pins the requirement so we notice if we ever relax it.
+        // Contract: account_type is optional on the wire. The frontend always
+        // sends it, but API clients that omit it must get an individual
+        // account — NOT a 422, and NOT the legal-entity path (no legal_name/
+        // eik requirement, no profile row). Rule::in still rejects a value
+        // that is present but invalid (see AuthTest).
         $response = $this->postJson('/api/register', [
             'name'                  => 'Legacy Client',
             'email'                 => 'legacy@example.com',
@@ -155,6 +157,12 @@ class LegalEntityRegistrationTest extends TestCase
             'terms_accepted'        => true,
         ]);
 
-        $response->assertStatus(422)->assertJsonValidationErrors(['account_type']);
+        $response->assertStatus(201);
+
+        $user = User::where('email', 'legacy@example.com')->first();
+        $this->assertNotNull($user);
+        $this->assertTrue($user->isIndividual());
+        $this->assertNull($user->legalEntityProfile);
+        $this->assertEquals(0, LegalEntityProfile::count());
     }
 }
