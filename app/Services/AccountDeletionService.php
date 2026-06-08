@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -28,6 +29,16 @@ class AccountDeletionService
                 'password' => ['Грешна парола.'],
             ]);
         }
+
+        // Capture the KYC document paths before the transaction nulls them, so
+        // we can erase the files from disk afterwards. We delete only AFTER the
+        // anonymization commits — a mid-transaction failure (e.g. active
+        // investments) must not destroy files for an account that still exists.
+        $kycFiles = array_filter([
+            $user->kyc_document_front_path,
+            $user->kyc_document_back_path,
+            $user->kyc_selfie_path,
+        ]);
 
         DB::transaction(function () use ($user) {
             $userId = $user->id;
@@ -79,7 +90,9 @@ class AccountDeletionService
                 'remember_token' => null,
                 'email_verified_at' => null,
                 'kyc_status' => 'pending',
-                'kyc_document_path' => null,
+                'kyc_document_front_path' => null,
+                'kyc_document_back_path' => null,
+                'kyc_selfie_path' => null,
             ])->save();
 
             $user->savedIbans()->delete();
@@ -89,5 +102,12 @@ class AccountDeletionService
 
             Log::info('Account anonymized successfully', ['user_id' => $userId]);
         });
+
+        // Right to erasure (GDPR Art. 17) extends to the stored ID-card scans
+        // and the selfie (biometric data, special category under Art. 9) —
+        // nulling the DB reference is not enough, the files must go too.
+        if ($kycFiles !== []) {
+            Storage::disk('local')->delete($kycFiles);
+        }
     }
 }

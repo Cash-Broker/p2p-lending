@@ -2,6 +2,7 @@
 
 namespace App\Filament\Widgets;
 
+use App\Filament\Resources\UserResource;
 use App\Models\DepositRequest;
 use App\Models\Loan;
 use App\Models\User;
@@ -28,6 +29,12 @@ class StatsOverview extends BaseWidget
             Stat::make('Активни кредити', Loan::where('status', Loan::STATUS_ACTIVE)->count())
                 ->icon('heroicon-o-document-text')
                 ->color('primary'),
+
+            Stat::make('Чакащи KYC', User::where('kyc_status', 'submitted')->count())
+                ->description('Лични карти за одобрение')
+                ->icon('heroicon-o-identification')
+                ->color('warning')
+                ->url(UserResource::getUrl('index', ['tableFilters' => ['kyc_status' => ['value' => 'submitted']]])),
 
             Stat::make('Чакащи депозити', DepositRequest::where('status', 'pending')->where('amount', '>', 0)->count())
                 ->icon('heroicon-o-arrow-down-tray')

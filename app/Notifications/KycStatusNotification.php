@@ -33,7 +33,7 @@ class KycStatusNotification extends Notification
             ->subject('KYC верификация отхвърлена — Vamaasset')
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line('Вашата KYC верификация е отхвърлена.')
-            ->line('Моля, качете нов документ с по-добро качество на снимката.')
+            ->line('Моля, качете нови снимки на личната си карта — и от двете страни (отпред и отзад) — с по-добро качество.')
             ->action('Качи нов документ', config('app.url') . '/profile')
             ->salutation('Поздрави, екипът на Vamaasset');
     }

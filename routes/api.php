@@ -70,6 +70,7 @@ Route::middleware('auth:sanctum')->group(function () {
         // Profile
         Route::get('/profile', [ProfileController::class, 'show']);
         Route::put('/profile', [ProfileController::class, 'update']);
+        Route::put('/profile/company', [ProfileController::class, 'updateCompany']);
         Route::put('/profile/password', [ProfileController::class, 'changePassword']);
         Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
             ->middleware('throttle:3,1');

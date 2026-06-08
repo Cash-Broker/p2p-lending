@@ -23,6 +23,25 @@ class UserResource extends Resource
     protected static ?string $modelLabel = 'Потребител';
     protected static ?int $navigationSort = 1;
 
+    // Always-visible reminder in the sidebar: how many users are waiting for
+    // KYC approval. Returns null (no badge) when there's nothing to action.
+    public static function getNavigationBadge(): ?string
+    {
+        $count = static::getModel()::where('kyc_status', 'submitted')->count();
+
+        return $count > 0 ? (string) $count : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'warning';
+    }
+
+    public static function getNavigationBadgeTooltip(): ?string
+    {
+        return 'Чакащи KYC верификации';
+    }
+
     public static function table(Table $table): Table
     {
         return $table
@@ -110,10 +129,16 @@ class UserResource extends Resource
             \Filament\Schemas\Components\Section::make('KYC документ')->schema([
                 Infolists\Components\TextEntry::make('kyc_status')->label('Статус')->badge()
                     ->color(fn (string $state) => match ($state) { 'approved' => 'success', 'submitted' => 'info', 'rejected' => 'danger', default => 'warning' }),
-                Infolists\Components\ViewEntry::make('kyc_document_path')->label('Документ')
+                Infolists\Components\ViewEntry::make('kyc_selfie_path')->label('Селфи за верификация')
                     ->view('filament.components.kyc-image')
                     ->columnSpanFull(),
-            ])->columns(2)->visible(fn ($record) => $record->kyc_document_path !== null),
+                Infolists\Components\ViewEntry::make('kyc_document_front_path')->label('Лицева страна (отпред)')
+                    ->view('filament.components.kyc-image')
+                    ->columnSpanFull(),
+                Infolists\Components\ViewEntry::make('kyc_document_back_path')->label('Гръб (отзад)')
+                    ->view('filament.components.kyc-image')
+                    ->columnSpanFull(),
+            ])->columns(2)->visible(fn ($record) => $record->kyc_document_front_path !== null || $record->kyc_selfie_path !== null),
         ]);
     }
 

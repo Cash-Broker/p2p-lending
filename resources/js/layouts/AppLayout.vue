@@ -69,6 +69,15 @@ function isActive(path) {
 
 const totalBalance = computed(() => auth.user?.wallet?.total ?? '0.00')
 
+// Legal entities should be identified by their company, not the contact person.
+const isLegalEntity = computed(() => auth.user?.account_type === 'legal_entity')
+const displayName = computed(() =>
+  isLegalEntity.value
+    ? (auth.user?.legal_entity_profile?.legal_name || auth.user?.name || '')
+    : (auth.user?.name || '')
+)
+const displayRole = computed(() => (isLegalEntity.value ? 'Юридическо лице' : 'Инвеститор'))
+
 const loggingOut = ref(false)
 
 async function logout() {
@@ -191,11 +200,11 @@ async function logout() {
           <!-- User info -->
           <div class="flex items-center gap-3">
             <div class="hidden sm:block text-right">
-              <p class="text-sm font-semibold text-navy-700 leading-tight">{{ auth.user?.name }}</p>
-              <p class="text-xs text-gray-400">Инвеститор</p>
+              <p class="text-sm font-semibold text-navy-700 leading-tight">{{ displayName }}</p>
+              <p class="text-xs text-gray-400">{{ displayRole }}</p>
             </div>
             <div class="flex size-9 items-center justify-center rounded-full bg-navy-700/10 text-navy-700 text-sm font-bold">
-              {{ auth.user?.name?.charAt(0) ?? '?' }}
+              {{ displayName?.charAt(0) ?? '?' }}
             </div>
           </div>
         </div>

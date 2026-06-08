@@ -95,7 +95,7 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Login successful.',
-            'user' => new UserResource($request->user()->load('wallet')),
+            'user' => new UserResource($request->user()->load(['wallet', 'legalEntityProfile'])),
         ]);
     }
 
@@ -147,7 +147,7 @@ class AuthController extends Controller
 
     public function user(Request $request): JsonResponse
     {
-        return response()->json(new UserResource($request->user()->load('wallet')));
+        return response()->json(new UserResource($request->user()->load(['wallet', 'legalEntityProfile'])));
     }
 
     public function forgotPassword(Request $request): JsonResponse

@@ -28,7 +28,9 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
         'email',
         'password',
         'phone',
-        'kyc_document_path',
+        'kyc_document_front_path',
+        'kyc_document_back_path',
+        'kyc_selfie_path',
         'account_type',
     ];
 

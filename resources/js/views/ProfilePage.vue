@@ -3,16 +3,32 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api/axios'
 import { useAuthStore } from '../stores/auth'
+import SelfieCapture from '../components/SelfieCapture.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
 const loading = ref(true)
 
-// Profile form
+const isLegalEntity = computed(() => auth.user?.account_type === 'legal_entity')
+
+// Profile form (for legal entities this is the contact person)
 const profile = ref({ name: '', phone: '' })
 const profileErrors = ref({})
 const profileLoading = ref(false)
 const profileSuccess = ref(false)
+
+// Company profile (legal entities only). legal_name + eik are read-only
+// identity — shown but never sent back; only the operational fields are editable.
+const company = ref({
+  legal_name: '', eik: '',
+  legal_form: '', vat_number: '',
+  address_country: 'BG', address_city: '', address_postcode: '', address_street: '',
+  company_email: '', company_phone: '',
+})
+const companyErrors = ref({})
+const companyLoading = ref(false)
+const companySuccess = ref(false)
+const legalForms = { EOOD: 'ЕООД', OOD: 'ООД', AD: 'АД', EAD: 'ЕАД', ADSITZ: 'АДСИЦ', ET: 'ЕТ', KOOPERATSIYA: 'Кооперация', DRUGO: 'Друго' }
 
 // Password form
 const passwordForm = ref({ current_password: '', password: '', password_confirmation: '' })
@@ -20,10 +36,13 @@ const passwordErrors = ref({})
 const passwordLoading = ref(false)
 const passwordSuccess = ref(false)
 
-// KYC
-const kycFile = ref(null)
+// KYC — both sides of the ID card + a live selfie are required
+const kycFrontFile = ref(null)
+const kycBackFile = ref(null)
+const kycSelfieFile = ref(null)
 const kycLoading = ref(false)
 const kycError = ref(null)
+const kycErrors = ref({})
 const kycSuccess = ref(false)
 
 // IBANs
@@ -56,8 +75,41 @@ async function loadData() {
     ])
     profile.value = { name: profileRes.data.name, phone: profileRes.data.phone || '' }
     ibans.value = ibansRes.data.data
+
+    const lep = profileRes.data.legal_entity_profile
+    if (lep) {
+      company.value = {
+        legal_name: lep.legal_name ?? '',
+        eik: lep.eik ?? '',
+        legal_form: lep.legal_form ?? '',
+        vat_number: lep.vat_number ?? '',
+        address_country: lep.address_country ?? 'BG',
+        address_city: lep.address_city ?? '',
+        address_postcode: lep.address_postcode ?? '',
+        address_street: lep.address_street ?? '',
+        company_email: lep.company_email ?? '',
+        company_phone: lep.company_phone ?? '',
+      }
+    }
   } finally {
     loading.value = false
+  }
+}
+
+async function updateCompany() {
+  companyErrors.value = {}
+  companyLoading.value = true
+  companySuccess.value = false
+  try {
+    // legal_name + eik are read-only identity — never sent back.
+    const { legal_name, eik, ...editable } = company.value
+    await api.put('/profile/company', editable)
+    await auth.fetchUser()
+    companySuccess.value = true
+  } catch (e) {
+    if (e.response?.status === 422) companyErrors.value = e.response.data.errors || {}
+  } finally {
+    companyLoading.value = false
   }
 }
 
@@ -91,23 +143,36 @@ async function changePassword() {
   }
 }
 
-function onFileChange(e) {
-  kycFile.value = e.target.files[0] || null
+function onFileChange(e, side) {
+  const file = e.target.files[0] || null
+  if (side === 'front') kycFrontFile.value = file
+  else kycBackFile.value = file
+}
+
+function onSelfieCaptured(file) {
+  kycSelfieFile.value = file
 }
 
 async function submitKyc() {
-  if (!kycFile.value) return
+  if (!kycFrontFile.value || !kycBackFile.value || !kycSelfieFile.value) return
   kycLoading.value = true
   kycError.value = null
+  kycErrors.value = {}
   kycSuccess.value = false
   try {
     const formData = new FormData()
-    formData.append('document', kycFile.value)
+    formData.append('document_front', kycFrontFile.value)
+    formData.append('document_back', kycBackFile.value)
+    formData.append('selfie', kycSelfieFile.value)
     await api.post('/profile/kyc', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
     kycSuccess.value = true
     await auth.fetchUser()
   } catch (e) {
-    kycError.value = e.response?.data?.message || 'Грешка при изпращане.'
+    if (e.response?.status === 422 && e.response.data.errors) {
+      kycErrors.value = e.response.data.errors
+    } else {
+      kycError.value = e.response?.data?.message || 'Грешка при изпращане.'
+    }
   } finally {
     kycLoading.value = false
   }
@@ -165,15 +230,88 @@ onMounted(() => loadData())
 
     <template v-else>
       <div class="grid lg:grid-cols-2 gap-6">
-        <!-- Personal info -->
+        <!-- Company details (legal entity only) -->
+        <div v-if="isLegalEntity" class="lg:col-span-2 rounded-2xl border border-gray-100 bg-white p-6">
+          <h2 class="text-base font-bold text-navy-700 mb-1">Фирмени данни</h2>
+          <p class="text-sm text-gray-500 mb-4">Данни на юридическото лице. Името на фирмата и ЕИК са заключени — за корекция се свържете с поддръжка.</p>
+
+          <div v-if="companySuccess" class="rounded-xl bg-green-50 border border-green-200 p-3 text-sm text-green-700 mb-4">Фирмените данни са запазени.</div>
+
+          <form @submit.prevent="updateCompany" class="grid sm:grid-cols-2 gap-4">
+            <!-- Read-only identity -->
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">Име на фирмата</label>
+              <input :value="company.legal_name" disabled class="w-full px-4 py-2.5 rounded-xl border border-gray-100 bg-gray-50 text-sm text-gray-500" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">ЕИК</label>
+              <input :value="company.eik" disabled class="w-full px-4 py-2.5 rounded-xl border border-gray-100 bg-gray-50 text-sm text-gray-500 font-mono" />
+            </div>
+
+            <!-- Editable company fields -->
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">Правна форма</label>
+              <select v-model="company.legal_form" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="companyErrors.legal_form ? 'border-red-400' : ''">
+                <option value="">—</option>
+                <option v-for="(label, key) in legalForms" :key="key" :value="key">{{ label }}</option>
+              </select>
+              <p v-if="companyErrors.legal_form" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ companyErrors.legal_form[0] }}</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">ДДС номер</label>
+              <input v-model="company.vat_number" type="text" placeholder="BG123456789" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="companyErrors.vat_number ? 'border-red-400' : ''" />
+              <p v-if="companyErrors.vat_number" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ companyErrors.vat_number[0] }}</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">Държава</label>
+              <input v-model="company.address_country" type="text" maxlength="2" placeholder="BG" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="companyErrors.address_country ? 'border-red-400' : ''" />
+              <p v-if="companyErrors.address_country" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ companyErrors.address_country[0] }}</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">Град</label>
+              <input v-model="company.address_city" type="text" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="companyErrors.address_city ? 'border-red-400' : ''" />
+              <p v-if="companyErrors.address_city" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ companyErrors.address_city[0] }}</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">Пощенски код</label>
+              <input v-model="company.address_postcode" type="text" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="companyErrors.address_postcode ? 'border-red-400' : ''" />
+              <p v-if="companyErrors.address_postcode" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ companyErrors.address_postcode[0] }}</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">Адрес (улица, №)</label>
+              <input v-model="company.address_street" type="text" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="companyErrors.address_street ? 'border-red-400' : ''" />
+              <p v-if="companyErrors.address_street" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ companyErrors.address_street[0] }}</p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">Имейл на фирмата</label>
+              <input v-model="company.company_email" type="email" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="companyErrors.company_email ? 'border-red-400' : ''" />
+              <p v-if="companyErrors.company_email" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ companyErrors.company_email[0] }}</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-navy-700 mb-1">Телефон на фирмата</label>
+              <input v-model="company.company_phone" type="tel" placeholder="+359..." class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="companyErrors.company_phone ? 'border-red-400' : ''" />
+              <p v-if="companyErrors.company_phone" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ companyErrors.company_phone[0] }}</p>
+            </div>
+
+            <div class="sm:col-span-2">
+              <button type="submit" :disabled="companyLoading" class="w-full sm:w-auto px-6 py-2.5 bg-navy-700 hover:bg-navy-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
+                {{ companyLoading ? 'Запазване...' : 'Запази фирмените данни' }}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Personal info (individual) / Contact person (legal entity) -->
         <div class="rounded-2xl border border-gray-100 bg-white p-6">
-          <h2 class="text-base font-bold text-navy-700 mb-4">Лични данни</h2>
+          <h2 class="text-base font-bold text-navy-700 mb-4">{{ isLegalEntity ? 'Контактно лице' : 'Лични данни' }}</h2>
 
           <div v-if="profileSuccess" class="rounded-xl bg-green-50 border border-green-200 p-3 text-sm text-green-700 mb-4">Промените са запазени.</div>
 
           <form @submit.prevent="updateProfile" class="space-y-4">
             <div>
-              <label class="block text-sm font-medium text-navy-700 mb-1">Име</label>
+              <label class="block text-sm font-medium text-navy-700 mb-1">{{ isLegalEntity ? 'Име на контактно лице' : 'Име' }}</label>
               <input v-model="profile.name" type="text" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400" :class="profileErrors.name ? 'border-red-400' : ''" />
               <p v-if="profileErrors.name" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ profileErrors.name[0] }}</p>
             </div>
@@ -222,12 +360,40 @@ onMounted(() => loadData())
 
           <!-- Pending / Rejected — show upload form -->
           <div v-else>
-            <p class="text-sm text-gray-500 mb-4">
-              {{ kycStatus === 'rejected' ? 'Документът ви е отхвърлен. Моля, изпратете нов.' : 'Качете снимка на лична карта за верификация.' }}
+            <p class="text-sm text-gray-500 mb-3">
+              {{ kycStatus === 'rejected' ? 'Верификацията ви е отхвърлена. Моля, изпратете нови снимки и селфи.' : 'За да потвърдим самоличността ви, качете личната си карта и направете селфи на живо.' }}
             </p>
+
+            <!-- All three are mandatory -->
+            <div class="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700 mb-4 flex gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 shrink-0 mt-0.5"><path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
+              <span>Необходими са <strong>три неща</strong> — лицевата страна (<strong>отпред</strong>) и гърбът (<strong>отзад</strong>) на личната карта, и <strong>селфи на живо</strong>, на което ясно се вижда лицето ви.</span>
+            </div>
+
             <div v-if="kycError" class="rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{{ kycError }}</div>
-            <input type="file" accept="image/*" @change="onFileChange" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm mb-4" />
-            <button @click="submitKyc" :disabled="!kycFile || kycLoading" class="w-full py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
+
+            <!-- Front side -->
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-navy-700 mb-1">1. Лицева страна на личната карта (отпред)</label>
+              <input type="file" accept="image/*,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <p v-if="kycErrors.document_front" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_front[0] }}</p>
+            </div>
+
+            <!-- Back side -->
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-navy-700 mb-1">2. Гръб на личната карта (отзад)</label>
+              <input type="file" accept="image/*,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <p v-if="kycErrors.document_back" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_back[0] }}</p>
+            </div>
+
+            <!-- Live selfie -->
+            <div class="mb-4">
+              <label class="block text-sm font-medium text-navy-700 mb-1">3. Селфи на живо</label>
+              <SelfieCapture @captured="onSelfieCaptured" />
+              <p v-if="kycErrors.selfie" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.selfie[0] }}</p>
+            </div>
+
+            <button @click="submitKyc" :disabled="!kycFrontFile || !kycBackFile || !kycSelfieFile || kycLoading" class="w-full py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
               {{ kycLoading ? 'Изпращане...' : 'Изпрати за верификация' }}
             </button>
           </div>
