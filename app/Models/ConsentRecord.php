@@ -13,8 +13,15 @@ class ConsentRecord extends Model
     const TYPE_PRIVACY = 'privacy_policy';
     const TYPE_RISK = 'risk_disclosure';
 
-    const CURRENT_TERMS_VERSION = 'v1.0';
-    const CURRENT_PRIVACY_VERSION = 'v1.0';
+    // Bumped to v1.1 (2026-06-09): Terms + Privacy revised to disclose the live
+    // biometric selfie (GDPR Art. 9), the front/back ID requirement, KYC file
+    // erasure, and legal-entity onboarding. Risk disclosure is unchanged.
+    // NOTE: existing users are NOT re-prompted yet — registration records
+    // consent once and nothing compares stored vs. current version. A
+    // re-consent gate is required before this is lawfully effective for
+    // already-registered users (esp. the Art. 9 biometric consent).
+    const CURRENT_TERMS_VERSION = 'v1.1';
+    const CURRENT_PRIVACY_VERSION = 'v1.1';
     const CURRENT_RISK_VERSION = 'v1.0';
 
     protected $fillable = [

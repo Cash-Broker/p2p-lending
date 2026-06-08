@@ -1,17 +1,33 @@
 <script setup>
-import { ref, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 
-// Camera-only selfie capture. There is intentionally NO file-upload fallback:
-// the whole point of the selfie is liveness, so a user without camera access
-// simply cannot provide one (rather than uploading an old/3rd-party photo).
+// Camera-only selfie capture with live face guidance. There is intentionally NO
+// file-upload fallback: the point of the selfie is liveness.
+//
+// The framing guide is generous (a large portrait oval, not a tight circle) and
+// — where the browser exposes the native FaceDetector API — a box tracks the
+// face in real time and the guide turns green. Detection is GUIDANCE ONLY: it
+// never blocks the shutter, so a missed detection (glasses, lighting, an
+// unsupported browser) can't trap the user.
 const emit = defineEmits(['captured'])
 
 const video = ref(null)
+const overlay = ref(null)
 const canvas = ref(null)
 const stream = ref(null)
 const state = ref('idle') // idle | starting | live | captured | error
 const previewUrl = ref(null)
 const errorMsg = ref(null)
+const faceDetected = ref(false)
+
+const detectorSupported = typeof window !== 'undefined' && 'FaceDetector' in window
+let detector = null
+let detectTimer = null
+
+const statusText = computed(() => {
+  if (!detectorSupported) return 'Центрирайте лицето си в рамката и натиснете „Снимай".'
+  return faceDetected.value ? 'Лицето е в кадър — можете да снимате.' : 'Позиционирайте лицето си в рамката…'
+})
 
 async function start() {
   errorMsg.value = null
@@ -33,13 +49,75 @@ async function start() {
       video.value.srcObject = stream.value
       await video.value.play()
     }
+    startDetection()
   } catch {
     state.value = 'error'
     errorMsg.value = 'Няма достъп до камерата. Разрешете достъпа в браузъра и опитайте отново — без камера не може да направите селфи.'
   }
 }
 
+function startDetection() {
+  if (!detectorSupported) return
+  try {
+    detector = detector || new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 })
+  } catch {
+    detector = null
+    return
+  }
+
+  const tick = async () => {
+    if (state.value !== 'live' || !detector) return
+    const v = video.value
+    const c = overlay.value
+    if (v && c && v.videoWidth) {
+      if (c.width !== v.videoWidth) {
+        c.width = v.videoWidth
+        c.height = v.videoHeight
+      }
+      try {
+        const faces = await detector.detect(v)
+        faceDetected.value = faces.length > 0
+        drawFaces(c, faces)
+      } catch {
+        // FaceDetector can throw intermittently — skip this frame.
+      }
+    }
+    detectTimer = setTimeout(tick, 160) // ~6fps is plenty for a guide overlay
+  }
+  tick()
+}
+
+function drawFaces(c, faces) {
+  const ctx = c.getContext('2d')
+  ctx.clearRect(0, 0, c.width, c.height)
+  ctx.strokeStyle = 'rgba(74, 222, 128, 0.95)' // green-400
+  ctx.lineWidth = Math.max(3, c.width * 0.006)
+  for (const f of faces) {
+    const b = f.boundingBox
+    const r = Math.min(b.width, b.height) * 0.18
+    ctx.beginPath()
+    ctx.moveTo(b.x + r, b.y)
+    ctx.arcTo(b.x + b.width, b.y, b.x + b.width, b.y + b.height, r)
+    ctx.arcTo(b.x + b.width, b.y + b.height, b.x, b.y + b.height, r)
+    ctx.arcTo(b.x, b.y + b.height, b.x, b.y, r)
+    ctx.arcTo(b.x, b.y, b.x + b.width, b.y, r)
+    ctx.closePath()
+    ctx.stroke()
+  }
+}
+
+function stopDetection() {
+  if (detectTimer) {
+    clearTimeout(detectTimer)
+    detectTimer = null
+  }
+  faceDetected.value = false
+  const c = overlay.value
+  if (c) c.getContext('2d')?.clearRect(0, 0, c.width, c.height)
+}
+
 function stop() {
+  stopDetection()
   if (stream.value) {
     stream.value.getTracks().forEach((t) => t.stop())
     stream.value = null
@@ -56,7 +134,7 @@ function capture() {
   c.width = w
   c.height = h
 
-  // Mirror the capture so the saved image matches the selfie preview the user saw.
+  // Mirror so the saved image matches the selfie preview the user saw.
   const ctx = c.getContext('2d')
   ctx.translate(w, 0)
   ctx.scale(-1, 1)
@@ -93,8 +171,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="rounded-2xl border border-gray-200 overflow-hidden">
-    <!-- Viewport -->
-    <div class="relative aspect-[4/3] bg-navy-900 flex items-center justify-center">
+    <!-- Viewport: portrait on phones so a face fits comfortably -->
+    <div class="relative aspect-[3/4] sm:aspect-[4/3] bg-navy-900 flex items-center justify-center">
       <!-- Live video (mirrored like a selfie) -->
       <video
         ref="video"
@@ -106,12 +184,28 @@ onBeforeUnmount(() => {
         style="transform: scaleX(-1);"
       ></video>
 
-      <!-- Face guide -->
+      <!-- Live face-tracking overlay (only where FaceDetector exists) -->
+      <canvas
+        ref="overlay"
+        v-show="state === 'live' && detectorSupported"
+        class="absolute inset-0 w-full h-full object-cover pointer-events-none"
+        style="transform: scaleX(-1);"
+      ></canvas>
+
+      <!-- Framing guide + status (live) -->
       <template v-if="state === 'live'">
         <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div class="size-44 sm:size-52 rounded-full border-2 border-dashed border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"></div>
+          <div
+            class="h-[80%] aspect-[3/4] rounded-[50%] border-2 border-dashed transition-colors duration-300"
+            :class="faceDetected ? 'border-green-400 shadow-[0_0_30px_rgba(74,222,128,0.45)]' : 'border-white/60'"
+          ></div>
         </div>
-        <p class="absolute bottom-2 inset-x-0 text-center text-xs text-white/90 pointer-events-none">Позиционирайте лицето си в кръга</p>
+        <div class="absolute top-3 inset-x-0 flex justify-center px-3 pointer-events-none">
+          <span
+            class="px-3 py-1 rounded-full text-xs font-medium backdrop-blur transition-colors"
+            :class="faceDetected ? 'bg-green-500/90 text-white' : 'bg-black/45 text-white'"
+          >{{ statusText }}</span>
+        </div>
       </template>
 
       <!-- Captured preview -->
@@ -146,7 +240,8 @@ onBeforeUnmount(() => {
         v-else-if="state === 'live'"
         type="button"
         @click="capture"
-        class="flex items-center gap-2 px-6 py-2.5 bg-accent-400 hover:bg-accent-500 text-white text-sm font-semibold rounded-xl transition-colors"
+        class="flex items-center gap-2 px-6 py-2.5 bg-accent-400 hover:bg-accent-500 text-white text-sm font-semibold rounded-xl transition-all"
+        :class="faceDetected ? 'ring-2 ring-green-300 ring-offset-1' : ''"
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-5"><path d="M12 9a3.75 3.75 0 1 0 0 7.5A3.75 3.75 0 0 0 12 9Z" /><path fill-rule="evenodd" d="M9.344 3.071a49.52 49.52 0 0 1 5.312 0c.967.052 1.83.585 2.332 1.39l.821 1.317c.24.383.645.643 1.11.71.386.054.77.113 1.152.177 1.432.239 2.429 1.493 2.429 2.909V18a3 3 0 0 1-3 3h-15a3 3 0 0 1-3-3V9.574c0-1.416.997-2.67 2.429-2.909.382-.064.766-.123 1.151-.178a1.56 1.56 0 0 0 1.11-.71l.822-1.315a2.942 2.942 0 0 1 2.332-1.39ZM6.75 12.75a5.25 5.25 0 1 1 10.5 0 5.25 5.25 0 0 1-10.5 0Z" clip-rule="evenodd" /></svg>
         Снимай
