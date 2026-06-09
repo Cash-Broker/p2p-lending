@@ -60,6 +60,22 @@ class LoanResource extends Resource
         return $borrower->getKey();
     }
 
+    /**
+     * In-memory borrower search. full_name is encrypted at rest, so a SQL LIKE
+     * can't match it — we hydrate (decrypt) and filter in PHP. Inline creation
+     * keeps the borrower list small, so loading a bounded set is fine.
+     *
+     * @return array<int, string>
+     */
+    protected static function searchBorrowers(string $search): array
+    {
+        return Borrower::query()->latest('id')->limit(300)->get()
+            ->filter(fn (Borrower $borrower) => mb_stripos((string) $borrower->full_name, $search) !== false)
+            ->take(50)
+            ->mapWithKeys(fn (Borrower $borrower) => [$borrower->id => (string) $borrower->full_name])
+            ->all();
+    }
+
     public static function form(Schema $form): Schema
     {
         return $form->schema([
@@ -68,18 +84,29 @@ class LoanResource extends Resource
                     ->options(Originator::pluck('name', 'id'))
                     ->required()->searchable()
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                // Relationship-backed so Filament renders the "+ Създай" inline
+                // create button. full_name is encrypted → decrypt labels via
+                // getOptionLabelFromRecordUsing and search in-memory.
                 Forms\Components\Select::make('borrower_id')->label('Кредитополучател')
-                    ->options(fn () => Borrower::all()->pluck('full_name', 'id'))
-                    ->required()->searchable()
-                    // Create a borrower on the spot — no need to pre-create one.
+                    ->relationship('borrower', 'full_name')
+                    ->getOptionLabelFromRecordUsing(fn (Borrower $record) => $record->full_name)
+                    ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchBorrowers($search))
+                    ->preload()
+                    ->required()
                     ->createOptionForm(self::borrowerInlineForm())
+                    ->createOptionModalHeading('Нов кредитополучател')
                     ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
                 Forms\Components\Select::make('co_borrower_id')->label('Съдлъжник')
                     ->helperText('По избор. Може да се добави на момента.')
-                    ->options(fn () => Borrower::all()->pluck('full_name', 'id'))
+                    ->relationship('coBorrower', 'full_name')
+                    ->getOptionLabelFromRecordUsing(fn (Borrower $record) => $record->full_name)
                     ->searchable()
+                    ->getSearchResultsUsing(fn (string $search): array => self::searchBorrowers($search))
+                    ->preload()
                     ->createOptionForm(self::borrowerInlineForm())
+                    ->createOptionModalHeading('Нов съдлъжник')
                     ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
                 Forms\Components\Select::make('type')->label('Тип')
@@ -237,7 +264,8 @@ class LoanResource extends Resource
                         });
                         Notification::make()->title('Публикуван')->success()->send();
                     }),
-                \Filament\Actions\Action::make('unpublish')->label('Спри')->icon('heroicon-o-pause-circle')->color('warning')
+                \Filament\Actions\Action::make('unpublish')->label('Върни в чернова')->icon('heroicon-o-pause-circle')->color('warning')
+                    ->tooltip('Скрива кредита от инвеститорите (връща го в чернова)')
                     // P3-F2 (Phase 3): extended to cover FUNDING loans too
                     // (funded_amount == 0), not just PUBLISHED. An
                     // investor whose withdrawal was rejected could leave
