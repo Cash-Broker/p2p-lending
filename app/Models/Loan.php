@@ -303,7 +303,28 @@ class Loan extends Model
 
     public function isFullyFunded(): bool
     {
-        return bccomp($this->funded_amount, $this->investableAmount(), 2) >= 0;
+        return bccomp($this->funded_amount, $this->fundingCap(), 2) >= 0;
+    }
+
+    /**
+     * How much investors can still fund toward this loan.
+     *
+     * Normally the investable amount. But when a back-dated schedule was
+     * generated up-front — with elapsed installments pre-marked paid — investors
+     * fund only the OUTSTANDING (unpaid) principal, so they fund exactly what
+     * they will be repaid (no over-funding against already-settled installments).
+     * Returned as a bcmath-safe string.
+     */
+    public function fundingCap(): string
+    {
+        if ($this->amortizationSchedules()->exists()) {
+            return $this->amortizationSchedules()
+                ->whereIn('status', ['pending', 'late'])
+                ->get(['principal'])
+                ->reduce(fn (string $carry, $row) => bcadd($carry, (string) $row->principal, 2), '0.00');
+        }
+
+        return $this->investableAmount();
     }
 
     /**

@@ -91,13 +91,21 @@ class AmortizationService
                     ? $firstDueDate->copy()->addMonthsNoOverflow($i - 1)
                     : $baseDate->copy()->addDays(30 * $i);
 
+                // Back-dated listing: an installment whose due date has already
+                // elapsed was settled off-platform before the loan was listed, so
+                // it's marked paid (NOT pending) — this keeps late-detection quiet
+                // on activation and leaves only the outstanding stream for
+                // investors. For a normal future-dated schedule nothing is marked.
+                $isElapsed = $dueDate->copy()->startOfDay()->lt(now()->startOfDay());
+
                 AmortizationSchedule::create([
                     'loan_id' => $loan->id,
                     'due_date' => $dueDate,
                     'principal' => $principal,
                     'interest' => $interest,
                     'total' => $total,
-                    'status' => 'pending',
+                    'status' => $isElapsed ? 'paid' : 'pending',
+                    'paid_at' => $isElapsed ? $dueDate : null,
                 ]);
 
                 $remaining = bcsub($remaining, $principal, 2);

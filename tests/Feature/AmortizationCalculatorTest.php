@@ -40,6 +40,38 @@ class AmortizationCalculatorTest extends TestCase
         $this->assertSame('1200.00', $sum);
     }
 
+    public function test_backdated_schedule_marks_elapsed_installments_paid_and_caps_funding_to_outstanding(): void
+    {
+        $loan = Loan::factory()->create([
+            'amount' => '1200.00',
+            'investable_amount' => '1200.00',
+            'term_months' => 4,
+            'interest_rate' => '12.00',
+            'status' => 'draft',
+        ]);
+
+        // Listed now, but the first installment was due 2 months ago.
+        app(AmortizationService::class)->generateSchedule($loan, now()->subMonthsNoOverflow(2));
+
+        $rows = $loan->amortizationSchedules()->orderBy('due_date')->get();
+        $paid = $rows->where('status', 'paid');
+        $pending = $rows->where('status', 'pending');
+
+        // Elapsed installments are paid; future ones remain pending.
+        $this->assertTrue($paid->isNotEmpty(), 'Expected at least one elapsed installment marked paid.');
+        $this->assertTrue($pending->isNotEmpty(), 'Expected at least one future installment pending.');
+        $this->assertTrue($paid->every(fn ($r) => $r->due_date->lt(today())));
+
+        // The full schedule still sums to the investable amount.
+        $this->assertSame('1200.00', $rows->reduce(fn ($c, $r) => bcadd($c, (string) $r->principal, 2), '0.00'));
+
+        // Funding cap == outstanding (pending) principal — strictly less than the
+        // full investable, so investors fund only what they'll be repaid.
+        $outstanding = $pending->reduce(fn ($c, $r) => bcadd($c, (string) $r->principal, 2), '0.00');
+        $this->assertSame($outstanding, $loan->fundingCap());
+        $this->assertTrue(bccomp($loan->fundingCap(), '1200.00', 2) < 0);
+    }
+
     public function test_pre_generated_schedule_survives_activation_without_regeneration(): void
     {
         $loan = Loan::factory()->create([
