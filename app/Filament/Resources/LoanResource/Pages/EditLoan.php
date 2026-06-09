@@ -22,17 +22,45 @@ class EditLoan extends EditRecord
      */
     protected function mutateFormDataBeforeSave(array $data): array
     {
-        // On a live (non-draft) loan, never persist the immutable financial /
-        // identity fields. The form dehydrates EVERY field (including disabled
-        // inputs and a computed placeholder), and a decimal coerced to a slightly
-        // different string would otherwise trip the model's immutability guard and
-        // make "Запази" fail. Status itself is changed via the dedicated actions
-        // (Публикувай / Върни в чернова / Активирай), never edited here.
-        if ($this->record->status !== Loan::STATUS_DRAFT) {
+        return self::sanitizeSaveData($this->record, $data);
+    }
+
+    /**
+     * Sanitize the edit payload so a status change on a LIVE (non-draft) loan
+     * always saves cleanly.
+     *
+     * The blocker: Filament's form dehydrates EVERY field (disabled inputs and a
+     * computed placeholder included). On a non-draft loan the model's
+     * immutability guard throws the moment ANY field in IMMUTABLE_AFTER_DRAFT
+     * looks changed — and the dehydrated payload routinely coerces values
+     * (e.g. a nullable FK like co_borrower_id comes back as '' instead of null,
+     * or investable_amount as '' instead of its stored number), so the guard
+     * fires even though the admin only touched the status. That surfaces as
+     * Filament's generic "error-notifications" toast and "Запази" appears broken.
+     *
+     * Fix: for a non-draft loan, strip the immutable fields from the payload
+     * entirely — the status (and the few mutable fields) are all that may change,
+     * so coercion can no longer trip the guard. Also keep published_at consistent
+     * with the new status. Draft loans are left fully editable.
+     *
+     * Static + pure so it can be unit-tested without Filament's form harness.
+     */
+    public static function sanitizeSaveData(Loan $record, array $data): array
+    {
+        $newStatus = $data['status'] ?? $record->status;
+
+        if ($record->status !== Loan::STATUS_DRAFT) {
             foreach (Loan::IMMUTABLE_AFTER_DRAFT as $field) {
                 unset($data[$field]);
             }
-            unset($data['status']);
+        }
+
+        // published_at follows the status: cleared on a revert to draft, stamped
+        // when publishing (mirrors the "Публикувай"/"Върни в чернова" actions).
+        if ($newStatus === Loan::STATUS_DRAFT) {
+            $data['published_at'] = null;
+        } elseif ($newStatus === Loan::STATUS_PUBLISHED && empty($record->published_at)) {
+            $data['published_at'] = now();
         }
 
         return $data;

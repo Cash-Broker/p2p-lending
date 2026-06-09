@@ -136,15 +136,7 @@ class LoanResource extends Resource
                         }
                         return $options;
                     })
-                    ->default('draft')->required()
-                    // Status transitions go through the dedicated row actions
-                    // (Публикувай / Върни в чернова / Активирай), which run the
-                    // safe state-machine logic. Editing it inline is disabled so a
-                    // save can never break on a status change.
-                    ->disabled(fn (?Loan $record) => $record?->id !== null)
-                    ->helperText(fn (?Loan $record) => $record?->id
-                        ? 'Статусът се сменя през бутоните в списъка: „Публикувай“ / „Върни в чернова“ / „Активирай“.'
-                        : null),
+                    ->default('draft')->required(),
             ])->columns(2),
             \Filament\Schemas\Components\Section::make('Финансови параметри')->schema([
                 Forms\Components\TextInput::make('amount')->label('Сума на кредита (€)')->numeric()->required()->minValue(100)
