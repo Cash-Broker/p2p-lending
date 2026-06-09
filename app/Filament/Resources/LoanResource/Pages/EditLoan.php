@@ -22,14 +22,17 @@ class EditLoan extends EditRecord
      */
     protected function mutateFormDataBeforeSave(array $data): array
     {
+        // On a live (non-draft) loan, never persist the immutable financial /
+        // identity fields. The form dehydrates EVERY field (including disabled
+        // inputs and a computed placeholder), and a decimal coerced to a slightly
+        // different string would otherwise trip the model's immutability guard and
+        // make "Запази" fail. Status itself is changed via the dedicated actions
+        // (Публикувай / Върни в чернова / Активирай), never edited here.
         if ($this->record->status !== Loan::STATUS_DRAFT) {
             foreach (Loan::IMMUTABLE_AFTER_DRAFT as $field) {
                 unset($data[$field]);
             }
-
-            if (($data['status'] ?? null) === Loan::STATUS_DRAFT) {
-                $data['published_at'] = null;
-            }
+            unset($data['status']);
         }
 
         return $data;
