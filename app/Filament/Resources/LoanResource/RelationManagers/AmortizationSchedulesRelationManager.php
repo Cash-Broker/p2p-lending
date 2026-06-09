@@ -11,6 +11,7 @@ use Closure;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -46,7 +47,7 @@ class AmortizationSchedulesRelationManager extends RelationManager
             // trust this identity per row).
             Forms\Components\TextInput::make('total')->label('Общо (€)')->numeric()->required()
                 ->rules([
-                    fn (Forms\Get $get): Closure => function (string $attribute, $value, Closure $fail) use ($get) {
+                    fn (Get $get): Closure => function (string $attribute, $value, Closure $fail) use ($get) {
                         $error = ScheduleBalanceValidator::rowTotalError(
                             (string) ($get('principal') ?? ''),
                             (string) ($get('interest') ?? ''),

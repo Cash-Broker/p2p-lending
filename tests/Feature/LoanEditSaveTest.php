@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Filament\Resources\LoanResource\Pages\EditLoan;
 use App\Models\Loan;
+use App\Models\User;
+use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 /**
@@ -20,6 +23,14 @@ use Tests\TestCase;
 class LoanEditSaveTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // EditRecord schema/save testing needs the panel to be the current one.
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+    }
 
     // ── The blocker ──
 
@@ -86,5 +97,43 @@ class LoanEditSaveTest extends TestCase
 
         $this->assertArrayHasKey('amount', $clean);
         $this->assertSame('7777.00', $clean['amount']);
+    }
+
+    // ── End-to-end: the REAL Filament form save ──
+    //
+    // The sanitize tests above exercise the helper in isolation — they passed
+    // even while the live form was broken. The actual production failure was a
+    // dead `Filament\Forms\Get` type-hint on the (disabled-but-still-validated)
+    // `investable_amount` field's rule closure: Filament v5 removed that class,
+    // so building the validator for the published-loan edit threw, surfacing as
+    // the generic "filament-panels::error-notifications" toast. Only a test that
+    // drives the Livewire component through validation catches it.
+
+    public function test_status_change_on_published_loan_saves_through_filament_form(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+
+        $loan = Loan::factory()->published()->create();
+
+        Livewire::test(EditLoan::class, ['record' => $loan->getRouteKey()])
+            ->fillForm(['status' => Loan::STATUS_DRAFT])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $fresh = $loan->fresh();
+        $this->assertSame(Loan::STATUS_DRAFT, $fresh->status);
+        $this->assertNull($fresh->published_at);
+    }
+
+    public function test_published_loan_edit_form_mounts_without_error(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+
+        $loan = Loan::factory()->published()->create();
+
+        // Mounting alone resolves the schema (incl. the investable_amount rule
+        // closure signature). A dead Get/Set type-hint blows up here too.
+        Livewire::test(EditLoan::class, ['record' => $loan->getRouteKey()])
+            ->assertOk();
     }
 }

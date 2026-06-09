@@ -14,6 +14,7 @@ use App\Services\Loans\EarlyRepaymentExecutionService;
 use BackedEnum;
 use Closure;
 use Filament\Forms;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
@@ -83,7 +84,8 @@ class LoanResource extends Resource
                 Forms\Components\Select::make('originator_id')->label('Оригинатор')
                     ->options(Originator::pluck('name', 'id'))
                     ->required()->searchable()
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
                 // Relationship-backed so Filament renders the "+ Създай" inline
                 // create button. full_name is encrypted → decrypt labels via
                 // getOptionLabelFromRecordUsing and search in-memory.
@@ -97,7 +99,8 @@ class LoanResource extends Resource
                     ->createOptionForm(self::borrowerInlineForm())
                     ->createOptionModalHeading('Нов кредитополучател')
                     ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
                 Forms\Components\Select::make('co_borrower_id')->label('Съдлъжник')
                     ->helperText('По избор. Може да се добави на момента.')
                     ->relationship('coBorrower', 'full_name')
@@ -108,11 +111,13 @@ class LoanResource extends Resource
                     ->createOptionForm(self::borrowerInlineForm())
                     ->createOptionModalHeading('Нов съдлъжник')
                     ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
                 Forms\Components\Select::make('type')->label('Тип')
                     ->options(['consumer' => 'Потребителски', 'business' => 'Бизнес', 'mortgage' => 'Ипотечен', 'bridge' => 'Мостов'])
                     ->required()
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
                 Forms\Components\Select::make('status')->label('Статус')
                     ->options(function (?Loan $record) {
                         $allLabels = [
@@ -140,31 +145,36 @@ class LoanResource extends Resource
             ])->columns(2),
             \Filament\Schemas\Components\Section::make('Финансови параметри')->schema([
                 Forms\Components\TextInput::make('amount')->label('Сума на кредита (€)')->numeric()->required()->minValue(100)
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
                 Forms\Components\TextInput::make('investable_amount')->label('Свободни за инвестиция (€)')
                     ->helperText('Колко от кредита се предлага на инвеститорите (може да е по-малко от сумата). Погасителният план се изчислява върху тази сума.')
                     ->numeric()->required()->minValue(50)
                     ->rules([
-                        fn (Forms\Get $get): Closure => function (string $attribute, $value, Closure $fail) use ($get) {
+                        fn (Get $get): Closure => function (string $attribute, $value, Closure $fail) use ($get) {
                             $amount = $get('amount');
                             if (is_numeric($value) && is_numeric($amount) && bccomp((string) $value, (string) $amount, 2) > 0) {
                                 $fail('„Свободни за инвестиция" не може да надвишава сумата на кредита.');
                             }
                         },
                     ])
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
                 Forms\Components\TextInput::make('interest_rate')->label('Доходност (%)')
                     ->helperText('Годишната доходност, която инвеститорите получават. Използва се за изготвяне на погасителен план.')
                     ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
                     ->rules(['numeric', 'min:0.01', 'max:999.99'])
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
                 Forms\Components\TextInput::make('interest_rate_annual')->label('Лихва кредитополучател (%)')
                     ->helperText('Годишната лихва, която кредитополучателят плаща. Използва се за изчисляване на ГПР (APR). Трябва да е ≥ "Доходност" (разликата е марж на оригинатора).')
                     ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
                     ->rules(['numeric', 'min:0.01', 'max:999.99'])
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
                 Forms\Components\TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->validatedWhenNotDehydrated(false),
             ])->columns(2),
 
             // F5 — Rates summary. Read-only, edit-page only (no record on create).
