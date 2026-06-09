@@ -70,6 +70,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'investor' => \App\Http\Middleware\EnsureIsInvestor::class,
             'kyc' => \App\Http\Middleware\EnsureKycApproved::class,
+            'consent.current' => \App\Http\Middleware\EnsureConsentsCurrent::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

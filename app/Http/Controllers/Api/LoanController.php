@@ -58,7 +58,7 @@ class LoanController extends Controller
             return match ($sort) {
                 'highest_rate' => $q->orderByDesc('interest_rate'),
                 'shortest_term' => $q->orderBy('term_months'),
-                'most_funded' => $q->orderByRaw('funded_amount / amount DESC'),
+                'most_funded' => $q->orderByRaw('funded_amount / COALESCE(investable_amount, amount) DESC'),
                 default => $q->latest('published_at'),
             };
         }, fn ($q) => $q->latest('published_at'));
@@ -80,7 +80,7 @@ class LoanController extends Controller
     {
         $this->authorize('view', $loan);
 
-        $loan->load(['originator', 'anonymizedProfile', 'amortizationSchedules'])
+        $loan->load(['originator', 'anonymizedProfile', 'coBorrowerAnonymizedProfile', 'amortizationSchedules'])
             ->loadCount('investments');
 
         return response()->json(new LoanResource($loan));

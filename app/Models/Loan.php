@@ -85,8 +85,8 @@ class Loan extends Model
 
     // Fields that become immutable once the loan leaves draft status
     const IMMUTABLE_AFTER_DRAFT = [
-        'amount', 'interest_rate', 'interest_rate_annual',
-        'term_months', 'originator_id', 'borrower_id', 'type',
+        'amount', 'investable_amount', 'interest_rate', 'interest_rate_annual',
+        'term_months', 'originator_id', 'borrower_id', 'co_borrower_id', 'type',
     ];
 
     protected static function booted(): void
@@ -151,9 +151,12 @@ class Loan extends Model
             $this->forceFill(['status' => $newStatus])->save();
 
             // On first activation (funded → active), auto-generate the amortization
-            // schedule. LATE → ACTIVE is a return from delinquency; schedule already
-            // exists from the original activation.
-            if ($fromStatus === self::STATUS_FUNDED && $newStatus === self::STATUS_ACTIVE) {
+            // schedule — UNLESS the admin already generated it at draft via the
+            // calculator (skip-if-exists avoids the "schedule already exists" throw
+            // rolling back activation). LATE → ACTIVE is a return from delinquency;
+            // schedule already exists from the original activation.
+            if ($fromStatus === self::STATUS_FUNDED && $newStatus === self::STATUS_ACTIVE
+                && ! $this->amortizationSchedules()->exists()) {
                 app(AmortizationService::class)->generateSchedule($this);
             }
         });
@@ -162,7 +165,9 @@ class Loan extends Model
     protected $fillable = [
         'originator_id',
         'borrower_id',
+        'co_borrower_id',
         'amount',
+        'investable_amount',
         'funded_amount',
         'interest_rate',
         'interest_rate_annual',
@@ -185,6 +190,7 @@ class Loan extends Model
     {
         return [
             'amount' => 'decimal:2',
+            'investable_amount' => 'decimal:2',
             'funded_amount' => 'decimal:2',
             'interest_rate' => 'decimal:2',
             'interest_rate_annual' => 'decimal:2',
@@ -237,6 +243,11 @@ class Loan extends Model
         return $this->belongsTo(Borrower::class);
     }
 
+    public function coBorrower(): BelongsTo
+    {
+        return $this->belongsTo(Borrower::class, 'co_borrower_id');
+    }
+
     public function anonymizedProfile(): HasOneThrough
     {
         return $this->hasOneThrough(
@@ -246,6 +257,22 @@ class Loan extends Model
             'borrower_id',  // borrower_anonymized_profiles.borrower_id
             'borrower_id',  // loans.borrower_id
             'id'            // borrowers.id
+        );
+    }
+
+    /**
+     * Anonymized profile of the co-debtor (съдлъжник), surfaced to investors
+     * alongside the primary borrower's. Null when the loan has no co-debtor.
+     */
+    public function coBorrowerAnonymizedProfile(): HasOneThrough
+    {
+        return $this->hasOneThrough(
+            BorrowerAnonymizedProfile::class,
+            Borrower::class,
+            'id',              // borrowers.id
+            'borrower_id',     // borrower_anonymized_profiles.borrower_id
+            'co_borrower_id',  // loans.co_borrower_id
+            'id'               // borrowers.id
         );
     }
 
@@ -276,6 +303,32 @@ class Loan extends Model
 
     public function isFullyFunded(): bool
     {
-        return bccomp($this->funded_amount, $this->amount, 2) >= 0;
+        return bccomp($this->funded_amount, $this->investableAmount(), 2) >= 0;
+    }
+
+    /**
+     * How much of the loan is offered to platform investors. Falls back to the
+     * full `amount` when `investable_amount` is unset (in-flight loans, audit
+     * fixtures) so behavior is identical to before the cap was introduced.
+     * Returned as a bcmath-safe string.
+     */
+    public function investableAmount(): string
+    {
+        return (string) ($this->investable_amount ?? $this->amount);
+    }
+
+    /**
+     * The principal total that the amortization schedule must sum to.
+     *
+     * Per the client decision, the on-platform schedule amortizes the INVESTABLE
+     * portion (not the full loan amount), so investors are repaid exactly the
+     * capital they invested. Centralised so every Σ-principal check (the
+     * relation-manager balancing guard, AmortizationService) shares one source of
+     * truth. When investable_amount is null it equals `amount` — keeping every
+     * existing test/fixture unchanged.
+     */
+    public function amortizationBase(): string
+    {
+        return $this->investableAmount();
     }
 }

@@ -12,6 +12,7 @@ use App\Services\Loans\EarlyRepaymentAlreadyExecutedException;
 use App\Services\Loans\EarlyRepaymentCalculationService;
 use App\Services\Loans\EarlyRepaymentExecutionService;
 use BackedEnum;
+use Closure;
 use Filament\Forms;
 use Filament\Schemas\Schema;
 use Filament\Notifications\Notification;
@@ -31,6 +32,34 @@ class LoanResource extends Resource
     protected static ?string $modelLabel = 'Кредит';
     protected static ?int $navigationSort = 4;
 
+    /**
+     * Inline borrower/co-debtor form — "general info" only. ЕГН (personal_id)
+     * is intentionally absent; the client wants borrowers added on the spot
+     * without it.
+     *
+     * @return array<int, \Filament\Forms\Components\Component>
+     */
+    protected static function borrowerInlineForm(): array
+    {
+        return [
+            Forms\Components\TextInput::make('full_name')->label('Пълно име')->required(),
+            Forms\Components\TextInput::make('phone')->label('Телефон')->required(),
+            Forms\Components\TextInput::make('address')->label('Адрес')->required(),
+            Forms\Components\TextInput::make('income')->label('Доход (€)')->numeric()->required(),
+            Forms\Components\TextInput::make('credit_score')->label('Кредитен рейтинг')->numeric()->nullable(),
+            Forms\Components\Textarea::make('notes')->label('Бележки')->nullable()->columnSpanFull(),
+        ];
+    }
+
+    /** Persist an inline-created borrower + its investor-facing anonymized profile. */
+    protected static function createBorrowerInline(array $data): int
+    {
+        $borrower = Borrower::create($data);
+        $borrower->ensureAnonymizedProfile();
+
+        return $borrower->getKey();
+    }
+
     public static function form(Schema $form): Schema
     {
         return $form->schema([
@@ -42,6 +71,16 @@ class LoanResource extends Resource
                 Forms\Components\Select::make('borrower_id')->label('Кредитополучател')
                     ->options(fn () => Borrower::all()->pluck('full_name', 'id'))
                     ->required()->searchable()
+                    // Create a borrower on the spot — no need to pre-create one.
+                    ->createOptionForm(self::borrowerInlineForm())
+                    ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                Forms\Components\Select::make('co_borrower_id')->label('Съдлъжник')
+                    ->helperText('По избор. Може да се добави на момента.')
+                    ->options(fn () => Borrower::all()->pluck('full_name', 'id'))
+                    ->searchable()
+                    ->createOptionForm(self::borrowerInlineForm())
+                    ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
                 Forms\Components\Select::make('type')->label('Тип')
                     ->options(['consumer' => 'Потребителски', 'business' => 'Бизнес', 'mortgage' => 'Ипотечен', 'bridge' => 'Мостов'])
@@ -73,7 +112,19 @@ class LoanResource extends Resource
                     ->default('draft')->required(),
             ])->columns(2),
             \Filament\Schemas\Components\Section::make('Финансови параметри')->schema([
-                Forms\Components\TextInput::make('amount')->label('Сума (€)')->numeric()->required()->minValue(100)
+                Forms\Components\TextInput::make('amount')->label('Сума на кредита (€)')->numeric()->required()->minValue(100)
+                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
+                Forms\Components\TextInput::make('investable_amount')->label('Свободни за инвестиция (€)')
+                    ->helperText('Колко от кредита се предлага на инвеститорите (може да е по-малко от сумата). Погасителният план се изчислява върху тази сума.')
+                    ->numeric()->required()->minValue(50)
+                    ->rules([
+                        fn (Forms\Get $get): Closure => function (string $attribute, $value, Closure $fail) use ($get) {
+                            $amount = $get('amount');
+                            if (is_numeric($value) && is_numeric($amount) && bccomp((string) $value, (string) $amount, 2) > 0) {
+                                $fail('„Свободни за инвестиция" не може да надвишава сумата на кредита.');
+                            }
+                        },
+                    ])
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT),
                 Forms\Components\TextInput::make('interest_rate')->label('Доходност (%)')
                     ->helperText('Годишната доходност, която инвеститорите получават. Използва се за изготвяне на погасителен план.')

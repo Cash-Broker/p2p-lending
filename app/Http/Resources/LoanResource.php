@@ -18,6 +18,8 @@ class LoanResource extends JsonResource
         return [
             'id' => $this->id,
             'amount' => $this->amount,
+            // How much of the loan is offered to investors (== amount when no cap).
+            'investable_amount' => $this->investableAmount(),
             'funded_amount' => $this->funded_amount,
             'interest_rate' => $this->interest_rate,
             // F5 — Annual Percentage Rate (Годишен Процент на Разходите).
@@ -31,8 +33,15 @@ class LoanResource extends JsonResource
             'published_at' => $this->published_at,
             'originator' => new OriginatorResource($this->whenLoaded('originator')),
             'anonymized_profile' => new BorrowerAnonymizedProfileResource($this->whenLoaded('anonymizedProfile')),
-            'funded_percentage' => bccomp($this->amount, '0', 2) > 0
-                ? (int) bcmul(bcdiv($this->funded_amount, $this->amount, 4), '100')
+            // Co-debtor (съдлъжник) anonymized profile — null when the loan has
+            // no co-debtor. Real co-debtor PII is never exposed.
+            'co_borrower_anonymized_profile' => $this->relationLoaded('coBorrowerAnonymizedProfile') && $this->coBorrowerAnonymizedProfile
+                ? new BorrowerAnonymizedProfileResource($this->coBorrowerAnonymizedProfile)
+                : null,
+            // Progress against the investable cap so the bar reaches 100% at the
+            // cap, not at the (possibly larger) nominal amount.
+            'funded_percentage' => bccomp($this->investableAmount(), '0', 2) > 0
+                ? (int) bcmul(bcdiv($this->funded_amount, $this->investableAmount(), 4), '100')
                 : 0,
             'investors_count' => $this->whenCounted('investments', $this->investments_count),
             'amortization_schedule' => AmortizationScheduleResource::collection($this->whenLoaded('amortizationSchedules')),

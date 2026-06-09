@@ -125,6 +125,7 @@ class ProfileTest extends TestCase
             'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
             'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertOk()
@@ -141,6 +142,31 @@ class ProfileTest extends TestCase
             $fresh->kyc_document_back_path,
             $fresh->kyc_selfie_path,
         ]));
+
+        // Explicit biometric consent (Art. 9(2)(a)) recorded.
+        $this->assertDatabaseHas('consent_records', [
+            'user_id' => $user->id,
+            'type' => \App\Models\ConsentRecord::TYPE_BIOMETRIC,
+            'version' => \App\Models\ConsentRecord::CURRENT_BIOMETRIC_VERSION,
+        ]);
+    }
+
+    public function test_kyc_submit_requires_biometric_consent(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // All files present but the biometric consent box not ticked.
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
+            'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+            'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '0',
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('biometric_consent');
+        $this->assertEquals('pending', $user->fresh()->kyc_status);
+        $this->assertNull($user->fresh()->kyc_selfie_path);
     }
 
     public function test_kyc_submit_fails_without_any_file(): void
@@ -162,6 +188,7 @@ class ProfileTest extends TestCase
         $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
             'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
             'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('selfie');
@@ -179,6 +206,7 @@ class ProfileTest extends TestCase
             'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
             'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
             'selfie' => $this->fakePdf('selfie.pdf'),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('selfie');
@@ -198,6 +226,7 @@ class ProfileTest extends TestCase
             'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
             'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
             'selfie' => $svg,
+            'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('selfie');
@@ -212,6 +241,7 @@ class ProfileTest extends TestCase
         $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
             'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('document_back');
@@ -227,6 +257,7 @@ class ProfileTest extends TestCase
         $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
             'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('document_front');
@@ -247,6 +278,7 @@ class ProfileTest extends TestCase
             'document_front' => $svg,
             'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('document_front');
@@ -266,6 +298,7 @@ class ProfileTest extends TestCase
             'document_front' => $php,
             'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('document_front');
@@ -283,6 +316,7 @@ class ProfileTest extends TestCase
             'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
             'document_back' => $html,
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('document_back');
@@ -297,6 +331,7 @@ class ProfileTest extends TestCase
             'document_front' => $this->fakePdf('id-front.pdf'),
             'document_back' => $this->fakePdf('id-back.pdf'),
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ]);
 
         $response->assertOk();
@@ -313,6 +348,7 @@ class ProfileTest extends TestCase
             'document_front' => UploadedFile::fake()->image('front-1.jpg', 800, 600),
             'document_back' => UploadedFile::fake()->image('back-1.jpg', 800, 600),
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ])->assertOk();
 
         $first = $user->fresh();
@@ -326,6 +362,7 @@ class ProfileTest extends TestCase
             'document_front' => UploadedFile::fake()->image('front-2.jpg', 800, 600),
             'document_back' => UploadedFile::fake()->image('back-2.jpg', 800, 600),
             'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
         ])->assertOk();
 
         $second = $user->fresh();

@@ -111,8 +111,9 @@ class InvestmentService
             ]);
         }
 
-        // Check overfunding
-        $remaining = bcsub($loan->amount, $loan->funded_amount, 2);
+        // Check overfunding — investors fund up to the investable cap, not the
+        // full loan amount.
+        $remaining = bcsub($loan->investableAmount(), $loan->funded_amount, 2);
         if (bccomp($amount, $remaining, 2) > 0) {
             throw ValidationException::withMessages([
                 'amount' => ["Maximum available for this loan is {$remaining} €."],

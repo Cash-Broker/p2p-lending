@@ -1,14 +1,28 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useConsentStore } from '../stores/consent'
 import ChatbotWidget from '../components/ChatbotWidget.vue'
+import ReConsentModal from '../components/ReConsentModal.vue'
 import api from '../api/axios'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const consent = useConsentStore()
 const sidebarOpen = ref(false)
+
+// Re-consent prompt — shown when Terms/Privacy were updated. Dismissible
+// ("По-късно"), but re-opens whenever a gated action is refused (403), which
+// bumps promptNonce.
+const consentDismissed = ref(false)
+const showConsent = computed(() => consent.needsConsent && !consentDismissed.value)
+watch(() => consent.promptNonce, () => { consentDismissed.value = false })
+
+async function acceptConsent() {
+  await consent.accept()
+}
 
 // Notifications
 const notifications = ref([])
@@ -51,7 +65,10 @@ async function deleteAllNotifications() {
   unreadCount.value = 0
 }
 
-onMounted(() => loadNotifications())
+onMounted(() => {
+  loadNotifications()
+  consent.check()
+})
 
 const navigation = [
   { name: 'Начало', path: '/dashboard', icon: 'home' },
@@ -217,5 +234,12 @@ async function logout() {
     </div>
 
     <ChatbotWidget />
+
+    <ReConsentModal
+      v-if="showConsent"
+      :docs="consent.pending"
+      @accept="acceptConsent"
+      @later="consentDismissed = true"
+    />
   </div>
 </template>

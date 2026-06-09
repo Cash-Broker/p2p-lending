@@ -15,6 +15,7 @@ class AmortizationScheduleResource extends JsonResource
             'principal' => $this->principal,
             'interest' => $this->interest,
             'total' => $this->total,
+            'fees' => $this->fees,
             'status' => $this->status,
             'paid_at' => $this->paid_at,
             // Late tracking — null/0 unless this row was marked late.

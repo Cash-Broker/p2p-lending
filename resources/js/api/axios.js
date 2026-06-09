@@ -65,4 +65,20 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+/**
+ * When a gated action is refused because the user hasn't accepted the current
+ * Terms/Privacy, surface the re-consent modal. Lazy-imported to avoid a circular
+ * dependency (the store imports this axios instance); Pinia is active by the
+ * time any request runs.
+ */
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 403 && error.response.data?.error === 'consent_required') {
+      import('../stores/consent').then(({ useConsentStore }) => useConsentStore().forcePrompt())
+    }
+    return Promise.reject(error)
+  },
+)
+
 export default api

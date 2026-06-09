@@ -25,7 +25,6 @@ class BorrowerResource extends Resource
         return $form->schema([
             \Filament\Schemas\Components\Section::make('Лични данни')->schema([
                 Forms\Components\TextInput::make('full_name')->label('Пълно име')->required(),
-                Forms\Components\TextInput::make('personal_id')->label('ЕГН / ID')->required(),
                 Forms\Components\TextInput::make('address')->label('Адрес')->required(),
                 Forms\Components\TextInput::make('phone')->label('Телефон')->required(),
             ])->columns(2),
@@ -43,7 +42,8 @@ class BorrowerResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('full_name')->label('Име')->searchable(),
                 Tables\Columns\TextColumn::make('personal_id')->label('ЕГН')
-                    ->formatStateUsing(fn (string $state) => '****' . substr($state, -4)),
+                    ->placeholder('—')
+                    ->formatStateUsing(fn (?string $state) => $state ? '****' . substr($state, -4) : '—'),
                 Tables\Columns\TextColumn::make('loans_count')->label('Кредити')->counts('loans'),
                 Tables\Columns\TextColumn::make('created_at')->label('Създаден')->date('d.m.Y'),
             ])

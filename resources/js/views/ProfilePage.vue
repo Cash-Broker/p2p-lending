@@ -40,6 +40,7 @@ const passwordSuccess = ref(false)
 const kycFrontFile = ref(null)
 const kycBackFile = ref(null)
 const kycSelfieFile = ref(null)
+const kycBiometricConsent = ref(false)
 const kycLoading = ref(false)
 const kycError = ref(null)
 const kycErrors = ref({})
@@ -154,7 +155,7 @@ function onSelfieCaptured(file) {
 }
 
 async function submitKyc() {
-  if (!kycFrontFile.value || !kycBackFile.value || !kycSelfieFile.value) return
+  if (!kycFrontFile.value || !kycBackFile.value || !kycSelfieFile.value || !kycBiometricConsent.value) return
   kycLoading.value = true
   kycError.value = null
   kycErrors.value = {}
@@ -164,6 +165,7 @@ async function submitKyc() {
     formData.append('document_front', kycFrontFile.value)
     formData.append('document_back', kycBackFile.value)
     formData.append('selfie', kycSelfieFile.value)
+    formData.append('biometric_consent', kycBiometricConsent.value ? '1' : '0')
     await api.post('/profile/kyc', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
     kycSuccess.value = true
     await auth.fetchUser()
@@ -393,7 +395,19 @@ onMounted(() => loadData())
               <p v-if="kycErrors.selfie" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.selfie[0] }}</p>
             </div>
 
-            <button @click="submitKyc" :disabled="!kycFrontFile || !kycBackFile || !kycSelfieFile || kycLoading" class="w-full py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
+            <!-- Explicit biometric consent (GDPR Art. 9(2)(a)) — separate, not pre-checked -->
+            <label class="flex items-start gap-2.5 mb-4">
+              <input v-model="kycBiometricConsent" type="checkbox" class="mt-0.5 size-4 rounded border-gray-300 text-accent-400 focus:ring-accent-400/50" />
+              <span class="text-xs text-gray-500 leading-relaxed">
+                Давам изрично съгласие селфито ми да бъде обработено като биометрични
+                данни за лицево съпоставяне спрямо документа за самоличност с цел
+                верификация (чл. 9, ал. 2, буква „а" GDPR). Подробности в
+                <router-link to="/legal/privacy" target="_blank" class="text-accent-500 hover:text-accent-600 underline">Политиката за поверителност</router-link>.
+              </span>
+            </label>
+            <p v-if="kycErrors.biometric_consent" role="alert" aria-live="polite" class="mt-1 mb-3 text-xs text-red-500">{{ kycErrors.biometric_consent[0] }}</p>
+
+            <button @click="submitKyc" :disabled="!kycFrontFile || !kycBackFile || !kycSelfieFile || !kycBiometricConsent || kycLoading" class="w-full py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
               {{ kycLoading ? 'Изпращане...' : 'Изпрати за верификация' }}
             </button>
           </div>

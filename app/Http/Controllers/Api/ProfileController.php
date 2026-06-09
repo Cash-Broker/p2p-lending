@@ -7,6 +7,7 @@ use App\Http\Requests\ChangePasswordRequest;
 use App\Http\Requests\UpdateCompanyProfileRequest;
 use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
+use App\Models\ConsentRecord;
 use App\Models\SavedIban;
 use App\Rules\ValidIban;
 use App\Services\AccountDeletionService;
@@ -83,10 +84,14 @@ class ProfileController extends Controller
             // it's always a photo (no PDF). Lets the admin face-match the person
             // against the ID document.
             'selfie' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
+            // Explicit consent for biometric processing of the selfie
+            // (GDPR Art. 9(2)(a)) — a separate, un-prechecked opt-in.
+            'biometric_consent' => ['accepted'],
         ], [
             'document_front.required' => 'Моля, качете снимка на лицевата страна (отпред) на личната карта.',
             'document_back.required' => 'Моля, качете снимка на гърба (отзад) на личната карта.',
             'selfie.required' => 'Моля, направете селфи с камерата за верификация.',
+            'biometric_consent.accepted' => 'Необходимо е изрично съгласие за обработка на селфи (биометрични данни) за верификация.',
         ]);
 
         $user = $request->user();
@@ -118,6 +123,16 @@ class ProfileController extends Controller
         if ($previousFiles !== []) {
             Storage::disk('local')->delete($previousFiles);
         }
+
+        // Evidence of explicit Art. 9(2)(a) consent for the biometric selfie,
+        // captured at the moment of processing.
+        $user->consentRecords()->create([
+            'type' => ConsentRecord::TYPE_BIOMETRIC,
+            'version' => ConsentRecord::CURRENT_BIOMETRIC_VERSION,
+            'ip_address' => $request->ip(),
+            'user_agent' => (string) $request->userAgent(),
+            'accepted_at' => now(),
+        ]);
 
         return response()->json(['message' => 'KYC document submitted successfully.']);
     }

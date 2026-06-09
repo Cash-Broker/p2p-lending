@@ -111,6 +111,41 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
         return $this->hasMany(ConsentRecord::class);
     }
 
+    /**
+     * Document-consent types whose latest accepted version is stale (older than
+     * the current version), and which therefore require re-consent.
+     *
+     * Fail-open on a *missing* record: registration always writes a record for
+     * every document, so a user with no record at all for a type is not a
+     * re-consent case (only test fixtures / pre-consent-system accounts) and is
+     * not blocked. Fail-closed on a *stale* record — the real re-consent case.
+     *
+     * @return array<int, string>
+     */
+    public function outstandingConsents(): array
+    {
+        $current = ConsentRecord::currentDocumentVersions();
+
+        $latestByType = $this->consentRecords()
+            ->whereIn('type', array_keys($current))
+            ->orderByDesc('accepted_at')
+            ->get()
+            ->groupBy('type');
+
+        $pending = [];
+        foreach ($current as $type => $version) {
+            $group = $latestByType->get($type);
+            if ($group === null) {
+                continue; // No prior consent on record — not a re-consent case.
+            }
+            if ($group->first()->version !== $version) {
+                $pending[] = $type;
+            }
+        }
+
+        return $pending;
+    }
+
     public function savedIbans(): HasMany
     {
         return $this->hasMany(SavedIban::class);

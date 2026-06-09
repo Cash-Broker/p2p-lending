@@ -18,6 +18,7 @@ class AmortizationSchedule extends Model
         'principal',
         'interest',
         'total',
+        'fees',
         'status',
         'paid_at',
         'became_late_at',
@@ -31,6 +32,8 @@ class AmortizationSchedule extends Model
             'principal' => 'decimal:2',
             'interest' => 'decimal:2',
             'total' => 'decimal:2',
+            // Platform/originator revenue — separate from `total`, NOT distributed.
+            'fees' => 'decimal:2',
             'paid_at' => 'datetime',
             'became_late_at' => 'datetime',
             'days_late' => 'integer',

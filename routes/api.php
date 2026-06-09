@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ConsentController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DepositController;
 use App\Http\Controllers\Api\FeeController;
@@ -42,6 +43,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/email/verification-notification', [AuthController::class, 'verifyEmail'])
         ->middleware('throttle:6,1');
 
+    // Re-consent flow — must NOT be gated by consent.current (that would deadlock).
+    Route::get('/consents/pending', [ConsentController::class, 'pending']);
+    Route::post('/consents/accept', [ConsentController::class, 'accept']);
+
     // Investor-only routes (verified email required)
     Route::middleware('investor')->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index']);
@@ -73,7 +78,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/profile/company', [ProfileController::class, 'updateCompany']);
         Route::put('/profile/password', [ProfileController::class, 'changePassword']);
         Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
-            ->middleware('throttle:3,1');
+            ->middleware(['throttle:3,1', 'consent.current']);
         Route::get('/profile/ibans', [ProfileController::class, 'ibans']);
         Route::post('/profile/ibans', [ProfileController::class, 'storeIban']);
         Route::delete('/profile/ibans/{iban}', [ProfileController::class, 'destroyIban']);
@@ -86,8 +91,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
         Route::delete('/notifications', [NotificationController::class, 'destroyAll']);
 
-        // Financial operations — KYC approval required + rate limited
-        Route::middleware('kyc')->group(function () {
+        // Financial operations — current consent (checked first) + KYC approval + rate limited
+        Route::middleware(['consent.current', 'kyc'])->group(function () {
             Route::post('/loans/{loan}/invest', [LoanController::class, 'invest'])
                 ->middleware('throttle:10,1');
             Route::post('/withdrawal', [WithdrawalController::class, 'store'])

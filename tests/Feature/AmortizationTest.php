@@ -238,9 +238,11 @@ class AmortizationTest extends TestCase
 
     public function test_schedule_failure_rolls_back_status(): void
     {
-        // Create loan and preseed a schedule — this will cause generation to fail
-        $loan = $this->createFundedLoan();
-        AmortizationSchedule::factory()->create(['loan_id' => $loan->id]);
+        // An invalid term makes schedule generation throw, exercising the
+        // transactional rollback. (A PRE-EXISTING schedule is no longer a failure
+        // trigger — activation now intentionally preserves an admin-generated
+        // schedule; see AmortizationCalculatorTest.)
+        $loan = $this->createFundedLoan(['term_months' => 0]);
 
         try {
             $loan->transitionTo(Loan::STATUS_ACTIVE);

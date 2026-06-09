@@ -21,6 +21,9 @@ class LoanFactory extends Factory
             'originator_id' => Originator::factory(),
             'borrower_id' => Borrower::factory(),
             'amount' => $amount,
+            // investable_amount intentionally left unset → Loan::investableAmount()
+            // falls back to `amount`, so factory loans behave identically to
+            // pre-cap. Tests that need a real cap set it explicitly.
             'funded_amount' => 0,
             'interest_rate' => $interestRate,
             // Borrower pays slightly more than investor earns — originator keeps the spread

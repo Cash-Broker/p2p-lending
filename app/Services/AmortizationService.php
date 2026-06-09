@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\AmortizationSchedule;
 use App\Models\Loan;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -34,16 +35,25 @@ class AmortizationService
      */
     private const SCALE = 10;
 
-    public function generateSchedule(Loan $loan): void
+    /**
+     * @param  CarbonInterface|null  $firstDueDate  Anchor for the first installment.
+     *         When given, installments fall monthly from this date (used by the
+     *         admin calculator, incl. listing a loan with a chosen first payment
+     *         date). When null, preserves the legacy now()+30·i spacing.
+     */
+    public function generateSchedule(Loan $loan, ?CarbonInterface $firstDueDate = null): void
     {
-        DB::transaction(function () use ($loan) {
+        DB::transaction(function () use ($loan, $firstDueDate) {
             // Guard: never overwrite an existing schedule. If regeneration is
             // ever needed, that's a separate deliberate action (delete + regenerate).
             if ($loan->amortizationSchedules()->exists()) {
                 throw new InvalidArgumentException('Schedule already exists for this loan.');
             }
 
-            $principalTotal = $loan->amount;
+            // Amortize the INVESTABLE portion (== amount when no cap is set), so
+            // Σ(principal) equals exactly the capital investors put in. See
+            // Loan::amortizationBase().
+            $principalTotal = $loan->amortizationBase();
             $termMonths = (int) $loan->term_months;
 
             if ($termMonths <= 0) {
@@ -77,9 +87,13 @@ class AmortizationService
 
                 $total = bcadd($principal, $interest, 2);
 
+                $dueDate = $firstDueDate
+                    ? $firstDueDate->copy()->addMonthsNoOverflow($i - 1)
+                    : $baseDate->copy()->addDays(30 * $i);
+
                 AmortizationSchedule::create([
                     'loan_id' => $loan->id,
-                    'due_date' => $baseDate->copy()->addDays(30 * $i),
+                    'due_date' => $dueDate,
                     'principal' => $principal,
                     'interest' => $interest,
                     'total' => $total,
