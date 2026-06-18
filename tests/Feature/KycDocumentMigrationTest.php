@@ -22,7 +22,13 @@ class KycDocumentMigrationTest extends TestCase
     {
         // Roll the schema back to its pre-deploy shape: a single
         // `kyc_document_path` column, exactly like production today.
-        Artisan::call('migrate:rollback', ['--step' => 1, '--force' => true]);
+        // Loop (rather than a hardcoded --step) so this stays correct as new
+        // migrations are added AFTER the KYC split — rolling back until the
+        // pre-split column reappears reverts exactly the split + anything later.
+        $guard = 0;
+        while (! Schema::hasColumn('users', 'kyc_document_path') && $guard++ < 50) {
+            Artisan::call('migrate:rollback', ['--step' => 1, '--force' => true]);
+        }
 
         $this->assertTrue(Schema::hasColumn('users', 'kyc_document_path'));
 
