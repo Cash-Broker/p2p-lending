@@ -90,6 +90,14 @@ const routes = [
         component: () => import('../views/MarketplacePage.vue'),
       },
       {
+        // Private-loan share link: resolves the token (grants access) then
+        // redirects to the loan. Auth is handled by the parent meta.auth +
+        // the login redirect-back guard.
+        path: 'invest/shared/:token',
+        name: 'invest-shared',
+        component: () => import('../views/SharedLoanRedirect.vue'),
+      },
+      {
         path: 'invest/:id',
         name: 'invest-detail',
         component: () => import('../views/InvestmentDetailPage.vue'),

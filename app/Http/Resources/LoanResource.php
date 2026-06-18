@@ -35,6 +35,8 @@ class LoanResource extends JsonResource
             'term_months' => $this->term_months,
             'type' => $this->type,
             'status' => $this->status,
+            // 'public' | 'private' — lets the SPA badge a link-only loan.
+            'visibility' => $this->visibility,
             'published_at' => $this->published_at,
             'originator' => new OriginatorResource($this->whenLoaded('originator')),
             'anonymized_profile' => new BorrowerAnonymizedProfileResource($this->whenLoaded('anonymizedProfile')),

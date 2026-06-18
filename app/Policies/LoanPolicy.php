@@ -13,14 +13,20 @@ class LoanPolicy
         return true;
     }
 
-    // Investors see only published/funding/active loans, admins see all
+    // Investors see only published/funding/active loans, admins see all.
+    // PRIVATE loans are additionally gated: only an investor holding a
+    // position OR granted access via the share link may view them.
     public function view(User $user, Loan $loan): bool
     {
         if ($user->isAdmin()) {
             return true;
         }
 
-        return in_array($loan->status, Loan::INVESTOR_VISIBLE_STATUSES);
+        if (! in_array($loan->status, Loan::INVESTOR_VISIBLE_STATUSES, true)) {
+            return false;
+        }
+
+        return $loan->isAccessibleBy($user);
     }
 
     // Only admin can create/update loans
@@ -50,6 +56,7 @@ class LoanPolicy
         if ($user->isAdmin()) {
             return true;
         }
+
         return $loan->investments()->where('user_id', $user->id)->exists();
     }
 }

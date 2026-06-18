@@ -24,7 +24,10 @@ class LoanController extends Controller
             'originator',
             'anonymizedProfile',
             'offers' => fn ($q) => $q->where('is_enabled', true)->orderBy('position'),
-        ])->whereIn('status', Loan::FUNDABLE_STATUSES);
+        ])
+            ->whereIn('status', Loan::FUNDABLE_STATUSES)
+            // The public board never shows private (link-only) loans.
+            ->where('visibility', Loan::VISIBILITY_PUBLIC);
 
         // Filters
         if ($request->filled('type')) {
@@ -149,8 +152,34 @@ class LoanController extends Controller
         ]);
     }
 
+    /**
+     * Resolve a private loan's share link: find the loan by token, grant the
+     * authenticated investor persistent access (so subsequent show/invest
+     * calls — which carry no token — pass LoanPolicy::view), and return the
+     * loan id for the SPA to navigate to. Only PRIVATE loans resolve here;
+     * a bad/expired/public token is a 404.
+     */
+    public function shared(Request $request, string $token): JsonResponse
+    {
+        $loan = Loan::where('share_token', $token)
+            ->where('visibility', Loan::VISIBILITY_PRIVATE)
+            ->first();
+
+        if ($loan === null) {
+            return response()->json(['message' => 'Линкът е невалиден или вече не е активен.'], 404);
+        }
+
+        $loan->grantAccessTo($request->user());
+
+        return response()->json(['loan_id' => $loan->id]);
+    }
+
     public function invest(InvestRequest $request, Loan $loan, InvestmentService $service): JsonResponse
     {
+        // Enforce access — private loans require a position or a link grant.
+        // Harmless for public loans (LoanPolicy::view returns true).
+        $this->authorize('view', $loan);
+
         $idempotencyKey = $request->header('X-Idempotency-Key');
         if (empty($idempotencyKey)) {
             return response()->json(['message' => 'X-Idempotency-Key header is required.'], 422);
@@ -172,6 +201,10 @@ class LoanController extends Controller
 
     public function toggleFavorite(Request $request, Loan $loan): JsonResponse
     {
+        // Can't favorite a loan you can't access (e.g. a private loan you were
+        // never sent the link to).
+        $this->authorize('view', $loan);
+
         // Delete-first pattern avoids TOCTOU race condition
         $deleted = Favorite::where('user_id', $request->user()->id)
             ->where('loan_id', $loan->id)
@@ -196,8 +229,20 @@ class LoanController extends Controller
 
     public function favorites(Request $request): JsonResponse
     {
-        $loans = Loan::with(['originator', 'anonymizedProfile'])
-            ->whereHas('favorites', fn ($q) => $q->where('user_id', $request->user()->id))
+        $userId = $request->user()->id;
+
+        $loans = Loan::with([
+            'originator',
+            'anonymizedProfile',
+            'offers' => fn ($q) => $q->where('is_enabled', true)->orderBy('position'),
+        ])
+            ->whereHas('favorites', fn ($q) => $q->where('user_id', $userId))
+            // Never surface a private loan the user no longer has access to.
+            ->where(function ($q) use ($userId) {
+                $q->where('visibility', Loan::VISIBILITY_PUBLIC)
+                    ->orWhereHas('grants', fn ($g) => $g->where('user_id', $userId))
+                    ->orWhereHas('investments', fn ($i) => $i->where('user_id', $userId));
+            })
             ->paginate(12);
 
         return response()->json([

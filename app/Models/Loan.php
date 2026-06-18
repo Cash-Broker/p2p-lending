@@ -13,20 +13,29 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOneThrough;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class Loan extends Model
 {
     /** @use HasFactory<LoanFactory> */
-    use HasFactory, \App\Traits\Auditable;
+    use \App\Traits\Auditable, HasFactory;
 
     const STATUS_DRAFT = 'draft';
+
     const STATUS_PUBLISHED = 'published';
+
     const STATUS_FUNDING = 'funding';
+
     const STATUS_FUNDED = 'funded';
+
     const STATUS_ACTIVE = 'active';
+
     const STATUS_LATE = 'late';
+
     const STATUS_DEFAULT = 'default';
+
     const STATUS_REPAID = 'repaid';
+
     const STATUS_BOUGHT_BACK = 'bought_back';
 
     const STATUSES = [
@@ -66,22 +75,29 @@ class Loan extends Model
         self::STATUS_FUNDING,
     ];
 
+    // Visibility — orthogonal to status. PRIVATE loans are hidden from the
+    // public marketplace and reachable only via their share link (see
+    // share_token + loan_grants + LoanPolicy::view).
+    const VISIBILITY_PUBLIC = 'public';
+
+    const VISIBILITY_PRIVATE = 'private';
+
     // Valid state machine transitions — anything not listed here is forbidden.
     // bought_back is TERMINAL per F2 Q3 (investor already paid out; originator's
     // post-buyback collection is off-platform).
     const ALLOWED_TRANSITIONS = [
-        self::STATUS_DRAFT     => [self::STATUS_PUBLISHED],
+        self::STATUS_DRAFT => [self::STATUS_PUBLISHED],
         self::STATUS_PUBLISHED => [self::STATUS_DRAFT, self::STATUS_FUNDING],
         // P3-F2 (Phase 3 audit): FUNDING can be abandoned back to DRAFT
         // ONLY when funded_amount == 0. Guards partial investors from
         // being left stranded. The funded_amount check is enforced in
         // the booted() updating hook below, not in canTransitionTo.
-        self::STATUS_FUNDING   => [self::STATUS_FUNDED, self::STATUS_DRAFT],
-        self::STATUS_FUNDED    => [self::STATUS_ACTIVE],
-        self::STATUS_ACTIVE    => [self::STATUS_LATE, self::STATUS_REPAID],
-        self::STATUS_LATE      => [self::STATUS_ACTIVE, self::STATUS_DEFAULT, self::STATUS_REPAID, self::STATUS_BOUGHT_BACK],
-        self::STATUS_DEFAULT   => [self::STATUS_REPAID, self::STATUS_BOUGHT_BACK],
-        self::STATUS_REPAID    => [],
+        self::STATUS_FUNDING => [self::STATUS_FUNDED, self::STATUS_DRAFT],
+        self::STATUS_FUNDED => [self::STATUS_ACTIVE],
+        self::STATUS_ACTIVE => [self::STATUS_LATE, self::STATUS_REPAID],
+        self::STATUS_LATE => [self::STATUS_ACTIVE, self::STATUS_DEFAULT, self::STATUS_REPAID, self::STATUS_BOUGHT_BACK],
+        self::STATUS_DEFAULT => [self::STATUS_REPAID, self::STATUS_BOUGHT_BACK],
+        self::STATUS_REPAID => [],
         self::STATUS_BOUGHT_BACK => [],
     ];
 
@@ -122,8 +138,8 @@ class Loan extends Model
                     && bccomp((string) $loan->funded_amount, '0', 2) > 0) {
                     throw new \LogicException(
                         "Cannot abandon loan #{$loan->id} to draft while funded_amount > 0 "
-                        . "(current funded_amount = {$loan->funded_amount}). "
-                        . "Process investor refunds first — see CLAUDE.md 'Partial-funded abandon' procedure."
+                        ."(current funded_amount = {$loan->funded_amount}). "
+                        ."Process investor refunds first — see CLAUDE.md 'Partial-funded abandon' procedure."
                     );
                 }
             }
@@ -203,6 +219,8 @@ class Loan extends Model
         'term_months',
         'type',
         'status',
+        'visibility',
+        'share_token',
         'published_at',
         'last_late_check_at',
         'became_late_at',
@@ -239,6 +257,7 @@ class Loan extends Model
      * needed because null is a valid cached outcome (F1-L6 fallback).
      */
     protected ?string $aprMemo = null;
+
     protected bool $aprMemoResolved = false;
 
     /**
@@ -259,6 +278,7 @@ class Loan extends Model
 
         $this->aprMemo = app(APRCalculatorService::class)->calculate($this);
         $this->aprMemoResolved = true;
+
         return $this->aprMemo;
     }
 
@@ -330,6 +350,12 @@ class Loan extends Model
     public function favorites(): HasMany
     {
         return $this->hasMany(Favorite::class);
+    }
+
+    /** Investors who were granted access to this private loan via its link. */
+    public function grants(): HasMany
+    {
+        return $this->hasMany(LoanGrant::class);
     }
 
     public function events(): HasMany
@@ -429,5 +455,46 @@ class Loan extends Model
             number_format($rates->min(), 2, '.', ''),
             number_format($rates->max(), 2, '.', ''),
         ];
+    }
+
+    public function isPrivate(): bool
+    {
+        return $this->visibility === self::VISIBILITY_PRIVATE;
+    }
+
+    /** Generate a fresh, collision-checked share-link token. */
+    public static function generateShareToken(): string
+    {
+        do {
+            $token = Str::random(48);
+        } while (self::where('share_token', $token)->exists());
+
+        return $token;
+    }
+
+    /** Grant an investor access to this (private) loan — idempotent. */
+    public function grantAccessTo(User $user): LoanGrant
+    {
+        return $this->grants()->firstOrCreate(['user_id' => $user->id]);
+    }
+
+    /**
+     * Whether $user may view this loan. Public loans (and admins) are always
+     * visible; a private loan is visible only to an investor who holds a
+     * position in it OR was granted access via its link. Single source of
+     * truth for LoanPolicy::view + the marketplace/favorites filters.
+     */
+    public function isAccessibleBy(User $user): bool
+    {
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        if (! $this->isPrivate()) {
+            return true;
+        }
+
+        return $this->investments()->where('user_id', $user->id)->exists()
+            || $this->grants()->where('user_id', $user->id)->exists();
     }
 }

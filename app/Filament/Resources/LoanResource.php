@@ -8,16 +8,21 @@ use App\Models\Loan;
 use App\Models\Originator;
 use App\Models\User;
 use App\Notifications\EarlyRepaymentReceivedNotification;
+use App\Services\InvestmentDisbursementService;
 use App\Services\Loans\EarlyRepaymentAlreadyExecutedException;
 use App\Services\Loans\EarlyRepaymentCalculationService;
 use App\Services\Loans\EarlyRepaymentExecutionService;
 use BackedEnum;
 use Closure;
+use Filament\Actions\Action;
+use Filament\Actions\EditAction;
 use Filament\Forms;
-use Filament\Schemas\Components\Utilities\Get;
-use Filament\Schemas\Schema;
+use Filament\Forms\Components\Component;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\DB;
@@ -27,10 +32,15 @@ use InvalidArgumentException;
 class LoanResource extends Resource
 {
     protected static ?string $model = Loan::class;
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-document-text';
+
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-document-text';
+
     protected static ?string $navigationLabel = 'Кредити';
+
     protected static ?string $pluralModelLabel = 'Кредити';
+
     protected static ?string $modelLabel = 'Кредит';
+
     protected static ?int $navigationSort = 4;
 
     /**
@@ -38,7 +48,7 @@ class LoanResource extends Resource
      * is intentionally absent; the client wants borrowers added on the spot
      * without it.
      *
-     * @return array<int, \Filament\Forms\Components\Component>
+     * @return array<int, Component>
      */
     protected static function borrowerInlineForm(): array
     {
@@ -80,7 +90,7 @@ class LoanResource extends Resource
     public static function form(Schema $form): Schema
     {
         return $form->schema([
-            \Filament\Schemas\Components\Section::make('Основни данни')->schema([
+            Section::make('Основни данни')->schema([
                 Forms\Components\Select::make('originator_id')->label('Оригинатор')
                     ->options(Originator::pluck('name', 'id'))
                     ->required()->searchable()
@@ -139,11 +149,23 @@ class LoanResource extends Resource
                         foreach ($allowed as $status) {
                             $options[$status] = $allLabels[$status] ?? $status;
                         }
+
                         return $options;
                     })
                     ->default('draft')->required(),
+                // Private loans are hidden from the public board and reachable
+                // only via their share link. Freely editable (not a financial
+                // term, so not frozen post-draft).
+                Forms\Components\Select::make('visibility')->label('Видимост')
+                    ->options([
+                        Loan::VISIBILITY_PUBLIC => 'Публичен (на таблото)',
+                        Loan::VISIBILITY_PRIVATE => 'Частен (само с линк)',
+                    ])
+                    ->default(Loan::VISIBILITY_PUBLIC)
+                    ->required()
+                    ->helperText('Частните кредити не се виждат на общото табло — достъп само през линк.'),
             ])->columns(2),
-            \Filament\Schemas\Components\Section::make('Финансови параметри')->schema([
+            Section::make('Финансови параметри')->schema([
                 Forms\Components\TextInput::make('amount')->label('Сума на кредита (€)')->numeric()->required()->minValue(100)
                     ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
                     ->validatedWhenNotDehydrated(false),
@@ -180,18 +202,18 @@ class LoanResource extends Resource
             // F5 — Rates summary. Read-only, edit-page only (no record on create).
             // Shows both investor + borrower rates + admin-only marge for pricing
             // visibility. Derived values — NOT form fields — so nothing is stored.
-            \Filament\Schemas\Components\Section::make('Ставки')
+            Section::make('Ставки')
                 ->description('Преглед на текущите лихвени нива за този кредит.')
                 ->schema([
                     Forms\Components\Placeholder::make('rate_investor')
                         ->label('Доходност (за инвеститор)')
                         ->content(fn (?Loan $record) => $record?->interest_rate !== null
-                            ? number_format((float) $record->interest_rate, 2) . ' %'
+                            ? number_format((float) $record->interest_rate, 2).' %'
                             : '—'),
                     Forms\Components\Placeholder::make('rate_apr')
                         ->label('ГПР / APR (за кредитополучател)')
                         ->content(fn (?Loan $record) => $record?->apr() !== null
-                            ? $record->apr() . ' %'
+                            ? $record->apr().' %'
                             : '—'),
                     Forms\Components\Placeholder::make('rate_marge')
                         ->label('Марж')
@@ -205,7 +227,8 @@ class LoanResource extends Resource
                                 (string) $record->interest_rate,
                                 2,
                             );
-                            return $marge . ' %';
+
+                            return $marge.' %';
                         }),
                 ])
                 ->columns(3)
@@ -229,12 +252,14 @@ class LoanResource extends Resource
                 Tables\Columns\TextColumn::make('interest_rate_annual')
                     ->label('ГПР (APR)')
                     ->formatStateUsing(fn (Loan $record) => $record->apr() !== null
-                        ? $record->apr() . '%'
+                        ? $record->apr().'%'
                         : '—')
                     ->sortable(),
                 Tables\Columns\TextColumn::make('term_months')->label('Срок')->suffix(' мес.'),
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
-                    ->formatStateUsing(fn (string $state) => match ($state) { 'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се', 'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял', 'default' => 'Просрочен', 'repaid' => 'Изплатен', default => $state })
+                    ->formatStateUsing(fn (string $state) => match ($state) {
+                        'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се', 'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял', 'default' => 'Просрочен', 'repaid' => 'Изплатен', default => $state
+                    })
                     ->colors(['secondary' => 'draft', 'primary' => 'published', 'info' => 'funding', 'success' => fn ($state) => in_array($state, ['funded', 'active']), 'warning' => 'late', 'danger' => 'default', 'gray' => 'repaid']),
                 // Maximum days_late across the loan's late schedules. Computed
                 // via withMax (single sub-select per row, zero N+1). Sortable
@@ -263,8 +288,32 @@ class LoanResource extends Resource
                     ->query(fn ($q) => $q->whereIn('status', [Loan::STATUS_LATE, Loan::STATUS_DEFAULT])),
             ])
             ->actions([
-                \Filament\Actions\EditAction::make(),
-                \Filament\Actions\Action::make('publish')->label('Публикувай')->icon('heroicon-o-globe-alt')->color('success')
+                EditAction::make(),
+                // Private-loan share link — generates the token on first open
+                // and shows the copyable URL to send to the investor.
+                Action::make('share_link')
+                    ->label('Линк за инвеститор')
+                    ->icon('heroicon-o-link')
+                    ->color('info')
+                    ->visible(fn (Loan $r) => $r->visibility === Loan::VISIBILITY_PRIVATE)
+                    ->fillForm(function (Loan $record) {
+                        if (empty($record->share_token)) {
+                            $record->forceFill(['share_token' => Loan::generateShareToken()])->save();
+                        }
+
+                        return ['share_url' => url('/invest/shared/'.$record->share_token)];
+                    })
+                    ->form([
+                        Forms\Components\TextInput::make('share_url')
+                            ->label('Линк за частен достъп')
+                            ->helperText('Копирайте линка и го изпратете на инвеститора. Той влиза с акаунт и попада директно в кредита.')
+                            ->readOnly()
+                            ->columnSpanFull(),
+                    ])
+                    ->action(fn () => null)
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('Затвори'),
+                Action::make('publish')->label('Публикувай')->icon('heroicon-o-globe-alt')->color('success')
                     ->visible(fn (Loan $r) => $r->status === Loan::STATUS_DRAFT)->requiresConfirmation()
                     ->action(function (Loan $r) {
                         DB::transaction(function () use ($r) {
@@ -274,7 +323,7 @@ class LoanResource extends Resource
                         });
                         Notification::make()->title('Публикуван')->success()->send();
                     }),
-                \Filament\Actions\Action::make('unpublish')->label('Върни в чернова')->icon('heroicon-o-pause-circle')->color('warning')
+                Action::make('unpublish')->label('Върни в чернова')->icon('heroicon-o-pause-circle')->color('warning')
                     ->tooltip('Скрива кредита от инвеститорите (връща го в чернова)')
                     // P3-F2 (Phase 3): extended to cover FUNDING loans too
                     // (funded_amount == 0), not just PUBLISHED. An
@@ -293,7 +342,7 @@ class LoanResource extends Resource
                         });
                         Notification::make()->title('Спрян')->warning()->send();
                     }),
-                \Filament\Actions\Action::make('activate')->label('Активирай')->icon('heroicon-o-play')->color('success')
+                Action::make('activate')->label('Активирай')->icon('heroicon-o-play')->color('success')
                     ->visible(fn (Loan $r) => $r->status === Loan::STATUS_FUNDED)->requiresConfirmation()
                     ->modalDescription('Кредитът ще стане активен и ще започнат погашения.')
                     ->action(function (Loan $r) {
@@ -307,7 +356,7 @@ class LoanResource extends Resource
                 // 3-offer feature — pay investors the installments currently due
                 // on their per-investment schedules (each per their chosen offer).
                 // Legacy loans use the standard ProcessRepayment flow instead.
-                \Filament\Actions\Action::make('disburse_offers')
+                Action::make('disburse_offers')
                     ->label('Изплати към инвеститорите')
                     ->icon('heroicon-o-banknotes')
                     ->color('success')
@@ -326,7 +375,7 @@ class LoanResource extends Resource
                         }
 
                         try {
-                            $result = app(\App\Services\InvestmentDisbursementService::class)->disburseDue($record->id);
+                            $result = app(InvestmentDisbursementService::class)->disburseDue($record->id);
 
                             if ($result['paid_count'] === 0) {
                                 Notification::make()->title('Няма дължими вноски за момента')->info()->send();
@@ -353,15 +402,15 @@ class LoanResource extends Resource
                 // (per-row DB hit = N+1 on large tables). If a loan passes the
                 // simple status/flag filter but has no unpaid schedules, the
                 // modal's error panel surfaces that cleanly.
-                \Filament\Actions\Action::make('execute_early_repayment')
+                Action::make('execute_early_repayment')
                     ->label('Предсрочно погасяване')
                     ->icon('heroicon-o-forward')
                     ->color('success')
                     ->visible(fn (Loan $r) => in_array($r->status, [
-                            Loan::STATUS_ACTIVE,
-                            Loan::STATUS_LATE,
-                            Loan::STATUS_DEFAULT,
-                        ], true)
+                        Loan::STATUS_ACTIVE,
+                        Loan::STATUS_LATE,
+                        Loan::STATUS_DEFAULT,
+                    ], true)
                         && $r->early_repaid_at === null
                         && $r->bought_back_at === null)
                     ->requiresConfirmation()
@@ -379,17 +428,17 @@ class LoanResource extends Resource
                                 ->count('user_id');
 
                             return view('filament.modals.early-repayment-preview', [
-                                'loan'          => $record,
-                                'calc'          => $calc,
+                                'loan' => $record,
+                                'calc' => $calc,
                                 'investorCount' => $investorCount,
-                                'error'         => null,
+                                'error' => null,
                             ]);
                         } catch (InvalidArgumentException $e) {
                             return view('filament.modals.early-repayment-preview', [
-                                'loan'          => $record,
-                                'calc'          => null,
+                                'loan' => $record,
+                                'calc' => null,
                                 'investorCount' => 0,
-                                'error'         => $e->getMessage(),
+                                'error' => $e->getMessage(),
                             ]);
                         }
                     })
@@ -460,10 +509,10 @@ class LoanResource extends Resource
                                 ->send();
                         } catch (\Throwable $e) {
                             Log::error('Early repayment execute failed unexpectedly', [
-                                'loan_id'   => $record->id,
-                                'admin_id'  => auth()->id(),
+                                'loan_id' => $record->id,
+                                'admin_id' => auth()->id(),
                                 'exception' => $e::class,
-                                'message'   => $e->getMessage(),
+                                'message' => $e->getMessage(),
                             ]);
                             Notification::make()
                                 ->title('Грешка')

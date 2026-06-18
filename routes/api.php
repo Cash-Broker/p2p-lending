@@ -54,6 +54,9 @@ Route::middleware('auth:sanctum')->group(function () {
         // Browse loans (no KYC required — investors can browse before verification)
         Route::get('/loans', [LoanController::class, 'index']);
         Route::get('/loans/favorites', [LoanController::class, 'favorites']);
+        // Private-loan share link → grants access + returns loan id. MUST be
+        // before /loans/{loan} so "shared" isn't bound as a loan id.
+        Route::get('/loans/shared/{token}', [LoanController::class, 'shared']);
         Route::get('/loans/{loan}', [LoanController::class, 'show']);
         // Per-offer profit projection for a chosen amount (3-offer feature).
         Route::get('/loans/{loan}/offer-quotes', [LoanController::class, 'offerQuotes']);
@@ -126,5 +129,5 @@ Route::get('/email/verify/{id}/{hash}', function (Request $request, string $id, 
         event(new Verified($user));
     }
 
-    return redirect(config('app.url') . '/login?verified=1');
+    return redirect(config('app.url').'/login?verified=1');
 })->middleware('signed')->name('verification.verify');
