@@ -55,6 +55,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/loans', [LoanController::class, 'index']);
         Route::get('/loans/favorites', [LoanController::class, 'favorites']);
         Route::get('/loans/{loan}', [LoanController::class, 'show']);
+        // Per-offer profit projection for a chosen amount (3-offer feature).
+        Route::get('/loans/{loan}/offer-quotes', [LoanController::class, 'offerQuotes']);
         // Lifecycle event timeline — gated by LoanPolicy::viewEvents
         // (investor must hold a position in the loan).
         Route::get('/loans/{loan}/events', [LoanController::class, 'events']);

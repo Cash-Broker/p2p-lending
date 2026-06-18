@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../api/axios'
@@ -25,6 +25,47 @@ const investLoading = ref(false)
 const investError = ref(null)
 const investSuccess = ref(false)
 const showConfirmModal = ref(false)
+
+// 3-offer feature — per-offer profit projection for the entered amount, so the
+// client compares what they'd earn under each structure and picks one. The
+// capacity is a single shared pool (one funded_amount); the offer only sets
+// THIS investor's rate + payout structure, not a separate per-offer limit.
+const offerQuotes = ref([])
+const selectedOfferId = ref(null)
+const quotesLoading = ref(false)
+const showProjection = ref(false)
+let quoteTimer = null
+
+async function fetchQuotes() {
+  if (!loan.value) return
+  // Default the illustration to the full investable amount until the user types.
+  const amount = parseFloat(investAmount.value) >= 50
+    ? investAmount.value
+    : (loan.value.investable_amount ?? loan.value.amount)
+  quotesLoading.value = true
+  try {
+    const { data } = await api.get(`/loans/${loan.value.id}/offer-quotes`, { params: { amount } })
+    offerQuotes.value = data.data
+    // Keep the current selection if still valid, else default to the first offer.
+    if (!offerQuotes.value.some(q => q.loan_offer_id === selectedOfferId.value)) {
+      selectedOfferId.value = offerQuotes.value[0]?.loan_offer_id ?? null
+    }
+  } catch {
+    offerQuotes.value = []
+  } finally {
+    quotesLoading.value = false
+  }
+}
+
+// Debounce so typing an amount doesn't fire a request per keystroke.
+watch(investAmount, () => {
+  clearTimeout(quoteTimer)
+  quoteTimer = setTimeout(fetchQuotes, 350)
+})
+
+const selectedQuote = computed(
+  () => offerQuotes.value.find(q => q.loan_offer_id === selectedOfferId.value) || null,
+)
 
 const typeLabels = { consumer: 'Потребителски', business: 'Бизнес', mortgage: 'Ипотечен', bridge: 'Мостов' }
 const scheduleStatusLabels = { pending: 'Предстои', paid: 'Платено', late: 'Закъснение', default: 'Просрочено' }
@@ -87,6 +128,8 @@ onMounted(async () => {
   try {
     const { data } = await api.get(`/loans/${route.params.id}`)
     loan.value = data
+    // Load the per-offer profit comparison for the default (full) amount.
+    await fetchQuotes()
   } catch (e) {
     error.value = e.response?.status === 404 ? 'Кредитът не е намерен.' : 'Грешка при зареждане.'
   } finally {
@@ -113,7 +156,10 @@ const availableBalance = computed(() => auth.user?.wallet?.available ?? '0.00')
 
 const remaining = computed(() => {
   if (!loan.value) return '0.00'
-  return Math.max(0, parseFloat(loan.value.amount) - parseFloat(loan.value.funded_amount)).toFixed(2)
+  // Capacity is the investable pool (shared across all offers), not the nominal
+  // loan amount — matches the server-side fundingCap.
+  const cap = parseFloat(loan.value.investable_amount ?? loan.value.amount)
+  return Math.max(0, cap - parseFloat(loan.value.funded_amount)).toFixed(2)
 })
 
 function formatAmount(val) {
@@ -122,6 +168,10 @@ function formatAmount(val) {
 
 function openConfirm() {
   investError.value = null
+  if (!selectedOfferId.value) {
+    investError.value = 'Моля изберете оферта.'
+    return
+  }
   if (!investAmount.value || parseFloat(investAmount.value) < 50) {
     investError.value = 'Минималната инвестиция е 50.00 €.'
     return
@@ -141,7 +191,10 @@ async function confirmInvest() {
   investLoading.value = true
   investError.value = null
   try {
-    await api.post(`/loans/${loan.value.id}/invest`, { amount: investAmount.value })
+    await api.post(`/loans/${loan.value.id}/invest`, {
+      amount: investAmount.value,
+      loan_offer_id: selectedOfferId.value,
+    })
     investSuccess.value = true
     showConfirmModal.value = false
     // Refresh loan data and user wallet
@@ -459,6 +512,68 @@ async function confirmInvest() {
                 </div>
               </div>
 
+              <!-- 3-offer selection + profit comparison (изрично от шефката) -->
+              <div class="mb-4">
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-sm font-medium text-navy-700">Изберете оферта</label>
+                  <span v-if="quotesLoading" class="text-xs text-gray-400">изчисляване…</span>
+                </div>
+                <p class="text-xs text-gray-400 mb-2">Печалбата е за въведената сума. Капацитетът е общ за кредита.</p>
+                <div class="space-y-2">
+                  <button
+                    v-for="q in offerQuotes" :key="q.loan_offer_id" type="button"
+                    @click="selectedOfferId = q.loan_offer_id"
+                    class="w-full text-left rounded-xl border p-3 transition-colors"
+                    :class="selectedOfferId === q.loan_offer_id ? 'border-accent-400 bg-accent-50 ring-1 ring-accent-400' : 'border-gray-200 hover:border-accent-300'"
+                  >
+                    <div class="flex items-center justify-between">
+                      <span class="text-sm font-semibold text-navy-700">{{ q.label }}</span>
+                      <span class="text-sm font-bold text-accent-500">{{ q.interest_rate }}%</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-0.5 leading-snug">{{ q.description }}</p>
+                    <div class="mt-2 flex items-center justify-between text-xs">
+                      <span class="text-gray-400">Печалба</span>
+                      <span class="font-bold text-green-600">+{{ formatAmount(q.total_interest) }} €</span>
+                    </div>
+                    <div class="flex items-center justify-between text-xs">
+                      <span class="text-gray-400">Получавате общо</span>
+                      <span class="font-semibold text-navy-700">{{ formatAmount(q.total_repaid) }} €</span>
+                    </div>
+                    <p class="text-[11px] text-gray-400 mt-1">
+                      <span v-if="q.monthly_payment">≈ {{ formatAmount(q.monthly_payment) }} € / месец</span>
+                      <span v-else>Изплащане наведнъж на падежа</span>
+                    </p>
+                  </button>
+                </div>
+
+                <!-- Projected schedule for the selected offer -->
+                <button
+                  v-if="selectedQuote" type="button"
+                  @click="showProjection = !showProjection"
+                  class="mt-2 text-xs text-accent-500 font-medium"
+                >{{ showProjection ? 'Скрий погасителния план' : 'Виж погасителния план' }}</button>
+                <div v-if="showProjection && selectedQuote" class="mt-2 max-h-56 overflow-y-auto rounded-xl border border-gray-100">
+                  <table class="w-full text-xs">
+                    <thead>
+                      <tr class="text-left text-gray-400 border-b border-gray-100">
+                        <th class="px-2 py-1 font-medium">Дата</th>
+                        <th class="px-2 py-1 font-medium">Главница</th>
+                        <th class="px-2 py-1 font-medium">Лихва</th>
+                        <th class="px-2 py-1 font-medium">Общо</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, i) in selectedQuote.schedule" :key="i" class="border-t border-gray-50">
+                        <td class="px-2 py-1 text-gray-600">{{ new Date(row.due_date).toLocaleDateString('bg-BG') }}</td>
+                        <td class="px-2 py-1 text-navy-700">{{ formatAmount(row.principal) }}</td>
+                        <td class="px-2 py-1 text-accent-500">{{ formatAmount(row.interest) }}</td>
+                        <td class="px-2 py-1 font-semibold text-navy-700">{{ formatAmount(row.total) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
               <button
                 @click="openConfirm"
                 :disabled="investLoading"
@@ -489,7 +604,8 @@ async function confirmInvest() {
           <p class="text-sm text-gray-500 mb-6">
             Сигурни ли сте, че искате да инвестирате
             <strong class="text-navy-700">{{ formatAmount(investAmount) }} €</strong>
-            в кредит <strong class="text-navy-700">#{{ loan.id }}</strong>?
+            в кредит <strong class="text-navy-700">#{{ loan.id }}</strong>
+            <span v-if="selectedQuote">по оферта <strong class="text-navy-700">{{ selectedQuote.label }}</strong> ({{ selectedQuote.interest_rate }}%)</span>?
           </p>
           <div class="flex gap-3">
             <button @click="showConfirmModal = false" class="flex-1 py-2.5 border border-gray-200 text-sm font-medium text-gray-600 rounded-xl">Отказ</button>

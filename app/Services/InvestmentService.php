@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Investment;
 use App\Models\Loan;
+use App\Models\LoanOffer;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
@@ -25,10 +26,10 @@ class InvestmentService
      * 6. Credit loan: funded_amount += amount
      * 7. If loan fully funded → transition to 'funded' (admin activates manually)
      */
-    public function invest(User $user, Loan $loan, string $amount, ?string $idempotencyKey = null): Investment
+    public function invest(User $user, Loan $loan, string $amount, ?string $idempotencyKey = null, ?int $loanOfferId = null): Investment
     {
         try {
-            return DB::transaction(function () use ($user, $loan, $amount, $idempotencyKey) {
+            return DB::transaction(function () use ($user, $loan, $amount, $idempotencyKey, $loanOfferId) {
                 // Idempotency check INSIDE transaction — prevents race condition
                 // where two concurrent requests both pass the check before either creates
                 if ($idempotencyKey) {
@@ -44,11 +45,21 @@ class InvestmentService
                 // Business rule validations (AFTER lock to prevent TOCTOU)
                 $this->validateInvestment($user, $loan, $amount);
 
+                // Resolve the chosen offer (when present) AFTER the lock so a
+                // mid-flight disable is caught. Its rate + payout type are
+                // snapshotted onto the investment — the source of truth for this
+                // investor's cash flow, immune to later offer edits.
+                // loanOfferId === null is the legacy path (no offer chosen).
+                $offer = $loanOfferId !== null ? $this->resolveOffer($loan, $loanOfferId) : null;
+
                 // Create investment record
                 $investment = Investment::create([
                     'user_id' => $user->id,
                     'loan_id' => $loan->id,
+                    'loan_offer_id' => $offer?->id,
                     'amount' => $amount,
+                    'interest_rate' => $offer?->interest_rate,
+                    'payout_type' => $offer?->payout_type,
                     'invested_at' => now(),
                     'idempotency_key' => $idempotencyKey,
                 ]);
@@ -119,5 +130,32 @@ class InvestmentService
                 'amount' => ["Maximum available for this loan is {$remaining} €."],
             ]);
         }
+    }
+
+    /**
+     * Resolve + re-validate the chosen offer inside the locked transaction.
+     * Belongs-to-loan and is_enabled are re-checked here (not just in
+     * InvestRequest) so a concurrent disable between request validation and
+     * commit can't slip an investment onto a withdrawn offer.
+     */
+    private function resolveOffer(Loan $loan, int $loanOfferId): LoanOffer
+    {
+        $offer = LoanOffer::where('id', $loanOfferId)
+            ->where('loan_id', $loan->id)
+            ->first();
+
+        if ($offer === null) {
+            throw ValidationException::withMessages([
+                'loan_offer_id' => ['Избраната оферта не е намерена за този кредит.'],
+            ]);
+        }
+
+        if (! $offer->is_enabled) {
+            throw ValidationException::withMessages([
+                'loan_offer_id' => ['Тази оферта вече не е активна.'],
+            ]);
+        }
+
+        return $offer;
     }
 }

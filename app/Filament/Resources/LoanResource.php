@@ -304,6 +304,46 @@ class LoanResource extends Resource
                         Notification::make()->title('Кредитът е активиран')->success()->send();
                     }),
 
+                // 3-offer feature — pay investors the installments currently due
+                // on their per-investment schedules (each per their chosen offer).
+                // Legacy loans use the standard ProcessRepayment flow instead.
+                \Filament\Actions\Action::make('disburse_offers')
+                    ->label('Изплати към инвеститорите')
+                    ->icon('heroicon-o-banknotes')
+                    ->color('success')
+                    ->visible(fn (Loan $r) => in_array($r->status, [Loan::STATUS_ACTIVE, Loan::STATUS_LATE], true))
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (Loan $record) => "Изплащане към инвеститорите за кредит #{$record->id}")
+                    ->modalDescription('Изплаща всички дължими към момента вноски по индивидуалните планове на инвеститорите (според избраните от тях оферти).')
+                    ->action(function (Loan $record) {
+                        if (! $record->usesOffers()) {
+                            Notification::make()
+                                ->title('Кредитът няма оферти-базирани инвестиции')
+                                ->body('Ползвайте обичайното погасяване за този кредит.')
+                                ->warning()->send();
+
+                            return;
+                        }
+
+                        try {
+                            $result = app(\App\Services\InvestmentDisbursementService::class)->disburseDue($record->id);
+
+                            if ($result['paid_count'] === 0) {
+                                Notification::make()->title('Няма дължими вноски за момента')->info()->send();
+
+                                return;
+                            }
+
+                            Notification::make()
+                                ->title('Изплащането е извършено')
+                                ->body("Платени {$result['paid_count']} вноски на обща стойност {$result['total_paid']} €.")
+                                ->success()->send();
+                        } catch (\Throwable $e) {
+                            Log::error('Offer disbursement failed', ['loan_id' => $record->id, 'error' => $e->getMessage()]);
+                            Notification::make()->title('Грешка при изплащане')->body($e->getMessage())->danger()->send();
+                        }
+                    }),
+
                 // F3 — early repayment: admin-triggered full loan close-out.
                 // Visible only for mid-life statuses (active/late/default) that
                 // have not yet been closed via ANY terminal path (not already
@@ -438,6 +478,7 @@ class LoanResource extends Resource
     public static function getRelations(): array
     {
         return [
+            LoanResource\RelationManagers\OffersRelationManager::class,
             LoanResource\RelationManagers\AmortizationSchedulesRelationManager::class,
             LoanResource\RelationManagers\InvestmentsRelationManager::class,
             LoanResource\RelationManagers\LoanEventsRelationManager::class,

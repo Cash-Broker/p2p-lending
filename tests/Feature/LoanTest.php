@@ -134,6 +134,7 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 500,
+            'loan_offer_id' => $loan->offers()->value('id'),
         ], ['X-Idempotency-Key' => 'invest-success-' . uniqid()]);
 
         $response->assertStatus(201)
@@ -171,7 +172,7 @@ class LoanTest extends TestCase
         $loan = Loan::factory()->published()->create(['amount' => 10000, 'funded_amount' => 0]);
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
-        $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500], ['X-Idempotency-Key' => 'funding-' . uniqid()]);
+        $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500, 'loan_offer_id' => $loan->offers()->value('id')], ['X-Idempotency-Key' => 'funding-' . uniqid()]);
 
         $this->assertEquals(Loan::STATUS_FUNDING, $loan->fresh()->status);
     }
@@ -181,7 +182,7 @@ class LoanTest extends TestCase
         $loan = Loan::factory()->funding()->create(['amount' => 1000, 'funded_amount' => 950]);
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
-        $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 50], ['X-Idempotency-Key' => 'funded-' . uniqid()]);
+        $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 50, 'loan_offer_id' => $loan->offers()->value('id')], ['X-Idempotency-Key' => 'funded-' . uniqid()]);
 
         // After audit fix: fully funded loans go to FUNDED, not ACTIVE
         // Admin must manually activate via Filament
@@ -208,7 +209,7 @@ class LoanTest extends TestCase
 
         $this->actingAs($user)->postJson(
             "/api/loans/{$loan->id}/invest",
-            ['amount' => 1000],
+            ['amount' => 1000, 'loan_offer_id' => $loan->offers()->value('id')],
             ['X-Idempotency-Key' => 'single-fill-' . uniqid()],
         )->assertSuccessful();
 
@@ -223,6 +224,7 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 500,
+            'loan_offer_id' => $loan->offers()->value('id'),
         ], ['X-Idempotency-Key' => 'insuf-' . uniqid()]);
 
         $response->assertStatus(422)
@@ -261,6 +263,7 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 300,
+            'loan_offer_id' => $loan->offers()->value('id'),
         ], ['X-Idempotency-Key' => 'exceed-' . uniqid()]);
 
         $response->assertStatus(422)
@@ -286,6 +289,7 @@ class LoanTest extends TestCase
 
         $response = $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 500,
+            'loan_offer_id' => $loan->offers()->value('id'),
         ]);
 
         $response->assertStatus(422)
@@ -302,8 +306,8 @@ class LoanTest extends TestCase
         $user2 = $this->createVerifiedInvestor(['available' => 5000]);
 
         // Simulate concurrent investments — both try to invest 500 (only 500 remaining)
-        $response1 = $this->actingAs($user1)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500], ['X-Idempotency-Key' => 'conc-1-' . uniqid()]);
-        $response2 = $this->actingAs($user2)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500], ['X-Idempotency-Key' => 'conc-2-' . uniqid()]);
+        $response1 = $this->actingAs($user1)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500, 'loan_offer_id' => $loan->offers()->value('id')], ['X-Idempotency-Key' => 'conc-1-' . uniqid()]);
+        $response2 = $this->actingAs($user2)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 500, 'loan_offer_id' => $loan->offers()->value('id')], ['X-Idempotency-Key' => 'conc-2-' . uniqid()]);
 
         // One should succeed, one should fail (or both succeed but total can't exceed loan amount)
         $successCount = collect([$response1, $response2])->filter(fn ($r) => $r->status() === 201)->count();

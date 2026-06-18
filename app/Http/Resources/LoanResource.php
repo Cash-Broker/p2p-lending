@@ -22,6 +22,11 @@ class LoanResource extends JsonResource
             'investable_amount' => $this->investableAmount(),
             'funded_amount' => $this->funded_amount,
             'interest_rate' => $this->interest_rate,
+            // 3-offer feature — the (enabled) investor offers + their rate range.
+            // Eager-loaded already filtered to is_enabled in the controller.
+            // Legacy `interest_rate` above is kept so existing consumers don't break.
+            'offers' => LoanOfferResource::collection($this->whenLoaded('offers')),
+            'offer_rate_range' => $this->relationLoaded('offers') ? $this->offerRateRange() : null,
             // F5 — Annual Percentage Rate (Годишен Процент на Разходите).
             // Borrower-facing cost-of-credit metric. Null-safe: returns null
             // when interest_rate_annual is unset / non-positive, which the

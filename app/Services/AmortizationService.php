@@ -68,7 +68,7 @@ class AmortizationService
                 self::SCALE
             );
 
-            $monthlyPayment = $this->calculateMonthlyPayment($principalTotal, $monthlyRate, $termMonths);
+            $monthlyPayment = self::calculateMonthlyPayment($principalTotal, $monthlyRate, $termMonths);
 
             $remaining = $principalTotal;
             $baseDate = now();
@@ -116,8 +116,12 @@ class AmortizationService
     /**
      * Calculate fixed monthly payment via annuity formula.
      * Handles the zero-interest edge case separately (division by zero).
+     *
+     * Public + static so {@see \App\Services\OfferProjectionService} reuses the
+     * EXACT same formula for its AMORTIZING projection — keeping projected and
+     * live amortizing schedules provably identical (see OfferProjectionServiceTest).
      */
-    private function calculateMonthlyPayment(string $principal, string $monthlyRate, int $termMonths): string
+    public static function calculateMonthlyPayment(string $principal, string $monthlyRate, int $termMonths): string
     {
         // Zero-interest loan: equal principal split, no interest component
         if (bccomp($monthlyRate, '0', self::SCALE) === 0) {

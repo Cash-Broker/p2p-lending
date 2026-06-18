@@ -169,6 +169,7 @@ class AuditFixesTest extends TestCase
 
         $response1 = $this->actingAs($investor)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 500.00,
+            'loan_offer_id' => $loan->offers()->value('id'),
         ], ['X-Idempotency-Key' => 'test-key-123']);
 
         $response1->assertStatus(201);
@@ -176,6 +177,7 @@ class AuditFixesTest extends TestCase
 
         $response2 = $this->actingAs($investor)->postJson("/api/loans/{$loan->id}/invest", [
             'amount' => 500.00,
+            'loan_offer_id' => $loan->offers()->value('id'),
         ], ['X-Idempotency-Key' => 'test-key-123']);
 
         $response2->assertStatus(201);

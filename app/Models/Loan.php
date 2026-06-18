@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use App\Enums\PayoutType;
 use App\Services\AmortizationService;
 use App\Services\APRCalculatorService;
+use App\Services\InvestmentScheduleGenerator;
 use Database\Factories\LoanFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -126,6 +128,24 @@ class Loan extends Model
                 }
             }
         });
+
+        // Every new loan is seeded with the three default investor offers
+        // (12/16/20). The boss then freely edits rates / toggles availability
+        // per loan. Seeded through the relation so LoanOffer model events
+        // (audit) fire; the backfill migration uses raw inserts for pre-existing
+        // loans. Unique(loan_id, payout_type) guards against any double-seed.
+        static::created(function (Loan $loan) {
+            $offers = [];
+            foreach (PayoutType::defaults() as $type) {
+                $offers[] = [
+                    'payout_type' => $type->value,
+                    'interest_rate' => $type->defaultRate(),
+                    'is_enabled' => true,
+                    'position' => $type->position(),
+                ];
+            }
+            $loan->offers()->createMany($offers);
+        });
     }
 
     public function canTransitionTo(string $newStatus, ?string $fromStatus = null): bool
@@ -150,14 +170,23 @@ class Loan extends Model
         DB::transaction(function () use ($newStatus, $fromStatus) {
             $this->forceFill(['status' => $newStatus])->save();
 
-            // On first activation (funded → active), auto-generate the amortization
-            // schedule — UNLESS the admin already generated it at draft via the
-            // calculator (skip-if-exists avoids the "schedule already exists" throw
-            // rolling back activation). LATE → ACTIVE is a return from delinquency;
-            // schedule already exists from the original activation.
-            if ($fromStatus === self::STATUS_FUNDED && $newStatus === self::STATUS_ACTIVE
-                && ! $this->amortizationSchedules()->exists()) {
-                app(AmortizationService::class)->generateSchedule($this);
+            // On first activation (funded → active), auto-generate the payout
+            // schedule. Two paths:
+            //   • offer-based loans → per-investment investment_schedules, each
+            //     honouring its own offer (amortizing / interest-only /
+            //     capitalized). This is the 3-offer feature's disbursement basis.
+            //   • legacy loans → the single per-loan amortization schedule, via
+            //     AmortizationService — UNCHANGED, byte-identical to before.
+            // Both skip-if-exists so a pre-generated schedule (admin calculator)
+            // or a LATE → ACTIVE return doesn't regenerate / throw.
+            if ($fromStatus === self::STATUS_FUNDED && $newStatus === self::STATUS_ACTIVE) {
+                if ($this->usesOffers()) {
+                    if (! $this->investmentSchedules()->exists()) {
+                        app(InvestmentScheduleGenerator::class)->generate($this);
+                    }
+                } elseif (! $this->amortizationSchedules()->exists()) {
+                    app(AmortizationService::class)->generateSchedule($this);
+                }
             }
         });
     }
@@ -286,6 +315,18 @@ class Loan extends Model
         return $this->hasMany(AmortizationSchedule::class);
     }
 
+    /** The (up to three) investor offers on this loan. */
+    public function offers(): HasMany
+    {
+        return $this->hasMany(LoanOffer::class)->orderBy('position');
+    }
+
+    /** Per-investment payout schedules (offer-based loans only). */
+    public function investmentSchedules(): HasMany
+    {
+        return $this->hasMany(InvestmentSchedule::class);
+    }
+
     public function favorites(): HasMany
     {
         return $this->hasMany(Favorite::class);
@@ -351,5 +392,42 @@ class Loan extends Model
     public function amortizationBase(): string
     {
         return $this->investableAmount();
+    }
+
+    /**
+     * Whether any investment in this loan was committed under a 3-offer payout
+     * structure. This is the switch that routes disbursement: offer-based loans
+     * use per-investment investment_schedules; legacy loans (every investment
+     * has loan_offer_id = null) keep the per-loan amortization schedule + the
+     * existing pro-rata RepaymentService, byte-identical to before the feature.
+     */
+    public function usesOffers(): bool
+    {
+        return $this->investments()->whereNotNull('loan_offer_id')->exists();
+    }
+
+    /**
+     * [min, max] annual rate across this loan's ENABLED offers, formatted to 2
+     * decimals, or null when none are enabled. Drives the marketplace
+     * "от X% до Y%" badge. Compares numerically (decimal strings sort wrong
+     * lexicographically — '9.00' vs '12.00').
+     *
+     * @return array{0: string, 1: string}|null
+     */
+    public function offerRateRange(): ?array
+    {
+        $rates = $this->offers
+            ->where('is_enabled', true)
+            ->pluck('interest_rate')
+            ->map(fn ($r) => (float) $r);
+
+        if ($rates->isEmpty()) {
+            return null;
+        }
+
+        return [
+            number_format($rates->min(), 2, '.', ''),
+            number_format($rates->max(), 2, '.', ''),
+        ];
     }
 }

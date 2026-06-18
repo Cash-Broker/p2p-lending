@@ -11,6 +11,7 @@ use App\Http\Resources\LoanResource;
 use App\Models\Favorite;
 use App\Models\Loan;
 use App\Services\InvestmentService;
+use App\Services\OfferProjectionService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,8 +20,11 @@ class LoanController extends Controller
 {
     public function index(LoanFilterRequest $request): JsonResponse
     {
-        $query = Loan::with(['originator', 'anonymizedProfile'])
-            ->whereIn('status', Loan::FUNDABLE_STATUSES);
+        $query = Loan::with([
+            'originator',
+            'anonymizedProfile',
+            'offers' => fn ($q) => $q->where('is_enabled', true)->orderBy('position'),
+        ])->whereIn('status', Loan::FUNDABLE_STATUSES);
 
         // Filters
         if ($request->filled('type')) {
@@ -80,10 +84,69 @@ class LoanController extends Controller
     {
         $this->authorize('view', $loan);
 
-        $loan->load(['originator', 'anonymizedProfile', 'coBorrowerAnonymizedProfile', 'amortizationSchedules'])
-            ->loadCount('investments');
+        $loan->load([
+            'originator',
+            'anonymizedProfile',
+            'coBorrowerAnonymizedProfile',
+            'amortizationSchedules',
+            'offers' => fn ($q) => $q->where('is_enabled', true)->orderBy('position'),
+        ])->loadCount('investments');
 
         return response()->json(new LoanResource($loan));
+    }
+
+    /**
+     * Per-offer profit projection for a chosen amount — the side-by-side
+     * comparison the client uses to pick a structure. Returns, for each enabled
+     * offer: total interest (profit), total repaid, the recurring/maturity
+     * payment, and the full projected schedule. Pure projection — persists
+     * nothing.
+     */
+    public function offerQuotes(Request $request, Loan $loan, OfferProjectionService $projection): JsonResponse
+    {
+        $this->authorize('view', $loan);
+
+        // Default to the full investable amount; clamp junk input to it.
+        $amount = $request->query('amount', $loan->investableAmount());
+        if (! is_numeric($amount) || bccomp((string) $amount, '0.01', 2) < 0) {
+            $amount = $loan->investableAmount();
+        }
+        $amount = number_format((float) $amount, 2, '.', '');
+        $term = (int) $loan->term_months;
+
+        $quotes = $loan->offers()
+            ->where('is_enabled', true)
+            ->orderBy('position')
+            ->get()
+            ->map(function ($offer) use ($projection, $amount, $term) {
+                $summary = $projection->summary($amount, (string) $offer->interest_rate, $term, $offer->payout_type);
+                $schedule = $projection->schedule($amount, (string) $offer->interest_rate, $term, $offer->payout_type);
+
+                return [
+                    'loan_offer_id' => $offer->id,
+                    'payout_type' => $offer->payout_type->value,
+                    'label' => $offer->payout_type->label(),
+                    'description' => $offer->payout_type->description(),
+                    'interest_rate' => (string) $offer->interest_rate,
+                    'amount' => $amount,
+                    'total_interest' => $summary['total_interest'],
+                    'total_repaid' => $summary['total_repaid'],
+                    'monthly_payment' => $summary['monthly_payment'],
+                    'maturity_payment' => $summary['maturity_payment'],
+                    'schedule' => array_map(fn ($row) => [
+                        'due_date' => $row['due_date']->toDateString(),
+                        'principal' => $row['principal'],
+                        'interest' => $row['interest'],
+                        'total' => $row['total'],
+                    ], $schedule),
+                ];
+            });
+
+        return response()->json([
+            'data' => $quotes,
+            'amount' => $amount,
+            'term_months' => $term,
+        ]);
     }
 
     public function invest(InvestRequest $request, Loan $loan, InvestmentService $service): JsonResponse
@@ -97,7 +160,8 @@ class LoanController extends Controller
             $request->user(),
             $loan,
             number_format((float) $request->amount, 2, '.', ''),
-            $idempotencyKey
+            $idempotencyKey,
+            (int) $request->loan_offer_id,
         );
 
         return response()->json([

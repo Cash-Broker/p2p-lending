@@ -109,6 +109,17 @@ class EarlyRepaymentExecutionService
             /** @var Loan $loan */
             $loan = Loan::where('id', $loanId)->lockForUpdate()->firstOrFail();
 
+            // 3-offer guard: offer-based loans pay investors via per-investment
+            // schedules, not the single per-loan amortization schedule this
+            // service distributes from. Block here (all call paths) until a
+            // structure-aware early repayment lands — explicit follow-up.
+            if ($loan->usesOffers()) {
+                throw new InvalidArgumentException(
+                    "Cannot early-repay loan #{$loanId}: it uses per-offer investor payouts. "
+                    . 'Offer-based early repayment is not yet supported.'
+                );
+            }
+
             // 2. IDEMPOTENCY + STATE with differentiated messages
             if ($loan->status === Loan::STATUS_REPAID) {
                 if ($loan->early_repaid_at !== null) {

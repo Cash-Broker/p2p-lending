@@ -115,6 +115,16 @@ function formatAmount(val) {
   return parseFloat(val).toLocaleString('bg-BG', { minimumFractionDigits: 2 })
 }
 
+// 3-offer feature — show the enabled offers' rate range (e.g. "12–20%"). Falls
+// back to the loan's single rate for loans without offers.
+function rateDisplay(loan) {
+  const r = loan.offer_rate_range
+  if (r && r.length === 2) {
+    return r[0] === r[1] ? `${parseFloat(r[0])}%` : `${parseFloat(r[0])}–${parseFloat(r[1])}%`
+  }
+  return `${loan.interest_rate}%`
+}
+
 watch(activeTab, () => loadLoans())
 
 onMounted(() => {
@@ -244,7 +254,7 @@ onMounted(() => {
               <span v-if="loan.anonymized_profile?.risk_class" class="px-2 py-0.5 rounded-full text-xs font-bold" :class="riskBadgeClass[loan.anonymized_profile.risk_class]">{{ loan.anonymized_profile.risk_class }}</span>
             </td>
             <td class="px-5 py-3 text-gray-500">{{ loan.originator?.name }}</td>
-            <td class="px-5 py-3 font-semibold text-accent-500">{{ loan.interest_rate }}%</td>
+            <td class="px-5 py-3 font-semibold text-accent-500">{{ rateDisplay(loan) }}</td>
             <td class="px-5 py-3 text-navy-700">
               <span v-if="loan.apr">{{ loan.apr }}%</span>
               <span v-else class="text-gray-500">—</span>
@@ -284,7 +294,7 @@ onMounted(() => {
             <p class="text-xs text-gray-400 mt-0.5">{{ loan.originator?.name }} · #{{ loan.id }}</p>
           </div>
           <div class="text-right">
-            <p class="text-lg font-bold text-accent-500 leading-tight">{{ loan.interest_rate }}%</p>
+            <p class="text-lg font-bold text-accent-500 leading-tight">{{ rateDisplay(loan) }}</p>
             <p v-if="loan.apr" class="text-xs text-gray-500 leading-tight">ГПР {{ loan.apr }}%</p>
           </div>
         </div>

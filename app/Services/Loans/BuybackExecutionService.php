@@ -128,6 +128,17 @@ class BuybackExecutionService
             /** @var Loan $loan */
             $loan = Loan::where('id', $loanId)->lockForUpdate()->firstOrFail();
 
+            // 3-offer guard: offer-based loans pay investors via per-investment
+            // schedules, not the single per-loan amortization schedule the
+            // buyback calculator sums. Block here (all call paths) until a
+            // structure-aware buyback lands — explicit follow-up.
+            if ($loan->usesOffers()) {
+                throw new InvalidArgumentException(
+                    "Cannot buy back loan #{$loanId}: it uses per-offer investor payouts. "
+                    . 'Offer-based buyback is not yet supported.'
+                );
+            }
+
             // 2. IDEMPOTENCY
             if ($loan->status === Loan::STATUS_BOUGHT_BACK) {
                 throw new BuybackAlreadyExecutedException(
