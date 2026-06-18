@@ -87,6 +87,38 @@ class LoanResource extends Resource
             ->all();
     }
 
+    /**
+     * Reusable „Линк за инвеститор" action — used both as a table row action
+     * and on the Edit page header. Generates the share token lazily on first
+     * open and shows the copyable private-access URL. Visible only for private
+     * loans.
+     */
+    public static function shareLinkAction(): Action
+    {
+        return Action::make('share_link')
+            ->label('Линк за инвеститор')
+            ->icon('heroicon-o-link')
+            ->color('info')
+            ->visible(fn (?Loan $record) => $record?->visibility === Loan::VISIBILITY_PRIVATE)
+            ->fillForm(function (Loan $record) {
+                if (empty($record->share_token)) {
+                    $record->forceFill(['share_token' => Loan::generateShareToken()])->save();
+                }
+
+                return ['share_url' => url('/invest/shared/'.$record->share_token)];
+            })
+            ->form([
+                Forms\Components\TextInput::make('share_url')
+                    ->label('Линк за частен достъп')
+                    ->helperText('Копирайте линка и го изпратете на инвеститора. Кредитът трябва да е ПУБЛИКУВАН, за да е достъпен през линка (видимостта остава „Частен").')
+                    ->readOnly()
+                    ->columnSpanFull(),
+            ])
+            ->action(fn () => null)
+            ->modalSubmitAction(false)
+            ->modalCancelActionLabel('Затвори');
+    }
+
     public static function form(Schema $form): Schema
     {
         return $form->schema([
@@ -291,28 +323,7 @@ class LoanResource extends Resource
                 EditAction::make(),
                 // Private-loan share link — generates the token on first open
                 // and shows the copyable URL to send to the investor.
-                Action::make('share_link')
-                    ->label('Линк за инвеститор')
-                    ->icon('heroicon-o-link')
-                    ->color('info')
-                    ->visible(fn (Loan $r) => $r->visibility === Loan::VISIBILITY_PRIVATE)
-                    ->fillForm(function (Loan $record) {
-                        if (empty($record->share_token)) {
-                            $record->forceFill(['share_token' => Loan::generateShareToken()])->save();
-                        }
-
-                        return ['share_url' => url('/invest/shared/'.$record->share_token)];
-                    })
-                    ->form([
-                        Forms\Components\TextInput::make('share_url')
-                            ->label('Линк за частен достъп')
-                            ->helperText('Копирайте линка и го изпратете на инвеститора. Той влиза с акаунт и попада директно в кредита.')
-                            ->readOnly()
-                            ->columnSpanFull(),
-                    ])
-                    ->action(fn () => null)
-                    ->modalSubmitAction(false)
-                    ->modalCancelActionLabel('Затвори'),
+                self::shareLinkAction(),
                 Action::make('publish')->label('Публикувай')->icon('heroicon-o-globe-alt')->color('success')
                     ->visible(fn (Loan $r) => $r->status === Loan::STATUS_DRAFT)->requiresConfirmation()
                     ->action(function (Loan $r) {

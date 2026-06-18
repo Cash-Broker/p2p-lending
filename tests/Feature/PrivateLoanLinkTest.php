@@ -101,6 +101,21 @@ class PrivateLoanLinkTest extends TestCase
         $this->actingAs($user)->getJson("/api/loans/shared/{$public->share_token}")->assertStatus(404);
     }
 
+    public function test_draft_private_loan_link_reports_not_yet_available(): void
+    {
+        // Factory default status is draft — the link must not grant access nor
+        // bounce to a 403; it gives a clear "not available yet" instead.
+        $loan = Loan::factory()->create(['visibility' => Loan::VISIBILITY_PRIVATE]);
+        $loan->forceFill(['share_token' => Loan::generateShareToken()])->save();
+        $user = $this->investor();
+
+        $this->actingAs($user)->getJson("/api/loans/shared/{$loan->share_token}")
+            ->assertStatus(404)
+            ->assertJsonPath('message', 'Кредитът все още не е наличен. Моля, опитайте по-късно.');
+
+        $this->assertSame(0, $loan->grants()->count());
+    }
+
     public function test_admin_and_position_holders_have_access(): void
     {
         $loan = $this->privateLoan();

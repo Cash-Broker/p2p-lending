@@ -69,6 +69,9 @@ class EditLoan extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            // Same „Линк за инвеститор" action as the table — shown prominently
+            // in the edit page header (visible only for private loans).
+            LoanResource::shareLinkAction(),
             Actions\DeleteAction::make()
                 ->visible(fn (Loan $record) => $record->status === Loan::STATUS_DRAFT
                     && bccomp($record->funded_amount, '0', 2) <= 0)

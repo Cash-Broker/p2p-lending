@@ -47,4 +47,24 @@ class PrivateLoanFilamentTest extends TestCase
 
         $this->assertNotNull($loan->fresh()->share_token);
     }
+
+    public function test_share_link_action_on_edit_page_for_private_loan(): void
+    {
+        $loan = Loan::factory()->published()->create(['visibility' => Loan::VISIBILITY_PRIVATE]);
+
+        Livewire::test(EditLoan::class, ['record' => $loan->getRouteKey()])
+            ->assertActionVisible('share_link')
+            ->mountAction('share_link')
+            ->assertHasNoActionErrors();
+
+        $this->assertNotNull($loan->fresh()->share_token);
+    }
+
+    public function test_share_link_action_hidden_on_edit_page_for_public_loan(): void
+    {
+        $loan = Loan::factory()->create(['visibility' => Loan::VISIBILITY_PUBLIC]);
+
+        Livewire::test(EditLoan::class, ['record' => $loan->getRouteKey()])
+            ->assertActionHidden('share_link');
+    }
 }

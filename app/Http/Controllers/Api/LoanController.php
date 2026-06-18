@@ -169,6 +169,13 @@ class LoanController extends Controller
             return response()->json(['message' => 'Линкът е невалиден или вече не е активен.'], 404);
         }
 
+        // The link only opens once the loan is actually available to investors
+        // (published+). A draft private loan would otherwise grant access and
+        // then 403 on the detail page — surfacing as a vague "load error".
+        if (! in_array($loan->status, Loan::INVESTOR_VISIBLE_STATUSES, true)) {
+            return response()->json(['message' => 'Кредитът все още не е наличен. Моля, опитайте по-късно.'], 404);
+        }
+
         $loan->grantAccessTo($request->user());
 
         return response()->json(['loan_id' => $loan->id]);

@@ -16,9 +16,12 @@ onMounted(async () => {
     const { data } = await api.get(`/loans/shared/${route.params.token}`)
     router.replace(`/invest/${data.loan_id}`)
   } catch (e) {
-    error.value = e.response?.status === 404
-      ? 'Линкът е невалиден или вече не е активен.'
-      : 'Възникна грешка при отваряне на линка.'
+    // Prefer the server's message (e.g. "не е наличен", invalid link); fall
+    // back to generic copy by status.
+    error.value = e.response?.data?.message
+      || (e.response?.status === 404
+        ? 'Линкът е невалиден или вече не е активен.'
+        : 'Възникна грешка при отваряне на линка.')
   }
 })
 </script>
