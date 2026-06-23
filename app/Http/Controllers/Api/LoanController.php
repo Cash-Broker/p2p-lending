@@ -12,6 +12,7 @@ use App\Models\Favorite;
 use App\Models\Loan;
 use App\Services\InvestmentService;
 use App\Services\OfferProjectionService;
+use App\Support\Money;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -110,11 +111,12 @@ class LoanController extends Controller
         $this->authorize('view', $loan);
 
         // Default to the full investable amount; clamp junk input to it.
-        $amount = $request->query('amount', $loan->investableAmount());
-        if (! is_numeric($amount) || bccomp((string) $amount, '0.01', 2) < 0) {
+        // bcmath-safe — no float cast on the query param.
+        try {
+            $amount = Money::normalizePositive($request->query('amount', $loan->investableAmount()));
+        } catch (\InvalidArgumentException) {
             $amount = $loan->investableAmount();
         }
-        $amount = number_format((float) $amount, 2, '.', '');
         $term = (int) $loan->term_months;
 
         $quotes = $loan->offers()
@@ -192,10 +194,17 @@ class LoanController extends Controller
             return response()->json(['message' => 'X-Idempotency-Key header is required.'], 422);
         }
 
+        try {
+            // bcmath-safe ingress — never float-cast user input.
+            $amount = Money::normalizePositive($request->amount);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
         $investment = $service->invest(
             $request->user(),
             $loan,
-            number_format((float) $request->amount, 2, '.', ''),
+            $amount,
             $idempotencyKey,
             (int) $request->loan_offer_id,
         );

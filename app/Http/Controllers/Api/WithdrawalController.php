@@ -9,6 +9,7 @@ use App\Http\Resources\WithdrawalRequestResource;
 use App\Models\SavedIban;
 use App\Models\WithdrawalRequest;
 use App\Services\WithdrawalService;
+use App\Support\Money;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -29,9 +30,16 @@ class WithdrawalController extends Controller
             $iban = $request->iban;
         }
 
+        try {
+            // bcmath-safe ingress — never float-cast user input.
+            $amount = Money::normalizePositive($request->amount);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
         $withdrawal = $this->withdrawalService->createRequest(
             $request->user()->id,
-            number_format((float) $request->amount, 2, '.', ''),
+            $amount,
             $iban
         );
 

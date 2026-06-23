@@ -107,6 +107,21 @@ class Loan extends Model
         'term_months', 'originator_id', 'borrower_id', 'co_borrower_id', 'type',
     ];
 
+    // Statuses an admin may NEVER set by hand via the edit-form Select. Each
+    // has a dedicated flow that MOVES THE MONEY before stamping the status:
+    //   repaid       → scheduled completion / early-repayment action
+    //   bought_back  → buyback action
+    // Manually picking them would land the loan in a "closed" state while
+    // investor principal is still sitting in `invested` — money stranded
+    // forever (terminal states accept no further transitions). The activate
+    // (funded → active) transition is also excluded from the Select because it
+    // must run through the "Активирай" action so the amortization schedule is
+    // generated (see transitionTo()).
+    const MANUAL_STATUS_BLOCKLIST = [
+        self::STATUS_REPAID,
+        self::STATUS_BOUGHT_BACK,
+    ];
+
     protected static function booted(): void
     {
         static::updating(function (Loan $loan) {
@@ -162,6 +177,34 @@ class Loan extends Model
             }
             $loan->offers()->createMany($offers);
         });
+    }
+
+    /**
+     * Statuses the admin may pick in the edit-form Select: the structurally
+     * allowed transitions MINUS the money-bearing ones that must run through a
+     * payout-performing flow ({@see MANUAL_STATUS_BLOCKLIST}, plus
+     * funded → active which must use the activate action so the schedule is
+     * generated). The current status is added by the caller as the no-op
+     * default. Pure + array-returning so it is unit-testable without Filament.
+     *
+     * @return list<string>
+     */
+    public function selectableStatusTransitions(): array
+    {
+        $allowed = self::ALLOWED_TRANSITIONS[$this->status] ?? [];
+
+        return array_values(array_filter($allowed, function (string $target) {
+            if (in_array($target, self::MANUAL_STATUS_BLOCKLIST, true)) {
+                return false;
+            }
+
+            // funded → active must go through the activate action (schedule gen).
+            if ($target === self::STATUS_ACTIVE && $this->status === self::STATUS_FUNDED) {
+                return false;
+            }
+
+            return true;
+        }));
     }
 
     public function canTransitionTo(string $newStatus, ?string $fromStatus = null): bool

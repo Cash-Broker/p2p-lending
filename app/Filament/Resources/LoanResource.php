@@ -174,11 +174,16 @@ class LoanResource extends Resource
                         if (! $record?->id) {
                             return ['draft' => 'Чернова'];
                         }
-                        // Show current status + valid transitions only
+                        // Current status (no-op default) + the transitions the
+                        // admin may set BY HAND. Money-bearing terminals
+                        // (repaid / bought_back) and funded → active are
+                        // excluded — they must run through their payout-
+                        // performing actions so investor capital is actually
+                        // moved, not just relabelled. See
+                        // Loan::selectableStatusTransitions().
                         $current = $record->status;
-                        $allowed = Loan::ALLOWED_TRANSITIONS[$current] ?? [];
                         $options = [$current => $allLabels[$current] ?? $current];
-                        foreach ($allowed as $status) {
+                        foreach ($record->selectableStatusTransitions() as $status) {
                             $options[$status] = $allLabels[$status] ?? $status;
                         }
 

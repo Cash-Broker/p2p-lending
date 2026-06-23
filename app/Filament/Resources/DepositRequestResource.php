@@ -109,7 +109,8 @@ class DepositRequestResource extends Resource
                             }),
                         Forms\Components\TextInput::make('amount')
                             ->label('Сума по bank statement (€)')
-                            ->numeric()->required()->minValue(1)->step(0.01),
+                            ->numeric()->required()->minValue(1)->step(0.01)
+                            ->maxValue(\App\Support\Money::MAX),
                         Forms\Components\TextInput::make('bank_reference')
                             ->label('Bank reference (от statement-а)')
                             ->required()
@@ -155,8 +156,17 @@ class DepositRequestResource extends Resource
                             return;
                         }
 
+                        try {
+                            // bcmath-safe ingress — never float-cast user input.
+                            $amount = \App\Support\Money::normalizePositive($data['amount']);
+                        } catch (\InvalidArgumentException $e) {
+                            Notification::make()->title('Невалидна сума')
+                                ->body($e->getMessage())->danger()->send();
+                            return;
+                        }
+
                         $deposit->update([
-                            'amount' => number_format((float) $data['amount'], 2, '.', ''),
+                            'amount' => $amount,
                             'bank_reference' => $data['bank_reference'],
                         ]);
 
