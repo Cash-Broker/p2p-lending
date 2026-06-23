@@ -164,4 +164,73 @@ class PerInvestorConservationTest extends TestCase
             $this->assertEquals('0.00', (string) User::find($uid)->wallet->fresh()->invested);
         }
     }
+
+    public function test_back_dated_loan_reconciles_on_the_outstanding_stream_only(): void
+    {
+        // Back-dated listing: the schedule is generated with a past first due
+        // date, so the elapsed installments are pre-marked 'paid' and investors
+        // fund only the OUTSTANDING principal (Loan::fundingCap()). The repayable
+        // stream therefore sums to funded_amount, NOT the full investable amount.
+        // Each investor must still be returned EXACTLY their invested over that
+        // stream, with invested -> 0 and no clamp — the case the property test
+        // above does not cover.
+        $service = app(RepaymentService::class);
+
+        $loan = Loan::factory()->active()->create([
+            'amount' => '1000.00',
+            'investable_amount' => '1000.00',
+            'funded_amount' => '0.00',
+            'interest_rate' => '12.00',
+            'interest_rate_annual' => '14.00',
+            'term_months' => 12,
+        ]);
+
+        // Anchor installment #1 six months in the past → ~6 elapsed (paid),
+        // the rest pending. Generated up-front (admin calculator path).
+        app(AmortizationService::class)->generateSchedule($loan, now()->subMonthsNoOverflow(6));
+
+        $pending = $loan->amortizationSchedules()->whereIn('status', ['pending', 'late'])->get();
+        $elapsedPaid = $loan->amortizationSchedules()->where('status', 'paid')->count();
+
+        // Sanity: this fixture really is back-dated (some elapsed, some pending),
+        // and the fundable stream is strictly less than the full investable amount.
+        $this->assertGreaterThan(0, $elapsedPaid, 'fixture must have elapsed pre-paid installments');
+        $this->assertGreaterThan(1, $pending->count(), 'fixture must have a multi-row outstanding stream');
+
+        $funded = $pending->reduce(fn (string $c, $r) => bcadd($c, (string) $r->principal, 2), '0.00');
+        $this->assertSame(-1, bccomp($funded, '1000.00', 2), 'funded must be less than the full investable amount');
+
+        $loan->forceFill(['funded_amount' => $funded])->save();
+
+        // Investors fund exactly the outstanding stream (uneven split).
+        $shares = $this->splitEvenly($funded, 4);
+        $investors = [];
+        foreach ($shares as $share) {
+            $u = $this->investor($share);
+            Investment::factory()->create(['user_id' => $u->id, 'loan_id' => $loan->id, 'amount' => $share]);
+            $investors[$u->id] = $share;
+        }
+
+        foreach ($pending->sortBy('due_date') as $row) {
+            $service->processRepayment($loan->id, $row->id);
+        }
+
+        foreach ($investors as $uid => $invested) {
+            $returned = Transaction::where('user_id', $uid)
+                ->where('type', Transaction::TYPE_REPAYMENT_PRINCIPAL)
+                ->where('reference', 'like', "loan:{$loan->id}:%")
+                ->sum('amount');
+            $this->assertSame(
+                0,
+                bccomp($invested, number_format((float) $returned, 2, '.', ''), 2),
+                "back-dated: investor #{$uid} returned {$returned}, expected exactly {$invested}"
+            );
+            $this->assertEquals('0.00', (string) User::find($uid)->wallet->fresh()->invested);
+        }
+
+        // Σ principal returned == funded (the stream), never the full 1000.
+        $totalPrincipal = Transaction::where('type', Transaction::TYPE_REPAYMENT_PRINCIPAL)
+            ->where('reference', 'like', "loan:{$loan->id}:%")->sum('amount');
+        $this->assertSame($funded, number_format((float) $totalPrincipal, 2, '.', ''));
+    }
 }
