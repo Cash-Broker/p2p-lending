@@ -207,6 +207,9 @@ class LoanController extends Controller
             $amount,
             $idempotencyKey,
             (int) $request->loan_offer_id,
+            $request->filled('expected_interest_rate')
+                ? (string) $request->input('expected_interest_rate')
+                : null,
         );
 
         return response()->json([

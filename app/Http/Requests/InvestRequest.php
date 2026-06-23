@@ -27,6 +27,11 @@ class InvestRequest extends FormRequest
                     $query->where('loan_id', $loan?->id)->where('is_enabled', true);
                 }),
             ],
+            // Optional: the interest rate the client displayed in the offer
+            // quote. When present, the commit rejects if the live offer rate
+            // has drifted since — so the investor is never silently paid less
+            // than the projection they confirmed.
+            'expected_interest_rate' => ['nullable', 'numeric', 'min:0', 'max:999.99', 'decimal:0,2'],
         ];
     }
 

@@ -26,10 +26,10 @@ class InvestmentService
      * 6. Credit loan: funded_amount += amount
      * 7. If loan fully funded → transition to 'funded' (admin activates manually)
      */
-    public function invest(User $user, Loan $loan, string $amount, ?string $idempotencyKey = null, ?int $loanOfferId = null): Investment
+    public function invest(User $user, Loan $loan, string $amount, ?string $idempotencyKey = null, ?int $loanOfferId = null, ?string $expectedInterestRate = null): Investment
     {
         try {
-            return DB::transaction(function () use ($user, $loan, $amount, $idempotencyKey, $loanOfferId) {
+            return DB::transaction(function () use ($user, $loan, $amount, $idempotencyKey, $loanOfferId, $expectedInterestRate) {
                 // Idempotency check INSIDE transaction — prevents race condition
                 // where two concurrent requests both pass the check before either creates
                 if ($idempotencyKey) {
@@ -51,6 +51,23 @@ class InvestmentService
                 // investor's cash flow, immune to later offer edits.
                 // loanOfferId === null is the legacy path (no offer chosen).
                 $offer = $loanOfferId !== null ? $this->resolveOffer($loan, $loanOfferId) : null;
+
+                // Quote-vs-commit protection. If the caller passed the rate it
+                // quoted to the investor, reject when the LIVE offer rate has
+                // drifted since (the boss edited it mid-funding). The investor
+                // is shown current terms to re-confirm rather than being
+                // silently committed — and paid — at a different rate than the
+                // projection they just saw. Opt-in: a null expectedInterestRate
+                // keeps the prior behavior for legacy callers.
+                if ($expectedInterestRate !== null && $offer !== null
+                    && bccomp((string) $offer->interest_rate, $expectedInterestRate, 2) !== 0) {
+                    throw ValidationException::withMessages([
+                        'expected_interest_rate' => [
+                            "Условията се промениха: лихвата по офертата вече е {$offer->interest_rate}% "
+                            ."(показана беше {$expectedInterestRate}%). Моля потвърдете отново.",
+                        ],
+                    ]);
+                }
 
                 // Create investment record
                 $investment = Investment::create([

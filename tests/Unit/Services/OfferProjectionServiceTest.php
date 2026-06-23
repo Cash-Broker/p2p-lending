@@ -20,7 +20,7 @@ class OfferProjectionServiceTest extends TestCase
 
     private function svc(): OfferProjectionService
     {
-        return new OfferProjectionService();
+        return new OfferProjectionService;
     }
 
     // ---- AMORTIZING --------------------------------------------------------
@@ -154,5 +154,28 @@ class OfferProjectionServiceTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         $this->svc()->schedule('1000.00', '12.00', 0, PayoutType::Amortizing);
+    }
+
+    public function test_amortizing_monthly_payment_is_first_installment_not_a_constant(): void
+    {
+        // Documents the audit's LOW presentation finding: monthly_payment is
+        // the FIRST installment; the final installment absorbs rounding drift,
+        // so monthly_payment × term does NOT reconcile to total_repaid. The
+        // true final payment is surfaced as maturity_payment instead.
+        $amort = $this->svc()->summary('1000.00', '12.00', 12, PayoutType::Amortizing);
+
+        $this->assertSame('88.84', $amort['monthly_payment']);
+        $this->assertSame('88.90', $amort['maturity_payment']);
+        $this->assertSame('1066.14', $amort['total_repaid']);
+
+        // The naive reconciliation a user might attempt is intentionally off —
+        // they must use maturity_payment for the last installment.
+        $naive = bcmul($amort['monthly_payment'], '12', 2); // 1066.08
+        $this->assertNotSame($naive, $amort['total_repaid']);
+        $this->assertSame(
+            $amort['total_repaid'],
+            bcadd(bcmul($amort['monthly_payment'], '11', 2), $amort['maturity_payment'], 2),
+            'total_repaid == 11 × monthly_payment + 1 × maturity_payment',
+        );
     }
 }

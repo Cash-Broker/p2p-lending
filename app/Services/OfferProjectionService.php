@@ -73,7 +73,12 @@ class OfferProjectionService
             $totalRepaid = bcadd($totalRepaid, $row['total'], 2);
         }
 
-        // Representative recurring payment (capitalized pays nothing monthly).
+        // Representative FIRST-installment payment (capitalized pays nothing
+        // monthly). NOT constant across the term: amortizing intentionally dumps
+        // accumulated rounding drift into the final installment, so
+        // `monthly_payment × term` does NOT reconcile to `total_repaid`. The
+        // true last payment is exposed separately as `maturity_payment`, so a
+        // UI can render "× (term-1) of {monthly_payment} + 1 of {maturity_payment}".
         $monthly = $type === PayoutType::Capitalized ? null : $rows[0]['total'];
 
         return [
