@@ -36,27 +36,43 @@ class ProcessRepayment extends Page
                         ->options(Loan::where('status', Loan::STATUS_ACTIVE)->with('originator')->get()
                             ->mapWithKeys(fn(Loan $loan) => [$loan->id => "#{$loan->id} — {$loan->originator->name} — {$loan->amount} € ({$loan->type})"]))
                         ->searchable()->required()->live(),
-                    Forms\Components\TextInput::make('principal_amount')->label('Главница (€)')->numeric()->required()->minValue(0)->step(0.01),
-                    Forms\Components\TextInput::make('interest_amount')->label('Лихва (€)')->numeric()->required()->minValue(0)->step(0.01),
-                    // Required (audit H6 fix). Without a schedule_id, the
-                    // RepaymentService duplicate guard at RepaymentService.php:46-56
-                    // is bypassed — a double-submit (network retry, browser back +
-                    // resubmit, double-click) silently distributes the SAME
-                    // payment twice to investors, leaving the loan owing money
-                    // the platform must then write off. Forcing the admin to
-                    // pick a specific installment activates the guard at the
-                    // service AND triggers the in-form pre-flight check below.
-                    Forms\Components\Select::make('amortization_schedule_id')->label('Ред от погасителен план')
+                    // Amounts are NEVER typed by the admin (audit CRITICAL fix).
+                    // The installment IS the amount: RepaymentService derives
+                    // principal/interest from this locked row, so a fat-finger
+                    // can't over-distribute and mint unbacked balance. The id is
+                    // also REQUIRED so the 'paid' duplicate guard always runs —
+                    // no double-submit can re-pay the same installment.
+                    Forms\Components\Select::make('amortization_schedule_id')->label('Вноска от погасителен план')
                         ->options(function (callable $get) {
                             $loanId = $get('loan_id');
                             if (! $loanId) return [];
-                            return \App\Models\AmortizationSchedule::where('loan_id', $loanId)->where('status', 'pending')->get()
-                                ->mapWithKeys(fn($s) => [$s->id => $s->due_date->format('d.m.Y') . " — {$s->total} €"]);
+                            return \App\Models\AmortizationSchedule::where('loan_id', $loanId)
+                                ->whereIn('status', ['pending', 'late'])
+                                ->orderBy('due_date')
+                                ->get()
+                                ->mapWithKeys(fn($s) => [$s->id =>
+                                    $s->due_date->format('d.m.Y')
+                                    . " — главница {$s->principal} € + лихва {$s->interest} € = {$s->total} €",
+                                ]);
                         })
                         ->required()
-                        ->validationMessages(['required' => 'Изберете конкретна вноска от плана. Без това системата не може да предотврати случайно двойно разпределяне.'])
-                        ->reactive(),
-                ])->columns(2),
+                        ->validationMessages(['required' => 'Изберете конкретна вноска от плана. Сумите се изчисляват от нея — не се въвеждат ръчно.'])
+                        ->live(),
+                    Forms\Components\Placeholder::make('installment_breakdown')
+                        ->label('Което ще бъде разпределено')
+                        ->content(function (callable $get) {
+                            $id = $get('amortization_schedule_id');
+                            if (! $id) {
+                                return '—';
+                            }
+                            $s = \App\Models\AmortizationSchedule::find($id);
+                            if (! $s) {
+                                return '—';
+                            }
+
+                            return "Главница {$s->principal} € + лихва {$s->interest} € = {$s->total} € (към инвеститорите)";
+                        }),
+                ])->columns(1),
             ])
             ->statePath('data');
     }
@@ -65,30 +81,30 @@ class ProcessRepayment extends Page
     {
         $data = $this->form->getState();
 
-        // Duplicate guard — prevent double-posting same schedule
-        if (! empty($data['amortization_schedule_id'])) {
-            $schedule = \App\Models\AmortizationSchedule::find($data['amortization_schedule_id']);
-            if ($schedule && $schedule->status === 'paid') {
-                Notification::make()->title('Грешка')
-                    ->body('Тази вноска вече е платена.')
-                    ->danger()->send();
-                return;
-            }
+        $schedule = \App\Models\AmortizationSchedule::find($data['amortization_schedule_id'] ?? null);
+        if (! $schedule) {
+            Notification::make()->title('Грешка')
+                ->body('Изберете валидна вноска от погасителния план.')
+                ->danger()->send();
+            return;
+        }
+        if ($schedule->status === 'paid') {
+            Notification::make()->title('Грешка')
+                ->body('Тази вноска вече е платена.')
+                ->danger()->send();
+            return;
         }
 
         try {
+            // Amounts are derived from the installment inside the service —
+            // we pass only the loan + installment ids.
             app(RepaymentService::class)->processRepayment(
                 (int) $data['loan_id'],
-                number_format((float) $data['principal_amount'], 2, '.', ''),
-                number_format((float) $data['interest_amount'], 2, '.', ''),
-                $data['amortization_schedule_id'] ? (int) $data['amortization_schedule_id'] : null,
+                (int) $data['amortization_schedule_id'],
             );
 
-            $loan = Loan::find($data['loan_id']);
-            $total = bcadd($data['principal_amount'], $data['interest_amount'], 2);
-
             Notification::make()->title('Погашение обработено')
-                ->body("Кредит #{$loan->id}: {$total} € разпределени.")
+                ->body("Кредит #{$data['loan_id']}: {$schedule->total} € разпределени към инвеститорите.")
                 ->success()->send();
 
             $this->form->fill();

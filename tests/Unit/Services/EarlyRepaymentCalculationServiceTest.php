@@ -281,19 +281,19 @@ class EarlyRepaymentCalculationServiceTest extends TestCase
     // Last-investor-remainder penny precision
     // ═════════════════════════════════════════════════════════════════
 
-    public function test_last_investor_receives_remainder_for_penny_precision(): void
+    public function test_principal_returns_each_investors_exact_outstanding(): void
     {
-        // 100 total / 3 investors with equal share → 33.33 / 33.33 / 33.34
-        $loan = $this->makeLoan('300.00', [
+        // Principal is returned as each investor's exact outstanding capital.
+        // Funding split carries the penny: 33.33 / 33.33 / 33.34 (Σ = 100.00).
+        $loan = $this->makeLoan('100.00', [
             ['offset_days' => 15, 'principal' => '100.00', 'interest' => '0.00'],
         ]);
-        $this->attachInvestors($loan, ['100.00', '100.00', '100.00']);
+        $this->attachInvestors($loan, ['33.33', '33.33', '33.34']);
         $loan->refresh();
 
         $calc = new EarlyRepaymentCalculation('100.00', '0.00', '100.00');
         $dist = $this->service->distribute($loan, $calc);
 
-        // 100 / 3 @ scale 2 → first 2 truncate to 33.33, last absorbs 33.34
         $this->assertSame('33.33', $dist[0]['principal']);
         $this->assertSame('33.33', $dist[1]['principal']);
         $this->assertSame('33.34', $dist[2]['principal']);

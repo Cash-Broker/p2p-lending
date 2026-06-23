@@ -35,6 +35,8 @@ use InvalidArgumentException;
  */
 class BuybackCalculationService
 {
+    public function __construct(private InvestorDistributionService $distribution) {}
+
     public const COVERAGE_PRINCIPAL_ONLY = 'principal_only';
     public const COVERAGE_PRINCIPAL_PLUS_INTEREST = 'principal_plus_interest';
 
@@ -99,8 +101,13 @@ class BuybackCalculationService
      */
     public function distribute(Loan $loan, BuybackCalculation $calc): array
     {
-        $investments = $loan->investments()->with('user')->orderBy('id')->get();
-        if ($investments->isEmpty()) {
+        // Principal is returned as each investor's EXACT outstanding capital
+        // (invested − already returned), grouped by user, deterministic order.
+        // This zeroes every investor's `invested` on close with no
+        // over-allocation, so the hardened WalletService never clamps — and
+        // Σ(outstanding) == calc->principal for a consistently-tracked loan.
+        $outstanding = $this->distribution->outstandingPrincipalByUser($loan);
+        if ($outstanding->isEmpty()) {
             throw new InvalidArgumentException("Loan #{$loan->id} has no investors — cannot distribute buyback.");
         }
 
@@ -109,32 +116,21 @@ class BuybackCalculationService
             throw new InvalidArgumentException("Loan #{$loan->id} has zero funded_amount — cannot distribute buyback.");
         }
 
-        // Group by user — one distribution entry per investor regardless of
-        // how many Investment rows they hold in this loan.
-        $grouped = $investments->groupBy('user_id')->map(fn ($items) => [
-            'user_id' => $items->first()->user_id,
-            'user'    => $items->first()->user,
-            'amount'  => $items->reduce(fn ($carry, $inv) => bcadd($carry, (string) $inv->amount, 2), '0.00'),
-        ])->values();
-
-        $distributedPrincipal = '0.00';
         $distributedInterest = '0.00';
-        $lastIndex = $grouped->count() - 1;
+        $lastIndex = $outstanding->count() - 1;
         $result = [];
 
-        foreach ($grouped as $index => $entry) {
+        foreach ($outstanding as $index => $entry) {
+            $principalShare = $entry['outstanding'];
+
+            // Interest carries no per-investor invariant — split pro-rata by
+            // invested, last investor absorbs the rounding residue so
+            // Σ(interest) == calc->interest exactly.
             if ($index === $lastIndex) {
-                // Last investor absorbs any rounding residue — guarantees
-                // sum == total exactly, even with 33.33/33.33/33.34 splits.
-                $principalShare = bcsub($calc->principal, $distributedPrincipal, 2);
                 $interestShare = bcsub($calc->interest, $distributedInterest, 2);
             } else {
-                $share = bccomp($totalFunded, '0', 2) > 0
-                    ? bcdiv($entry['amount'], $totalFunded, 10)
-                    : '0';
-                $principalShare = bcmul($calc->principal, $share, 2);
+                $share = bcdiv($entry['invested'], $totalFunded, 10);
                 $interestShare = bcmul($calc->interest, $share, 2);
-                $distributedPrincipal = bcadd($distributedPrincipal, $principalShare, 2);
                 $distributedInterest = bcadd($distributedInterest, $interestShare, 2);
             }
 

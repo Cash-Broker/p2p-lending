@@ -38,6 +38,8 @@ use InvalidArgumentException;
  */
 class EarlyRepaymentCalculationService
 {
+    public function __construct(private InvestorDistributionService $distribution) {}
+
     public function calculateTotal(Loan $loan): EarlyRepaymentCalculation
     {
         $unpaid = $loan->amortizationSchedules()
@@ -104,8 +106,12 @@ class EarlyRepaymentCalculationService
      */
     public function distribute(Loan $loan, EarlyRepaymentCalculation $calc): array
     {
-        $investments = $loan->investments()->with('user')->orderBy('id')->get();
-        if ($investments->isEmpty()) {
+        // Principal is returned as each investor's EXACT outstanding capital
+        // (invested − already returned), grouped by user, deterministic order —
+        // zeroes invested on close with no over-allocation (no clamp), and
+        // Σ(outstanding) == calc->principal for a consistently-tracked loan.
+        $outstanding = $this->distribution->outstandingPrincipalByUser($loan);
+        if ($outstanding->isEmpty()) {
             throw new InvalidArgumentException(
                 "Loan #{$loan->id} has no investors — cannot distribute early repayment."
             );
@@ -118,32 +124,20 @@ class EarlyRepaymentCalculationService
             );
         }
 
-        // Group by user — one distribution entry per investor regardless of
-        // how many Investment rows they hold in this loan.
-        $grouped = $investments->groupBy('user_id')->map(fn ($items) => [
-            'user_id' => $items->first()->user_id,
-            'user'    => $items->first()->user,
-            'amount'  => $items->reduce(
-                fn ($carry, $inv) => bcadd($carry, (string) $inv->amount, 2),
-                '0.00',
-            ),
-        ])->values();
-
-        $distributedPrincipal = '0.00';
         $distributedInterest = '0.00';
-        $lastIndex = $grouped->count() - 1;
+        $lastIndex = $outstanding->count() - 1;
         $result = [];
 
-        foreach ($grouped as $index => $entry) {
+        foreach ($outstanding as $index => $entry) {
+            $principalShare = $entry['outstanding'];
+
+            // Interest carries no per-investor invariant — split pro-rata by
+            // invested, last investor absorbs the residue.
             if ($index === $lastIndex) {
-                // Last investor absorbs rounding residue — sum == total exactly.
-                $principalShare = bcsub($calc->principal, $distributedPrincipal, 2);
                 $interestShare = bcsub($calc->interest, $distributedInterest, 2);
             } else {
-                $share = bcdiv($entry['amount'], $totalFunded, 10);
-                $principalShare = bcmul($calc->principal, $share, 2);
+                $share = bcdiv($entry['invested'], $totalFunded, 10);
                 $interestShare = bcmul($calc->interest, $share, 2);
-                $distributedPrincipal = bcadd($distributedPrincipal, $principalShare, 2);
                 $distributedInterest = bcadd($distributedInterest, $interestShare, 2);
             }
 

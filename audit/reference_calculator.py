@@ -210,39 +210,37 @@ PRORATA_SCALE = 10  # Rate math scale (matches service internals).
 
 def pro_rata(total, investor_amounts: list) -> dict:
     """
-    For N investors with funding amounts $a_1..a_N summing to F:
-      investor_i (first N-1): bcmul(total, bcdiv(a_i, F, 10), 2)
-      investor_N: total - Σ(first N-1)
+    POST-FIX model — principal is returned as each investor's EXACT outstanding
+    capital (see BuybackCalculationService::distribute /
+    EarlyRepaymentCalculationService::distribute /
+    InvestorDistributionService::outstandingPrincipalByUser).
+
+    With no prior repayments, an investor's outstanding == their funding amount,
+    so each investor receives exactly their amount and Σ == funded. This makes
+    every investor whole to the cent and zeroes their `invested` on close — no
+    last-investor-remainder splitting, no drift. `total` is the buyback /
+    early-repayment principal and is expected to equal Σ amounts.
 
     Returns:
       {
         total: str,
         funded: str,
-        distributions: [str, ...],
-        sum_distributions: str,   # invariant: == total
+        distributions: [str, ...],   # == per-investor outstanding (amounts)
+        sum_distributions: str,      # invariant: == total == funded
       }
     """
     T = _to_decimal(total)
     amounts = [_to_decimal(a) for a in investor_amounts]
     F = sum(amounts, Decimal(0))
-    F_str = str(_trunc(F, 2))
 
-    distributions = []
-    distributed_so_far = Decimal(0)
-    for i, a in enumerate(amounts):
-        if i == len(amounts) - 1:
-            share = bcsub(T, distributed_so_far, 2)
-        else:
-            ratio = bcdiv(a, F, PRORATA_SCALE)
-            share = bcmul(T, ratio, 2)
-        distributions.append(money_str(share))
-        distributed_so_far += share
+    distributions = [money_str(a) for a in amounts]
+    distributed = sum((_to_decimal(money_str(a)) for a in amounts), Decimal(0))
 
     return {
         "total": money_str(T),
-        "funded": F_str,
+        "funded": str(_trunc(F, 2)),
         "distributions": distributions,
-        "sum_distributions": money_str(distributed_so_far),
+        "sum_distributions": money_str(distributed),
     }
 
 
@@ -378,30 +376,29 @@ def sanity_check():
     for i, row in enumerate(result["schedule"], 1):
         print(f"{i:>5}  {row['principal']:>12}  {row['interest']:>10}  {row['total']:>10}")
 
-    # Pro-rata sanity: 100 EUR split across 3 investors (33/33/34 pattern)
+    # Distribution sanity: each investor is returned their exact outstanding.
     print()
-    print("=== SANITY: 100 EUR pro-rata across 3 equal-share investors ===")
-    prorata = pro_rata(Decimal("100"), [Decimal("50"), Decimal("50"), Decimal("50")])
+    print("=== SANITY: 150 EUR returned to 3 investors of 50 each ===")
+    prorata = pro_rata(Decimal("150"), [Decimal("50"), Decimal("50"), Decimal("50")])
     print(f"distributions = {prorata['distributions']}")
-    print(f"sum           = {prorata['sum_distributions']}  (must == 100.00)")
+    print(f"sum           = {prorata['sum_distributions']}  (must == 150.00)")
 
-    # Pro-rata of 100 EUR across 3 investors with 100/3 effective share —
-    # last-investor-remainder should give 33.33 + 33.33 + 33.34.
+    # 3 investors of 100 each → each made whole to 100.00 (no remainder split).
     print()
-    print("=== SANITY: 100 EUR / 3 investors 100/3 pattern ===")
+    print("=== SANITY: 300 EUR returned to 3 investors of 100 each ===")
     prorata = pro_rata(
-        Decimal("100"),
+        Decimal("300"),
         [Decimal("100"), Decimal("100"), Decimal("100")],
     )
     print(f"distributions = {prorata['distributions']}")
-    print(f"sum           = {prorata['sum_distributions']}  (must == 100.00)")
+    print(f"sum           = {prorata['sum_distributions']}  (must == 300.00)")
 
     # Invariant assertions
     assert result["principal_sum"] == "1000.00", "FAIL: principal sum != 1000.00"
-    assert prorata["sum_distributions"] == "100.00", "FAIL: prorata sum != 100.00"
+    assert prorata["sum_distributions"] == "300.00", "FAIL: prorata sum != 300.00"
     print()
     print("invariants: principal_sum == loan amount  [OK]")
-    print("invariants: prorata sum   == total        [OK]")
+    print("invariants: distribution sum == total     [OK]")
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -513,18 +510,22 @@ def fixture_prorata_matrix() -> list[dict]:
             }
         )
 
-    # Last-investor-remainder stress
+    # Exact-outstanding distribution stress. NOTE: post-fix, the buyback /
+    # early-repayment principal returned equals Σ(investor outstanding), so
+    # `total` MUST equal Σ shares — distributing less than each investor's
+    # outstanding is no longer a real scenario. These keep the large /
+    # uneven investor-count stress while asserting each is made whole.
     stress = [
-        ("PR-100-3-classic", "100", ["100", "100", "100"]),   # 33.33 + 33.33 + 33.34
-        ("PR-1000-7-cases", "1000", ["1000"] * 7),            # 142.85 × 6 + 142.90
-        ("PR-3inv-single-investor-share", "1", ["1", "1", "1"]),  # 0.33 + 0.33 + 0.34
+        ("PR-100-3-classic", "300", ["100", "100", "100"]),
+        ("PR-1000-7-cases", "7000", ["1000"] * 7),
+        ("PR-3inv-single-investor-share", "3", ["1", "1", "1"]),
     ]
     for case_id, total, shares in stress:
         cases.append(
             {
                 "case_id": case_id,
                 "kind": "prorata",
-                "note": "Last-investor-remainder stress",
+                "note": "Exact-outstanding distribution",
                 "input": {"total": total, "investor_amounts": shares},
                 "expected": pro_rata(Decimal(total), [Decimal(s) for s in shares]),
             }
@@ -536,24 +537,24 @@ def fixture_prorata_matrix() -> list[dict]:
         {
             "case_id": "PR-edge-99inv-equal",
             "kind": "prorata",
-            "note": "99 investors equal shares (large pro-rata stress)",
-            "input": {"total": "10000", "investor_amounts": ["100"] * 99},
-            "expected": pro_rata(Decimal("10000"), [Decimal("100")] * 99),
+            "note": "99 investors equal shares (large distribution stress)",
+            "input": {"total": "9900", "investor_amounts": ["100"] * 99},
+            "expected": pro_rata(Decimal("9900"), [Decimal("100")] * 99),
         }
     )
 
-    # 5. 2 investors 0.01%/99.99% split
+    # 5. 2 investors 0.01 / 99.99 split
     cases.append(
         {
             "case_id": "PR-edge-extreme-uneven",
             "kind": "prorata",
-            "note": "Extreme uneven: 0.01%/99.99% split",
+            "note": "Extreme uneven: 0.01 / 99.99",
             "input": {
-                "total": "10000",
+                "total": "100",
                 "investor_amounts": ["0.01", "99.99"],
             },
             "expected": pro_rata(
-                Decimal("10000"), [Decimal("0.01"), Decimal("99.99")]
+                Decimal("100"), [Decimal("0.01"), Decimal("99.99")]
             ),
         }
     )

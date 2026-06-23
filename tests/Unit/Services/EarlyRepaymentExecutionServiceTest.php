@@ -198,39 +198,42 @@ class EarlyRepaymentExecutionServiceTest extends TestCase
         $this->service->execute($loan->id, $admin->id);
     }
 
-    public function test_zero_invested_bucket_handled_via_clamp_not_rollback(): void
+    public function test_invested_underflow_rolls_back_and_never_manufactures_money(): void
     {
-        // Phase 2 audit — finding #2 behavior change.
-        //
-        // BEFORE fix: pro-rata drift pushing invested < 0 hit the
-        // `chk_wallets_invested_non_negative` CHECK constraint, which
-        // rolled back the entire DB::transaction — leaving operators
-        // unable to close affected loans. Confirmed in production logs
-        // from 2026-04-24 early test runs ("Early repayment execute
-        // failed unexpectedly ... invested = -0.02").
-        //
-        // AFTER fix (WalletService::creditAvailableFromInvested):
-        // the clamp zeroes invested instead of going negative, the
-        // execute succeeds, and a WARNING is logged for ops visibility.
-        //
-        // Rollback SEMANTICS for other failure paths (idempotency,
-        // invalid status) are covered by the dedicated tests above.
+        // Phase 2 audit follow-up — the old clamp manufactured money (zeroed
+        // invested but credited the full amount to available). That silent
+        // money-creation path is removed: an underflow now THROWS and rolls
+        // the early repayment back. We force it by desyncing a wallet
+        // (invested=0) from its Investment row — the stand-in for a genuine
+        // distribution bug; unreachable in normal operation.
         [$loan, $admin, $investors] = $this->makeScenario();
         Wallet::where('user_id', $investors[0]->id)->update(['invested' => '0.00']);
 
-        $this->service->execute($loan->id, $admin->id);
+        $fromStatus = $loan->fresh()->status;
+
+        try {
+            $this->service->execute($loan->id, $admin->id);
+            $this->fail('Expected an underflow to throw rather than manufacture balance.');
+        } catch (\App\Services\InvestedUnderflowException $e) {
+            // expected — loud, safe.
+        }
 
         $loan->refresh();
-        $this->assertSame('repaid', $loan->status, 'service succeeded via clamp');
-        $this->assertNotNull($loan->early_repaid_at);
+        $this->assertSame($fromStatus, $loan->status, 'early repayment must roll back, status unchanged');
+        $this->assertNull($loan->early_repaid_at);
 
-        // Clamped wallet: invested stays 0 (never negative), available
-        // received the full principal share.
         $postWalletA = Wallet::where('user_id', $investors[0]->id)->first();
         $this->assertSame('0.00', (string) $postWalletA->invested);
-        $this->assertTrue(
-            bccomp((string) $postWalletA->available, '0', 2) > 0,
-            'full principal share still credited to available despite zero invested',
+        $this->assertSame('0.00', (string) $postWalletA->available,
+            'no balance manufactured on the underflowing wallet');
+
+        $this->assertSame(
+            0,
+            Transaction::whereIn('type', [
+                Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL,
+                Transaction::TYPE_EARLY_REPAYMENT_INTEREST,
+            ])->count(),
+            'no early-repayment transactions survive the rollback',
         );
     }
 

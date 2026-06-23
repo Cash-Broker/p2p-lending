@@ -80,14 +80,30 @@ class AuditFixesTest extends TestCase
         $data = $this->createActiveLoanWithInvestors(3, '900.00');
         $loan = $data['loan'];
 
-        $principalAmount = '100.01'; // Forces uneven split: 33.33 + 33.33 + 33.35
+        $principalAmount = '100.01'; // Forces uneven split across 3 equal investors
         $interestAmount = '10.01';
 
-        app(RepaymentService::class)->processRepayment(
-            $loan->id,
-            $principalAmount,
-            $interestAmount
-        );
+        // Amounts are derived from the installment now. A second pending row
+        // keeps this one NON-final → largest-remainder pro-rata split (the
+        // path under test), and the split must still sum to the row exactly.
+        $row = AmortizationSchedule::create([
+            'loan_id' => $loan->id,
+            'due_date' => now()->addMonth()->toDateString(),
+            'principal' => $principalAmount,
+            'interest' => $interestAmount,
+            'total' => bcadd($principalAmount, $interestAmount, 2),
+            'status' => 'pending',
+        ]);
+        AmortizationSchedule::create([
+            'loan_id' => $loan->id,
+            'due_date' => now()->addMonths(2)->toDateString(),
+            'principal' => '2599.99',
+            'interest' => '0.00',
+            'total' => '2599.99',
+            'status' => 'pending',
+        ]);
+
+        app(RepaymentService::class)->processRepayment($loan->id, $row->id);
 
         // Sum all principal transactions — must equal exactly 100.01
         $totalPrincipalDistributed = Transaction::where('type', Transaction::TYPE_REPAYMENT_PRINCIPAL)
@@ -271,7 +287,9 @@ class AuditFixesTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('Repayment can only be processed for active or late loans.');
 
-        app(RepaymentService::class)->processRepayment($loan->id, '100.00', '10.00');
+        // Status is validated before the installment is looked up, so the id
+        // value is irrelevant here.
+        app(RepaymentService::class)->processRepayment($loan->id, 1);
     }
 
     // ── Finding 2.4: Double repayment with same schedule ──
@@ -285,11 +303,14 @@ class AuditFixesTest extends TestCase
 
         $schedule = AmortizationSchedule::factory()->create([
             'loan_id' => $loan->id,
+            'principal' => '1000.00',
+            'interest' => '100.00',
+            'total' => '1100.00',
             'status' => 'pending',
         ]);
 
-        // First repayment succeeds
-        app(RepaymentService::class)->processRepayment($loan->id, '100.00', '10.00', $schedule->id);
+        // First repayment succeeds (amounts derived from the installment).
+        app(RepaymentService::class)->processRepayment($loan->id, $schedule->id);
 
         $this->assertEquals('paid', $schedule->fresh()->status);
 
@@ -297,7 +318,7 @@ class AuditFixesTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('already been paid');
 
-        app(RepaymentService::class)->processRepayment($loan->id, '100.00', '10.00', $schedule->id);
+        app(RepaymentService::class)->processRepayment($loan->id, $schedule->id);
     }
 
     // ── Finding 8.1: DB constraints reject negative balance ──

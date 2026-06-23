@@ -54,9 +54,7 @@ class Phase3LifecycleTest extends TestCase
 
         // Process all scheduled repayments.
         foreach ($loan->amortizationSchedules()->orderBy('due_date')->get() as $s) {
-            app(RepaymentService::class)->processRepayment(
-                $loan->id, (string) $s->principal, (string) $s->interest, $s->id,
-            );
+            app(RepaymentService::class)->processRepayment($loan->id, $s->id);
         }
 
         // All schedules paid.
@@ -79,9 +77,7 @@ class Phase3LifecycleTest extends TestCase
         // state machine permits it (ACTIVE → REPAID is allowed).
         [$loan, $investor] = $this->makeActiveLoanWithSchedule();
         foreach ($loan->amortizationSchedules()->orderBy('due_date')->get() as $s) {
-            app(RepaymentService::class)->processRepayment(
-                $loan->id, (string) $s->principal, (string) $s->interest, $s->id,
-            );
+            app(RepaymentService::class)->processRepayment($loan->id, $s->id);
         }
 
         $loan->fresh()->transitionTo(Loan::STATUS_REPAID);

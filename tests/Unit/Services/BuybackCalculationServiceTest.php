@@ -143,18 +143,11 @@ class BuybackCalculationServiceTest extends TestCase
 
     public function test_distributes_pro_rata_across_three_investors(): void
     {
-        // Equal 1/3 shares (100/300 each). Because the service mirrors
-        // RepaymentService's bcdiv(scale 10) → bcmul(scale 2) pattern,
-        // the per-investor share of 300 ROUNDS DOWN to 99.99 (scale-2
-        // truncation of 99.999…). The last-investor-remainder pattern
-        // absorbs the cumulative residue — last investor gets 100.02 so
-        // the sum equals 300.00 exactly.
-        //
-        // This test pins that pattern. If a future refactor switches to
-        // cross-multiplication (bcdiv(bcmul(a,b,2), c, 2)) for exact-
-        // division precision, the expected values here change to
-        // 100/100/100 and the sum invariant still holds. Either way, the
-        // sum == total contract is the binding invariant.
+        // PRINCIPAL is now returned as each investor's EXACT outstanding
+        // capital (invested − already returned). Three investors of 100 with
+        // no prior repayments → 100.00 / 100.00 / 100.00 exactly (no
+        // truncation residue to absorb). INTEREST still splits pro-rata with
+        // last-investor-remainder (9.99 / 9.99 / 10.02). Both sums are exact.
         $loan = $this->makeLoan('300.00', 'principal_plus_interest', [
             ['principal' => '100.00', 'interest' => '10.00'],
             ['principal' => '100.00', 'interest' => '10.00'],
@@ -168,14 +161,14 @@ class BuybackCalculationServiceTest extends TestCase
 
         $this->assertCount(3, $dist);
 
-        // First two investors: truncated share.
-        $this->assertSame('99.99', $dist[0]['principal']);
-        $this->assertSame('9.99', $dist[0]['interest']);
-        $this->assertSame('99.99', $dist[1]['principal']);
-        $this->assertSame('9.99', $dist[1]['interest']);
+        // Principal: each investor's exact outstanding — no rounding.
+        $this->assertSame('100.00', $dist[0]['principal']);
+        $this->assertSame('100.00', $dist[1]['principal']);
+        $this->assertSame('100.00', $dist[2]['principal']);
 
-        // Last investor: absorbs the residue to guarantee sum == total.
-        $this->assertSame('100.02', $dist[2]['principal']);
+        // Interest: pro-rata, last investor absorbs the residue.
+        $this->assertSame('9.99', $dist[0]['interest']);
+        $this->assertSame('9.99', $dist[1]['interest']);
         $this->assertSame('10.02', $dist[2]['interest']);
 
         // Sum invariant — binding contract.
@@ -185,15 +178,16 @@ class BuybackCalculationServiceTest extends TestCase
         $this->assertSame('30.00', $sumI);
     }
 
-    public function test_last_investor_receives_remainder_for_penny_precision(): void
+    public function test_principal_returns_each_investors_exact_outstanding(): void
     {
-        // Classic 100/3 case: 33.33 + 33.33 + 33.34 = 100.00 exactly.
-        // Without last-investor-remainder, naive floor math would produce
-        // 33.33 × 3 = 99.99, losing a cent. Pinned by this test.
-        $loan = $this->makeLoan('300.00', 'principal_only', [
+        // Penny precision now lives in the FUNDING split, not the buyback
+        // split: three investors funded 33.33 / 33.33 / 33.34 (Σ = 100.00).
+        // Buyback returns each investor's exact outstanding, so the sum equals
+        // total exactly AND every investor is made whole to the cent.
+        $loan = $this->makeLoan('100.00', 'principal_only', [
             ['principal' => '100.00', 'interest' => '0.00'],
         ]);
-        $this->attachInvestors($loan, ['100.00', '100.00', '100.00']);
+        $this->attachInvestors($loan, ['33.33', '33.33', '33.34']);
         $loan->refresh();
 
         $calc = new BuybackCalculation('principal_only', '100.00', '0.00', '100.00');
@@ -201,8 +195,7 @@ class BuybackCalculationServiceTest extends TestCase
 
         $this->assertSame('33.33', $dist[0]['principal']);
         $this->assertSame('33.33', $dist[1]['principal']);
-        $this->assertSame('33.34', $dist[2]['principal'],
-            'Last investor MUST absorb the rounding residue — guarantees sum == total');
+        $this->assertSame('33.34', $dist[2]['principal']);
 
         $sum = array_reduce(
             $dist,

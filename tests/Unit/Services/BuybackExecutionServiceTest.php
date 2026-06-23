@@ -47,7 +47,7 @@ class BuybackExecutionServiceTest extends TestCase
         int $investorCount = 2,
         string $eachInvestment = '100.00',
         int $scheduleCount = 3,
-        string $principalPerSchedule = null,
+        ?string $principalPerSchedule = null,
         string $interestPerSchedule = '5.00',
     ): array {
         $fundedAmount = bcmul($eachInvestment, (string) $investorCount, 2);
@@ -210,23 +210,18 @@ class BuybackExecutionServiceTest extends TestCase
         $this->service->execute($loan->id, $admin->id);
     }
 
-    public function test_zero_invested_bucket_handled_via_clamp_not_rollback(): void
+    public function test_invested_underflow_rolls_back_and_never_manufactures_money(): void
     {
-        // Phase 2 audit — finding #2 behavior change.
+        // Phase 2 audit follow-up — the old clamp MANUFACTURED money: when a
+        // principal return exceeded the invested bucket it zeroed invested but
+        // still credited the full amount to available. That silent
+        // money-creation path is removed. An underflow now THROWS and rolls
+        // the whole buyback back — nothing is credited, no balance is conjured.
         //
-        // BEFORE fix: pro-rata drift pushing invested < 0 hit the
-        // `chk_wallets_invested_non_negative` CHECK constraint, which
-        // rolled back the entire DB::transaction — leaving operators
-        // unable to close affected loans.
-        //
-        // AFTER fix (WalletService::creditAvailableFromInvested):
-        // the clamp zeroes invested instead of going negative. Buyback
-        // succeeds, wallet ends in a clamped state (invested=0,
-        // available += full share), a WARNING is logged so ops see
-        // cumulative drift.
-        //
-        // Rollback SEMANTICS for other (non-clamp) failure paths are
-        // tested by the idempotency + invalid-status tests above.
+        // We force the underflow by desyncing a wallet (invested=0) from its
+        // Investment row (amount=100), the artificial stand-in for a genuine
+        // distribution bug. In normal operation invested == Σ investment and
+        // this branch is unreachable.
         [$loan, $admin, $investors] = $this->makeScenario(
             investorCount: 2,
             eachInvestment: '100.00',
@@ -235,26 +230,32 @@ class BuybackExecutionServiceTest extends TestCase
             interestPerSchedule: '10.00',
         );
 
-        // Zero out the FIRST investor's invested bucket. Pre-fix this
-        // forced a CHECK violation; post-fix it triggers the clamp.
         Wallet::where('user_id', $investors[0]->id)->update(['invested' => '0.00']);
 
-        $this->service->execute($loan->id, $admin->id);
+        try {
+            $this->service->execute($loan->id, $admin->id);
+            $this->fail('Expected an underflow to throw rather than manufacture balance.');
+        } catch (\App\Services\InvestedUnderflowException $e) {
+            // expected — loud, safe.
+        }
 
-        // Loan DID transition — service succeeded via the clamp.
+        // Everything rolled back: loan still late, no buyback transactions,
+        // and NO money was created on the underflowing wallet.
         $loan->refresh();
-        $this->assertSame('bought_back', $loan->status);
-        $this->assertNotNull($loan->bought_back_at);
+        $this->assertSame('late', $loan->status, 'buyback must roll back, loan stays late');
 
-        // Clamped wallet: invested still 0 (not negative), available
-        // received the full principal share despite "insufficient"
-        // invested bucket.
         $postWalletA = Wallet::where('user_id', $investors[0]->id)->first();
-        $this->assertSame('0.00', (string) $postWalletA->invested,
-            'clamp prevented invested from going negative');
-        $this->assertTrue(
-            bccomp((string) $postWalletA->available, '0', 2) > 0,
-            'full principal share still credited to available',
+        $this->assertSame('0.00', (string) $postWalletA->invested);
+        $this->assertSame('0.00', (string) $postWalletA->available,
+            'no balance manufactured on the underflowing wallet');
+
+        $this->assertSame(
+            0,
+            Transaction::whereIn('type', [
+                Transaction::TYPE_BUYBACK_PRINCIPAL,
+                Transaction::TYPE_BUYBACK_INTEREST,
+            ])->count(),
+            'no buyback transactions survive the rollback',
         );
     }
 

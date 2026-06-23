@@ -20,8 +20,57 @@ class ReconcileLedger extends Command
     protected $signature = 'ledger:reconcile {--notify : Send email alert on mismatch}';
     protected $description = 'Verify wallet balances match transaction ledger sums';
 
+    /**
+     * Single source of truth for how each transaction type moves the three
+     * reconstructable wallet buckets. Every TYPE_* constant MUST appear here.
+     *
+     *   cash     → available + reserved (reservations are internal holds with
+     *              no ledger row, so available+reserved is the cash invariant)
+     *   invested → capital deployed into loans
+     *   earned   → cumulative interest income (a reporting bucket; also added
+     *              to cash, since interest is spendable)
+     *
+     * Signs are the contribution of a POSITIVE transaction amount to each
+     * bucket. Mirrors WalletService exactly:
+     *   deposit            available +amt
+     *   withdrawal/fee     available -amt        (debit)
+     *   investment         available -amt, invested +amt
+     *   *_principal        available +amt, invested -amt   (invested → available)
+     *   *_interest         available +amt, earned  +amt
+     *
+     * Adding a new TYPE_* constant without a row here makes reconciliation
+     * fail LOUDLY (default-deny in {@see handle}) rather than silently
+     * miscompute — that blind spot is exactly what let buyback/early-repay
+     * payouts go unreconciled before this map existed.
+     *
+     * @var array<string, array{cash:int, invested:int, earned:int}>
+     */
+    private const LEDGER_MAP = [
+        Transaction::TYPE_DEPOSIT                  => ['cash' => 1,  'invested' => 0,  'earned' => 0],
+        Transaction::TYPE_WITHDRAWAL               => ['cash' => -1, 'invested' => 0,  'earned' => 0],
+        Transaction::TYPE_FEE                      => ['cash' => -1, 'invested' => 0,  'earned' => 0],
+        Transaction::TYPE_INVESTMENT               => ['cash' => -1, 'invested' => 1,  'earned' => 0],
+        Transaction::TYPE_REPAYMENT_PRINCIPAL      => ['cash' => 1,  'invested' => -1, 'earned' => 0],
+        Transaction::TYPE_REPAYMENT_INTEREST       => ['cash' => 1,  'invested' => 0,  'earned' => 1],
+        Transaction::TYPE_BUYBACK_PRINCIPAL        => ['cash' => 1,  'invested' => -1, 'earned' => 0],
+        Transaction::TYPE_BUYBACK_INTEREST         => ['cash' => 1,  'invested' => 0,  'earned' => 1],
+        Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL => ['cash' => 1, 'invested' => -1, 'earned' => 0],
+        Transaction::TYPE_EARLY_REPAYMENT_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1],
+    ];
+
     public function handle(): int
     {
+        // Fail loudly if a transaction type exists with no reconciliation
+        // rule — otherwise its money would be silently ignored.
+        $unmapped = array_diff(Transaction::TYPES, array_keys(self::LEDGER_MAP));
+        if (! empty($unmapped)) {
+            $msg = 'ReconcileLedger: unmapped transaction type(s): ' . implode(', ', $unmapped);
+            $this->error($msg);
+            Log::error($msg);
+
+            return Command::FAILURE;
+        }
+
         $mismatches = 0;
         $mismatchDetails = [];
 
@@ -34,23 +83,28 @@ class ReconcileLedger extends Command
                     ->groupBy('type')
                     ->pluck('total', 'type');
 
-                $deposits = $sums[Transaction::TYPE_DEPOSIT] ?? '0.00';
-                $withdrawals = $sums[Transaction::TYPE_WITHDRAWAL] ?? '0.00';
-                $investments = $sums[Transaction::TYPE_INVESTMENT] ?? '0.00';
-                $repayPrincipal = $sums[Transaction::TYPE_REPAYMENT_PRINCIPAL] ?? '0.00';
-                $repayInterest = $sums[Transaction::TYPE_REPAYMENT_INTEREST] ?? '0.00';
-                $fees = $sums[Transaction::TYPE_FEE] ?? '0.00';
-
-                // Expected available+reserved = deposits - withdrawals - investments + repay_principal + repay_interest - fees
-                $credits = bcadd(bcadd($deposits, $repayPrincipal, 2), $repayInterest, 2);
-                $debits = bcadd(bcadd($withdrawals, $investments, 2), $fees, 2);
-                $expectedAvailablePlusReserved = bcsub($credits, $debits, 2);
-                $actualAvailablePlusReserved = bcadd($wallet->available, $wallet->reserved, 2);
-
-                $expectedInvested = bcsub($investments, $repayPrincipal, 2);
-                $expectedEarned = $repayInterest;
-
                 $errors = [];
+
+                // Default-deny: any persisted type without a map entry is a
+                // hard error, not a silently-dropped sum.
+                $unknownTypes = array_diff($sums->keys()->all(), array_keys(self::LEDGER_MAP));
+                foreach ($unknownTypes as $unknownType) {
+                    $errors[] = "unmapped transaction type '{$unknownType}' (sum={$sums[$unknownType]})";
+                }
+
+                $expectedCash = '0.00';
+                $expectedInvested = '0.00';
+                $expectedEarned = '0.00';
+
+                foreach (self::LEDGER_MAP as $type => $signs) {
+                    $amount = (string) ($sums[$type] ?? '0.00');
+                    $expectedCash = bcadd($expectedCash, bcmul((string) $signs['cash'], $amount, 2), 2);
+                    $expectedInvested = bcadd($expectedInvested, bcmul((string) $signs['invested'], $amount, 2), 2);
+                    $expectedEarned = bcadd($expectedEarned, bcmul((string) $signs['earned'], $amount, 2), 2);
+                }
+
+                $expectedAvailablePlusReserved = $expectedCash;
+                $actualAvailablePlusReserved = bcadd($wallet->available, $wallet->reserved, 2);
 
                 if (bccomp($actualAvailablePlusReserved, $expectedAvailablePlusReserved, 2) !== 0) {
                     $errors[] = "available+reserved: expected={$expectedAvailablePlusReserved}, actual={$actualAvailablePlusReserved}";

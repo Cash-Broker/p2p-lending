@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\PlatformMetric;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
@@ -283,24 +282,18 @@ class WalletService
      * Used by repayPrincipal, buybackPrincipal AND earlyRepayPrincipal —
      * same wallet-bucket arithmetic, different transaction type + description.
      *
-     * **Last-investor-remainder drift absorption (Phase 2 audit finding).**
-     * The pro-rata last-investor-remainder pattern in RepaymentService /
-     * BuybackCalculationService / EarlyRepaymentCalculationService guarantees
-     * `Σ distributions == installment_total` per installment, but NOT
-     * `Σ per-investor distributions across all installments == investor's
-     * invested`. Non-last investors get floor() shares that cumulatively
-     * under-return; the last investor cumulatively over-returns by the
-     * same amount. Platform money is conserved across investors (no
-     * net gain/loss), but the last investor's wallet can try to
-     * subtract 1–2 stotinki MORE principal than they originally invested.
-     *
-     * Before Phase 2 fix, that underflow hit the `chk_wallets_invested
-     * _non_negative` DB CHECK and rolled back the entire repayment —
-     * leaving production operators unable to close certain loans. The
-     * clamp below detects the underflow case and zeroes `invested`
-     * instead of going negative. The full requested amount still
-     * credits to `available` (money movement is valid in aggregate).
-     * We log at WARNING level so unusual drift is visible in ops.
+     * **Invested-underflow is now a HARD STOP (Phase 2 audit follow-up).**
+     * Returning more principal than an investor holds in `invested` means we
+     * would either go negative (DB CHECK violation) or — as the old clamp did
+     * — silently MANUFACTURE spendable balance by zeroing `invested` while
+     * still crediting the full amount to `available`. That clamp was the audit's
+     * confirmed money-creation path. It is removed: an underflow now throws
+     * and rolls the whole operation back (loud, safe), after an ERROR log so
+     * ops can investigate the reconciliation_id. With the exact per-investor
+     * distribution in RepaymentService (each investor's outstanding is returned
+     * on the final installment; non-final installments under-return via floor),
+     * a correct loan can never reach this branch — if it fires, the
+     * distribution is genuinely wrong and must NOT be papered over.
      */
     private function creditAvailableFromInvested(
         int $userId,
@@ -316,20 +309,13 @@ class WalletService
         return DB::transaction(function () use ($userId, $amount, $type, $description, $reference) {
             $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
 
-            $rawInvested = bcsub((string) $wallet->invested, $amount, 2);
-            if (bccomp($rawInvested, '0', 2) < 0) {
-                // Clamp event — see DECISIONS.md P2-01. Enhanced log
-                // carries a reconciliation_id UUID (audit trail) + the
-                // parsed loan_id (reconciliation aide when ops grep by
-                // loan). Updates two platform_metrics counters so the
-                // rate + recency of drift is queryable without parsing
-                // log files. Metrics are best-effort — their failure
-                // must NOT break the wallet update.
+            $newInvested = bcsub((string) $wallet->invested, $amount, 2);
+            if (bccomp($newInvested, '0', 2) < 0) {
                 $reconciliationId = (string) Str::uuid();
                 $loanId = $this->parseLoanIdFromReference($reference);
 
-                Log::warning(
-                    'WalletService: invested bucket drift clamped at zero',
+                Log::error(
+                    'WalletService: principal return exceeds invested balance — rejected (no money manufactured)',
                     [
                         'reconciliation_id'      => $reconciliationId,
                         'user_id'                => $userId,
@@ -337,25 +323,16 @@ class WalletService
                         'type'                   => $type,
                         'requested_amount'       => $amount,
                         'wallet_invested_before' => (string) $wallet->invested,
-                        'drift_absorbed'         => $rawInvested, // negative magnitude
+                        'shortfall'              => $newInvested, // negative magnitude
                         'reference'              => $reference,
                     ],
                 );
 
-                try {
-                    PlatformMetric::record('last_prorata_clamp_fired_at', now()->toIso8601String());
-                    $current = (int) (PlatformMetric::read('prorata_clamps_total') ?? 0);
-                    PlatformMetric::record('prorata_clamps_total', (string) ($current + 1));
-                } catch (\Throwable $e) {
-                    Log::warning('Failed to record prorata clamp metric', [
-                        'reconciliation_id' => $reconciliationId,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
-
-                $newInvested = '0.00';
-            } else {
-                $newInvested = $rawInvested;
+                throw new InvestedUnderflowException(
+                    "Refusing to return {$amount} of principal to user #{$userId}: "
+                    . "only {$wallet->invested} invested remains (reconciliation_id={$reconciliationId}). "
+                    . 'This indicates a distribution bug — operation rolled back rather than manufacturing balance.'
+                );
             }
 
             $wallet->forceFill([

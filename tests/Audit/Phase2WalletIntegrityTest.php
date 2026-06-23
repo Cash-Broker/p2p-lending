@@ -560,12 +560,8 @@ class Phase2WalletIntegrityTest extends TestCase
 
     private function processScheduledRepayment(Loan $loan, AmortizationSchedule $schedule): void
     {
-        app(RepaymentService::class)->processRepayment(
-            $loan->id,
-            (string) $schedule->principal,
-            (string) $schedule->interest,
-            $schedule->id,
-        );
+        // Amounts are derived from the installment by the service now.
+        app(RepaymentService::class)->processRepayment($loan->id, $schedule->id);
     }
 
     private function forceLoanLate(Loan $loan): void
@@ -639,14 +635,13 @@ class Phase2WalletIntegrityTest extends TestCase
                 ],
                 'repayment_principal', 'buyback_principal', 'early_repayment_principal' => [
                     $available = bcadd($available, $amt, 2),
-                    // Mirror WalletService::creditAvailableFromInvested
-                    // clamp — pro-rata drift can push invested negative
-                    // during multi-installment distributions; the service
-                    // zeroes it. Reconstruction must do the same so the
-                    // DB and reconstructed values match.
-                    $invested = (bccomp(bcsub($invested, $amt, 2), '0', 2) < 0)
-                        ? '0.00'
-                        : bcsub($invested, $amt, 2),
+                    // INDEPENDENT oracle — does NOT mirror any clamp. With the
+                    // exact per-investor distribution, invested must reconstruct
+                    // by plain subtraction and must never go negative (the
+                    // hardened WalletService would have thrown instead of
+                    // recording a principal return that underflows). If this
+                    // ever goes negative, that's a real distribution bug.
+                    $invested = bcsub($invested, $amt, 2),
                 ],
                 'repayment_interest', 'buyback_interest', 'early_repayment_interest' => [
                     $available = bcadd($available, $amt, 2),
@@ -705,16 +700,11 @@ class Phase2WalletIntegrityTest extends TestCase
             2,
         );
 
-        // Tolerance window — Phase 2 finding #2.
-        // The pro-rata last-investor-remainder drift clamp in
-        // WalletService::creditAvailableFromInvested creates bounded
-        // positive drift (≤ 0.02 per clamp event). Worst-case clamp
-        // events per scenario ≈ investors × installments × distribution
-        // types. Upper bound: 0.50 EUR per scenario is generous; any
-        // scenario exceeding that indicates a real money-conservation
-        // leak (not expected pro-rata drift). True fix (pro-rata
-        // redesign to avoid drift accumulation) is a v1.1 follow-up.
-        $toleranceLimit = '0.50';
+        // ZERO tolerance. The pro-rata drift / clamp money-creation path is
+        // fixed (exact per-investor distribution + hardened WalletService), so
+        // for DECIMAL(12,2) money the only acceptable conservation drift is
+        // none. Any nonzero drift is a real leak, not "expected pro-rata".
+        $toleranceLimit = '0.00';
 
         $drift = bcsub($balanceSum, $expected, 2);
         $absDrift = bccomp($drift, '0', 2) < 0 ? bcmul($drift, '-1', 2) : $drift;
