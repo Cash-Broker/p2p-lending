@@ -8,10 +8,10 @@ use App\Models\Loan;
 use App\Models\Originator;
 use App\Models\User;
 use App\Notifications\EarlyRepaymentReceivedNotification;
-use App\Services\InvestmentDisbursementService;
 use App\Services\Loans\EarlyRepaymentAlreadyExecutedException;
 use App\Services\Loans\EarlyRepaymentCalculationService;
 use App\Services\Loans\EarlyRepaymentExecutionService;
+use App\Services\ScheduledPayoutService;
 use BackedEnum;
 use Closure;
 use Filament\Actions\Action;
@@ -190,6 +190,17 @@ class LoanResource extends Resource
                         return $options;
                     })
                     ->default('draft')->required(),
+                // Payout trigger mode. Operational, NOT a frozen financial term —
+                // stays editable after draft so an admin can switch already
+                // uploaded loans (no status-gated disabled()).
+                Forms\Components\Select::make('payout_mode')->label('Изплащане')
+                    ->helperText('Автоматично — системата начислява вноските на падеж сама. Ръчно — админът ги пуска с бутон.')
+                    ->options([
+                        Loan::PAYOUT_MODE_MANUAL => 'Ръчно (админ пуска)',
+                        Loan::PAYOUT_MODE_AUTOMATIC => 'Автоматично (по график)',
+                    ])
+                    ->default(Loan::PAYOUT_MODE_MANUAL)
+                    ->required(),
                 // Private loans are hidden from the public board and reachable
                 // only via their share link. Freely editable (not a financial
                 // term, so not frozen post-draft).
@@ -373,38 +384,33 @@ class LoanResource extends Resource
                 // on their per-investment schedules (each per their chosen offer).
                 // Legacy loans use the standard ProcessRepayment flow instead.
                 Action::make('disburse_offers')
-                    ->label('Изплати към инвеститорите')
+                    ->label('Пусни плащане сега')
                     ->icon('heroicon-o-banknotes')
                     ->color('success')
                     ->visible(fn (Loan $r) => in_array($r->status, [Loan::STATUS_ACTIVE, Loan::STATUS_LATE], true))
                     ->requiresConfirmation()
                     ->modalHeading(fn (Loan $record) => "Изплащане към инвеститорите за кредит #{$record->id}")
-                    ->modalDescription('Изплаща всички дължими към момента вноски по индивидуалните планове на инвеститорите (според избраните от тях оферти).')
+                    ->modalDescription('Начислява/освобождава всички дължими към момента суми по плановете на инвеститорите. Същото действие, което авто-режимът прави сам на падеж — тук го пускате ръчно.')
                     ->action(function (Loan $record) {
-                        if (! $record->usesOffers()) {
-                            Notification::make()
-                                ->title('Кредитът няма оферти-базирани инвестиции')
-                                ->body('Ползвайте обичайното погасяване за този кредит.')
-                                ->warning()->send();
-
-                            return;
-                        }
-
                         try {
-                            $result = app(InvestmentDisbursementService::class)->disburseDue($record->id);
+                            $result = app(ScheduledPayoutService::class)->runForLoan($record);
 
-                            if ($result['paid_count'] === 0) {
-                                Notification::make()->title('Няма дължими вноски за момента')->info()->send();
+                            $moved = ($result['type'] ?? null) === 'legacy'
+                                ? (int) ($result['posted_count'] ?? 0)
+                                : (int) ($result['released_count'] ?? 0) + (int) ($result['accrued_count'] ?? 0);
+
+                            if ($moved === 0) {
+                                Notification::make()->title('Няма дължими суми за момента')->info()->send();
 
                                 return;
                             }
 
                             Notification::make()
                                 ->title('Изплащането е извършено')
-                                ->body("Платени {$result['paid_count']} вноски на обща стойност {$result['total_paid']} €.")
+                                ->body('Дължимите суми по плановете на инвеститорите са обработени.')
                                 ->success()->send();
                         } catch (\Throwable $e) {
-                            Log::error('Offer disbursement failed', ['loan_id' => $record->id, 'error' => $e->getMessage()]);
+                            Log::error('Scheduled payout (manual) failed', ['loan_id' => $record->id, 'error' => $e->getMessage()]);
                             Notification::make()->title('Грешка при изплащане')->body($e->getMessage())->danger()->send();
                         }
                     }),

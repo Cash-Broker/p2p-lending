@@ -41,7 +41,7 @@ class ReconcileLedgerTest extends TestCase
             [],
             array_values($unmapped),
             'Every TYPE_* constant must be mapped in ReconcileLedger::LEDGER_MAP, '
-            . 'otherwise its money is silently dropped from reconciliation.'
+            .'otherwise its money is silently dropped from reconciliation.'
         );
     }
 
@@ -105,6 +105,50 @@ class ReconcileLedgerTest extends TestCase
         $this->assertEquals('75.00', $w->earned);
 
         $this->assertSame(0, Artisan::call('ledger:reconcile'));
+    }
+
+    public function test_accrual_then_release_reconciles_to_zero(): void
+    {
+        $wallet = app(WalletService::class);
+        $user = $this->userWithWallet();
+
+        $wallet->credit($user->id, '1000.00', Transaction::TYPE_DEPOSIT, 'deposit');
+        $wallet->invest($user->id, '1000.00', 'invest', 'loan:7:investment:7');
+
+        // Capitalized-style: profit accrues monthly into the locked bucket
+        // (текущо салдо grows, available untouched), released at maturity.
+        $wallet->accrueInterest($user->id, '16.67', 'accrue m1', 'loan:7:investment:7');
+        $wallet->accrueInterest($user->id, '16.94', 'accrue m2', 'loan:7:investment:7');
+
+        $w = $user->wallet->fresh();
+        $this->assertEquals('0.00', $w->available);
+        $this->assertEquals('1000.00', $w->invested);
+        $this->assertEquals('33.61', $w->accrued);
+        $this->assertSame('1033.61', $w->currentBalance(), 'текущо салдо = invested + accrued');
+
+        // Maturity: release the locked profit, return principal.
+        $wallet->releaseAccrued($user->id, '33.61', 'release at maturity', 'loan:7:investment:7');
+        $wallet->repayPrincipal($user->id, '1000.00', 'principal at maturity', 'loan:7:investment:7');
+
+        $w = $user->wallet->fresh();
+        $this->assertEquals('1033.61', $w->available);
+        $this->assertEquals('0.00', $w->invested);
+        $this->assertEquals('0.00', $w->accrued);
+        $this->assertEquals('33.61', $w->earned);
+
+        $this->assertSame(0, Artisan::call('ledger:reconcile'),
+            'accrue → release lifecycle must reconcile cleanly, incl. the accrued bucket');
+    }
+
+    public function test_release_cannot_exceed_accrued(): void
+    {
+        $wallet = app(WalletService::class);
+        $user = $this->userWithWallet();
+        $wallet->credit($user->id, '100.00', Transaction::TYPE_DEPOSIT, 'deposit');
+        $wallet->accrueInterest($user->id, '10.00', 'accrue', 'loan:8:investment:8');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $wallet->releaseAccrued($user->id, '10.01', 'over-release', 'loan:8:investment:8');
     }
 
     public function test_unmapped_transaction_type_fails_loudly(): void

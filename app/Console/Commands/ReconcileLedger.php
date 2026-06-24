@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Mail;
 class ReconcileLedger extends Command
 {
     protected $signature = 'ledger:reconcile {--notify : Send email alert on mismatch}';
+
     protected $description = 'Verify wallet balances match transaction ledger sums';
 
     /**
@@ -43,19 +44,26 @@ class ReconcileLedger extends Command
      * miscompute — that blind spot is exactly what let buyback/early-repay
      * payouts go unreconciled before this map existed.
      *
-     * @var array<string, array{cash:int, invested:int, earned:int}>
+     * `accrued` is the locked-profit bucket: interest recognised on schedule
+     * but not yet released to `available` (текущо салдо = invested + accrued).
+     *
+     * @var array<string, array{cash:int, invested:int, earned:int, accrued:int}>
      */
     private const LEDGER_MAP = [
-        Transaction::TYPE_DEPOSIT                  => ['cash' => 1,  'invested' => 0,  'earned' => 0],
-        Transaction::TYPE_WITHDRAWAL               => ['cash' => -1, 'invested' => 0,  'earned' => 0],
-        Transaction::TYPE_FEE                      => ['cash' => -1, 'invested' => 0,  'earned' => 0],
-        Transaction::TYPE_INVESTMENT               => ['cash' => -1, 'invested' => 1,  'earned' => 0],
-        Transaction::TYPE_REPAYMENT_PRINCIPAL      => ['cash' => 1,  'invested' => -1, 'earned' => 0],
-        Transaction::TYPE_REPAYMENT_INTEREST       => ['cash' => 1,  'invested' => 0,  'earned' => 1],
-        Transaction::TYPE_BUYBACK_PRINCIPAL        => ['cash' => 1,  'invested' => -1, 'earned' => 0],
-        Transaction::TYPE_BUYBACK_INTEREST         => ['cash' => 1,  'invested' => 0,  'earned' => 1],
-        Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL => ['cash' => 1, 'invested' => -1, 'earned' => 0],
-        Transaction::TYPE_EARLY_REPAYMENT_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1],
+        Transaction::TYPE_DEPOSIT => ['cash' => 1,  'invested' => 0,  'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_WITHDRAWAL => ['cash' => -1, 'invested' => 0,  'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_FEE => ['cash' => -1, 'invested' => 0,  'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_INVESTMENT => ['cash' => -1, 'invested' => 1,  'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_REPAYMENT_PRINCIPAL => ['cash' => 1,  'invested' => -1, 'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_REPAYMENT_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0],
+        Transaction::TYPE_BUYBACK_PRINCIPAL => ['cash' => 1,  'invested' => -1, 'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_BUYBACK_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0],
+        Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL => ['cash' => 1, 'invested' => -1, 'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_EARLY_REPAYMENT_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0],
+        // Locked profit accrues (текущо салдо grows), no cash move yet.
+        Transaction::TYPE_INTEREST_ACCRUED => ['cash' => 0,  'invested' => 0,  'earned' => 0, 'accrued' => 1],
+        // Locked profit released into spendable available (+ earned counter).
+        Transaction::TYPE_INTEREST_RELEASED => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => -1],
     ];
 
     public function handle(): int
@@ -64,7 +72,7 @@ class ReconcileLedger extends Command
         // rule — otherwise its money would be silently ignored.
         $unmapped = array_diff(Transaction::TYPES, array_keys(self::LEDGER_MAP));
         if (! empty($unmapped)) {
-            $msg = 'ReconcileLedger: unmapped transaction type(s): ' . implode(', ', $unmapped);
+            $msg = 'ReconcileLedger: unmapped transaction type(s): '.implode(', ', $unmapped);
             $this->error($msg);
             Log::error($msg);
 
@@ -95,12 +103,14 @@ class ReconcileLedger extends Command
                 $expectedCash = '0.00';
                 $expectedInvested = '0.00';
                 $expectedEarned = '0.00';
+                $expectedAccrued = '0.00';
 
                 foreach (self::LEDGER_MAP as $type => $signs) {
                     $amount = (string) ($sums[$type] ?? '0.00');
                     $expectedCash = bcadd($expectedCash, bcmul((string) $signs['cash'], $amount, 2), 2);
                     $expectedInvested = bcadd($expectedInvested, bcmul((string) $signs['invested'], $amount, 2), 2);
                     $expectedEarned = bcadd($expectedEarned, bcmul((string) $signs['earned'], $amount, 2), 2);
+                    $expectedAccrued = bcadd($expectedAccrued, bcmul((string) $signs['accrued'], $amount, 2), 2);
                 }
 
                 $expectedAvailablePlusReserved = $expectedCash;
@@ -118,9 +128,13 @@ class ReconcileLedger extends Command
                     $errors[] = "earned: expected={$expectedEarned}, actual={$wallet->earned}";
                 }
 
+                if (bccomp($wallet->accrued, $expectedAccrued, 2) !== 0) {
+                    $errors[] = "accrued: expected={$expectedAccrued}, actual={$wallet->accrued}";
+                }
+
                 if (! empty($errors)) {
                     $mismatches++;
-                    $errorMsg = "Ledger mismatch for user #{$userId}: " . implode('; ', $errors);
+                    $errorMsg = "Ledger mismatch for user #{$userId}: ".implode('; ', $errors);
                     $this->error($errorMsg);
                     Log::error($errorMsg);
 
@@ -155,6 +169,7 @@ class ReconcileLedger extends Command
         }
 
         $this->info('OK: All wallets reconciled successfully.');
+
         return Command::SUCCESS;
     }
 
@@ -179,7 +194,7 @@ class ReconcileLedger extends Command
     {
         $body = "LEDGER RECONCILIATION ALERT\n";
         $body .= "==========================\n\n";
-        $body .= "Timestamp: " . now()->toIso8601String() . "\n";
+        $body .= 'Timestamp: '.now()->toIso8601String()."\n";
         $body .= "Mismatched wallets: {$count}\n\n";
 
         foreach ($details as $detail) {

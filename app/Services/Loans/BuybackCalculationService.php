@@ -4,6 +4,7 @@ namespace App\Services\Loans;
 
 use App\Models\Loan;
 use App\Models\PlatformSetting;
+use App\Models\User;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
 
@@ -38,6 +39,7 @@ class BuybackCalculationService
     public function __construct(private InvestorDistributionService $distribution) {}
 
     public const COVERAGE_PRINCIPAL_ONLY = 'principal_only';
+
     public const COVERAGE_PRINCIPAL_PLUS_INTEREST = 'principal_plus_interest';
 
     public const COVERAGES = [
@@ -63,15 +65,19 @@ class BuybackCalculationService
         }
 
         // Load unpaid schedules ONCE — both principal and interest sums come
-        // from the same rowset. Avoids 2x DB round trips.
-        $unpaid = $loan->amortizationSchedules()
-            ->whereIn('status', ['pending', 'late'])
-            ->get(['principal', 'interest']);
+        // from the same rowset. Offer-based loans pay investors from their own
+        // per-investment schedules, so the buyback outstanding is summed from
+        // investment_schedules; legacy loans use the single per-loan schedule.
+        // Either way "unpaid" = the rows the auto-payout has NOT yet released,
+        // so buyback covers exactly the remainder (no double-pay).
+        $unpaid = $loan->usesOffers()
+            ? $loan->investmentSchedules()->whereIn('status', ['pending', 'late'])->get(['principal', 'interest'])
+            : $loan->amortizationSchedules()->whereIn('status', ['pending', 'late'])->get(['principal', 'interest']);
 
         $principal = $this->sumField($unpaid, 'principal');
         $interest = match ($coverage) {
-            self::COVERAGE_PRINCIPAL_ONLY            => '0.00',
-            self::COVERAGE_PRINCIPAL_PLUS_INTEREST   => $this->sumField($unpaid, 'interest'),
+            self::COVERAGE_PRINCIPAL_ONLY => '0.00',
+            self::COVERAGE_PRINCIPAL_PLUS_INTEREST => $this->sumField($unpaid, 'interest'),
         };
 
         return new BuybackCalculation(
@@ -96,8 +102,9 @@ class BuybackCalculationService
      *   For the last: remainder = total - Σ(previously distributed)
      *   Result: Σ(all shares) == total EXACTLY.
      *
-     * @return array<int, array{user_id:int, user:\App\Models\User, principal:string, interest:string, total:string}>
-     * @throws InvalidArgumentException  If loan has no investors or zero funded amount.
+     * @return array<int, array{user_id:int, user:User, principal:string, interest:string, total:string}>
+     *
+     * @throws InvalidArgumentException If loan has no investors or zero funded amount.
      */
     public function distribute(Loan $loan, BuybackCalculation $calc): array
     {
@@ -135,11 +142,11 @@ class BuybackCalculationService
             }
 
             $result[] = [
-                'user_id'   => $entry['user_id'],
-                'user'      => $entry['user'],
+                'user_id' => $entry['user_id'],
+                'user' => $entry['user'],
                 'principal' => $principalShare,
-                'interest'  => $interestShare,
-                'total'     => bcadd($principalShare, $interestShare, 2),
+                'interest' => $interestShare,
+                'total' => bcadd($principalShare, $interestShare, 2),
             ];
         }
 

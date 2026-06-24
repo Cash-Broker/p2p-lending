@@ -19,6 +19,19 @@ class InvestmentResource extends JsonResource
             'payout_type' => $this->payout_type?->value,
             'payout_label' => $this->payout_type?->label(),
             'loan' => new LoanResource($this->whenLoaded('loan')),
+            // Per-installment breakdown the investor must always be able to see:
+            // each row's principal / interest / total per their plan (boss req).
+            // Offer-based investments only; empty for legacy (pro-rata) positions.
+            'schedule' => $this->whenLoaded('schedules', fn () => $this->schedules
+                ->sortBy('due_date')
+                ->values()
+                ->map(fn ($row) => [
+                    'due_date' => $row->due_date?->toDateString(),
+                    'principal' => $row->principal,
+                    'interest' => $row->interest,
+                    'total' => $row->total,
+                    'status' => $row->status,
+                ])),
         ];
     }
 }

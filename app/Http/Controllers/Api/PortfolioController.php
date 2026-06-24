@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\InvestmentResource;
 use App\Models\Investment;
 use App\Models\Transaction;
+use App\Models\Wallet;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +27,8 @@ class PortfolioController extends Controller
                 'days_late',
             ),
             'loan.originator',
+            // Per-installment breakdown for the investor (offer positions).
+            'schedules' => fn ($q) => $q->orderBy('due_date'),
         ])
             ->where('user_id', $request->user()->id)
             ->latest('invested_at')
@@ -72,15 +75,14 @@ class PortfolioController extends Controller
             )
             ->first();
 
-        // F2 Q13 — investor's "earned" view aggregates BOTH repayment interest
-        // (borrower paid) AND buyback interest (originator honoured). From
-        // the investor's perspective it's a single income stream.
-        $totalEarned = Transaction::where('user_id', $userId)
-            ->whereIn('type', [
-                Transaction::TYPE_REPAYMENT_INTEREST,
-                Transaction::TYPE_BUYBACK_INTEREST,
-            ])
-            ->sum('amount');
+        // Investor's "earned" is the wallet.earned bucket — the single source
+        // of truth that already aggregates EVERY interest income path
+        // (scheduled repayment, buyback, early repayment, and the new
+        // scheduled-accrual release). Reading it directly avoids the bug of
+        // re-summing a hand-picked subset of transaction types (which silently
+        // dropped early-repayment + capitalized payout interest).
+        $wallet = Wallet::where('user_id', $userId)->first();
+        $totalEarned = $wallet?->earned ?? '0.00';
 
         // Breakdown by originator
         $byOriginator = Investment::where('investments.user_id', $userId)
@@ -93,6 +95,10 @@ class PortfolioController extends Controller
         return response()->json([
             'total_invested' => number_format((float) ($investments->total_invested ?? 0), 2, '.', ''),
             'total_earned' => number_format((float) $totalEarned, 2, '.', ''),
+            // The three account figures the boss wants always visible.
+            'invested' => number_format((float) ($wallet?->invested ?? 0), 2, '.', ''),       // Инвестирана сума
+            'current_balance' => $wallet ? $wallet->currentBalance() : '0.00',                 // Текущо салдо
+            'available' => number_format((float) ($wallet?->available ?? 0), 2, '.', ''),      // Свободни за теглене
             'active_investments_count' => (int) ($investments->active_count ?? 0),
             'breakdown_by_status' => [
                 'active' => number_format((float) ($investments->active_amount ?? 0), 2, '.', ''),

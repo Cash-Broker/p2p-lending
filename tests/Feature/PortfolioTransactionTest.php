@@ -21,6 +21,7 @@ class PortfolioTransactionTest extends TestCase
         if ($walletBalances) {
             $wallet->forceFill($walletBalances)->save();
         }
+
         return $user;
     }
 
@@ -56,7 +57,9 @@ class PortfolioTransactionTest extends TestCase
 
     public function test_portfolio_summary_calculates_totals(): void
     {
-        $user = $this->createVerifiedInvestor();
+        // earned is the authoritative income bucket (every interest credit
+        // updates it). A 75.50 interest receipt → earned 75.50.
+        $user = $this->createVerifiedInvestor(['earned' => '75.50']);
         $activeLoan = Loan::factory()->active()->create();
         $repaidLoan = Loan::factory()->repaid()->create();
 

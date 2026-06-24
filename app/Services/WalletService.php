@@ -278,6 +278,75 @@ class WalletService
     }
 
     /**
+     * Accrue interest into the LOCKED `accrued` bucket — profit recognised on
+     * schedule but not yet spendable. Grows "текущо салдо" (= invested +
+     * accrued) without touching `available`. Because accrual happens on
+     * schedule regardless of whether the borrower has actually paid, the
+     * accrued bucket also marks the platform's outstanding exposure until the
+     * profit is released.
+     */
+    public function accrueInterest(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        if (bccomp($amount, '0', 2) <= 0) {
+            throw new InvalidArgumentException('Accrual amount must be positive.');
+        }
+
+        return DB::transaction(function () use ($userId, $amount, $description, $reference) {
+            $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
+
+            $wallet->forceFill([
+                'accrued' => bcadd($wallet->accrued, $amount, 2),
+            ])->save();
+
+            return Transaction::create([
+                'user_id' => $userId,
+                'type' => Transaction::TYPE_INTEREST_ACCRUED,
+                'amount' => $amount,
+                'description' => $description,
+                'reference' => $reference,
+                'ip_address' => request()?->ip(),
+                'user_agent' => request()?->userAgent(),
+            ]);
+        });
+    }
+
+    /**
+     * Release locked profit from `accrued` into spendable `available` (and the
+     * cumulative `earned` counter). Used when an offer's plan unlocks profit —
+     * e.g. a capitalized offer at maturity. Cannot release more than is accrued.
+     */
+    public function releaseAccrued(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        if (bccomp($amount, '0', 2) <= 0) {
+            throw new InvalidArgumentException('Release amount must be positive.');
+        }
+
+        return DB::transaction(function () use ($userId, $amount, $description, $reference) {
+            $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
+
+            if (bccomp($wallet->accrued, $amount, 2) < 0) {
+                throw new InvalidArgumentException('Insufficient accrued balance to release.');
+            }
+
+            $wallet->forceFill([
+                'accrued' => bcsub($wallet->accrued, $amount, 2),
+                'available' => bcadd($wallet->available, $amount, 2),
+                'earned' => bcadd($wallet->earned, $amount, 2),
+            ])->save();
+
+            return Transaction::create([
+                'user_id' => $userId,
+                'type' => Transaction::TYPE_INTEREST_RELEASED,
+                'amount' => $amount,
+                'description' => $description,
+                'reference' => $reference,
+                'ip_address' => request()?->ip(),
+                'user_agent' => request()?->userAgent(),
+            ]);
+        });
+    }
+
+    /**
      * Shared helper: move funds from `invested` bucket to `available`.
      * Used by repayPrincipal, buybackPrincipal AND earlyRepayPrincipal —
      * same wallet-bucket arithmetic, different transaction type + description.
@@ -317,26 +386,26 @@ class WalletService
                 Log::error(
                     'WalletService: principal return exceeds invested balance — rejected (no money manufactured)',
                     [
-                        'reconciliation_id'      => $reconciliationId,
-                        'user_id'                => $userId,
-                        'loan_id'                => $loanId,
-                        'type'                   => $type,
-                        'requested_amount'       => $amount,
+                        'reconciliation_id' => $reconciliationId,
+                        'user_id' => $userId,
+                        'loan_id' => $loanId,
+                        'type' => $type,
+                        'requested_amount' => $amount,
                         'wallet_invested_before' => (string) $wallet->invested,
-                        'shortfall'              => $newInvested, // negative magnitude
-                        'reference'              => $reference,
+                        'shortfall' => $newInvested, // negative magnitude
+                        'reference' => $reference,
                     ],
                 );
 
                 throw new InvestedUnderflowException(
                     "Refusing to return {$amount} of principal to user #{$userId}: "
-                    . "only {$wallet->invested} invested remains (reconciliation_id={$reconciliationId}). "
-                    . 'This indicates a distribution bug — operation rolled back rather than manufacturing balance.'
+                    ."only {$wallet->invested} invested remains (reconciliation_id={$reconciliationId}). "
+                    .'This indicates a distribution bug — operation rolled back rather than manufacturing balance.'
                 );
             }
 
             $wallet->forceFill([
-                'invested'  => $newInvested,
+                'invested' => $newInvested,
                 'available' => bcadd($wallet->available, $amount, 2),
             ])->save();
 
@@ -403,6 +472,7 @@ class WalletService
         if (preg_match('/^loan:(\d+):/', $reference, $m)) {
             return (int) $m[1];
         }
+
         return null;
     }
 }

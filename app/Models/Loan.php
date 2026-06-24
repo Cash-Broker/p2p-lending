@@ -6,6 +6,7 @@ use App\Enums\PayoutType;
 use App\Services\AmortizationService;
 use App\Services\APRCalculatorService;
 use App\Services\InvestmentScheduleGenerator;
+use App\Traits\Auditable;
 use Database\Factories\LoanFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -18,7 +19,7 @@ use Illuminate\Support\Str;
 class Loan extends Model
 {
     /** @use HasFactory<LoanFactory> */
-    use \App\Traits\Auditable, HasFactory;
+    use Auditable, HasFactory;
 
     const STATUS_DRAFT = 'draft';
 
@@ -37,6 +38,21 @@ class Loan extends Model
     const STATUS_REPAID = 'repaid';
 
     const STATUS_BOUGHT_BACK = 'bought_back';
+
+    // Payout trigger mode (boss feature 2026-06-23).
+    //   MANUAL    — admin posts each scheduled accrual with a button (current).
+    //   AUTOMATIC — a timer accrues each investor's due amount on the schedule
+    //               date, regardless of how the loan is serviced.
+    // Operational setting — editable after draft (NOT in IMMUTABLE_AFTER_DRAFT)
+    // so an admin can switch already-uploaded loans.
+    const PAYOUT_MODE_MANUAL = 'manual';
+
+    const PAYOUT_MODE_AUTOMATIC = 'automatic';
+
+    const PAYOUT_MODES = [
+        self::PAYOUT_MODE_MANUAL,
+        self::PAYOUT_MODE_AUTOMATIC,
+    ];
 
     const STATUSES = [
         self::STATUS_DRAFT,
@@ -262,6 +278,7 @@ class Loan extends Model
         'term_months',
         'type',
         'status',
+        'payout_mode',
         'visibility',
         'share_token',
         'published_at',

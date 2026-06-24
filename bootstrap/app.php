@@ -1,9 +1,17 @@
 <?php
 
+use App\Http\Middleware\EnsureConsentsCurrent;
+use App\Http\Middleware\EnsureIsInvestor;
+use App\Http\Middleware\EnsureKycApproved;
+use App\Http\Middleware\SecurityHeaders;
+use App\Services\TelegramService;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Validation\ValidationException;
+use Spatie\Csp\AddCspHeaders;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withSchedule(function (Schedule $schedule): void {
@@ -42,6 +50,16 @@ return Application::configure(basePath: dirname(__DIR__))
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/loans-detect-buyback-eligible.log'));
 
+        // Scheduled payouts — daily at 04:00, after late-detection has settled
+        // loan statuses. Accrues/releases each investor's due amount per their
+        // plan for loans in AUTOMATIC payout mode (manual loans wait for the
+        // admin button). Own log file for independent tailing.
+        $schedule->command('loans:process-payouts')
+            ->dailyAt('04:00')
+            ->withoutOverlapping(60)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/loans-process-payouts.log'));
+
         // Telegram daily digest — INFO tier, silent (no push). Sends a brief
         // morning summary to the admin: new registrations, KYC pending,
         // deposits awaiting confirmation, withdrawals awaiting processing,
@@ -62,15 +80,15 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
-        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+        $middleware->append(SecurityHeaders::class);
         // Spatie CSP — currently emits Report-Only header (config/csp.php).
         // Promote App\Support\CspPolicy to `presets` for enforcement once
         // production violations are clean.
-        $middleware->append(\Spatie\Csp\AddCspHeaders::class);
+        $middleware->append(AddCspHeaders::class);
         $middleware->alias([
-            'investor' => \App\Http\Middleware\EnsureIsInvestor::class,
-            'kyc' => \App\Http\Middleware\EnsureKycApproved::class,
-            'consent.current' => \App\Http\Middleware\EnsureConsentsCurrent::class,
+            'investor' => EnsureIsInvestor::class,
+            'kyc' => EnsureKycApproved::class,
+            'consent.current' => EnsureConsentsCurrent::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
@@ -78,18 +96,18 @@ return Application::configure(basePath: dirname(__DIR__))
         // Skipped for HTTP 4xx (validation, auth errors etc.) — these are
         // expected and would cause noise. Only 5xx-class server errors land
         // in Telegram.
-        $exceptions->reportable(function (\Throwable $e) {
-            if ($e instanceof \Illuminate\Validation\ValidationException) {
+        $exceptions->reportable(function (Throwable $e) {
+            if ($e instanceof ValidationException) {
                 return;
             }
-            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+            if ($e instanceof HttpExceptionInterface) {
                 $status = $e->getStatusCode();
                 if ($status >= 400 && $status < 500) {
                     return;
                 }
             }
             try {
-                $svc = app(\App\Services\TelegramService::class);
+                $svc = app(TelegramService::class);
                 if (! $svc->isConfigured()) {
                     return;
                 }
@@ -105,7 +123,7 @@ return Application::configure(basePath: dirname(__DIR__))
                         'file' => basename($e->getFile()).':'.$e->getLine(),
                     ],
                 );
-            } catch (\Throwable $ignored) {
+            } catch (Throwable $ignored) {
                 // Telegram dispatch must never break the original error flow.
             }
         });
