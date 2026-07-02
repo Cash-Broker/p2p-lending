@@ -253,6 +253,15 @@ class LoanStatusUpdaterService
      * until admin manually transitioned them via the Filament status
      * Select. At 200–500 loans/year that's real operational burden.
      *
+     * Two completion bases, routed by {@see Loan::usesOffers}:
+     *   - legacy loans — every per-loan amortization schedule row `paid`.
+     *   - offer-based loans — every per-investment investment_schedule row
+     *     `paid` (the disbursement basis for the 3-offer feature). Without
+     *     this branch an offer loan fully paid out at maturity stayed
+     *     `active` forever: `repaid` is manual-blocklisted, early repayment
+     *     rejects offer loans, so its only reachable terminal was
+     *     `bought_back`.
+     *
      * Safeguards (belt + braces):
      *   - `lockForUpdate` on the loan row — prevents races with manual
      *     admin actions.
@@ -302,50 +311,123 @@ class LoanStatusUpdaterService
                 return false;
             }
 
-            $totalSchedules = $loan->amortizationSchedules()->count();
-            if ($totalSchedules === 0) {
-                // F3-L2 data gap — active loan without schedule. Don't
-                // touch; admin manual fix needed via backfill artisan.
-                Log::warning('loans:process-late auto-repay skipped: active loan without schedule', [
-                    'loan_id' => $loanId,
-                ]);
-                return false;
-            }
-
-            $paidSchedules = $loan->amortizationSchedules()->where('status', 'paid')->count();
-            if ($paidSchedules !== $totalSchedules) {
-                return false;
-            }
-
-            // Defensive re-check: every schedule in `paid` status. If any
-            // are `late`, `default`, `pending` — the paid-count check above
-            // would catch it, but re-verify to cover inconsistent data.
-            $nonPaid = $loan->amortizationSchedules()
-                ->whereNotIn('status', ['paid'])
-                ->exists();
-            if ($nonPaid) {
-                return false;
-            }
-
-            $loan->transitionTo(Loan::STATUS_REPAID);
-
-            LoanEvent::create([
-                'loan_id' => $loanId,
-                'event_type' => LoanEvent::TYPE_STATUS_CHANGED,
-                'from_status' => Loan::STATUS_ACTIVE,
-                'to_status' => Loan::STATUS_REPAID,
-                'triggered_by' => LoanEvent::TRIGGERED_BY_SYSTEM,
-                'triggered_by_user_id' => null,
-                'metadata' => [
-                    'total_installments_paid' => $paidSchedules,
-                    'originator_id' => $loan->originator_id,
-                    'auto_transitioned' => true,
-                    'transition_reason' => 'all_schedules_paid',
-                ],
-                'occurred_at' => now(),
-            ]);
-
-            return true;
+            return $loan->usesOffers()
+                ? $this->autoRepayOfferLoan($loan)
+                : $this->autoRepayLegacyLoan($loan);
         });
+    }
+
+    /**
+     * Legacy completion basis: every per-loan amortization schedule row paid.
+     * Byte-identical to the original P3-F5 behavior.
+     */
+    private function autoRepayLegacyLoan(Loan $loan): bool
+    {
+        $totalSchedules = $loan->amortizationSchedules()->count();
+        if ($totalSchedules === 0) {
+            // F3-L2 data gap — active loan without schedule. Don't
+            // touch; admin manual fix needed via backfill artisan.
+            Log::warning('loans:process-late auto-repay skipped: active loan without schedule', [
+                'loan_id' => $loan->id,
+            ]);
+            return false;
+        }
+
+        $paidSchedules = $loan->amortizationSchedules()->where('status', 'paid')->count();
+        if ($paidSchedules !== $totalSchedules) {
+            return false;
+        }
+
+        // Defensive re-check: every schedule in `paid` status. If any
+        // are `late`, `default`, `pending` — the paid-count check above
+        // would catch it, but re-verify to cover inconsistent data.
+        $nonPaid = $loan->amortizationSchedules()
+            ->whereNotIn('status', ['paid'])
+            ->exists();
+        if ($nonPaid) {
+            return false;
+        }
+
+        $this->writeAutoRepayTransition($loan, $paidSchedules, 'all_schedules_paid');
+
+        return true;
+    }
+
+    /**
+     * Offer-based completion basis: every per-investment investment_schedule
+     * row paid (rows are marked paid by PayoutAccrualService as it releases /
+     * matures each position).
+     */
+    private function autoRepayOfferLoan(Loan $loan): bool
+    {
+        // Mixed loans (offer + legacy investments on the same loan) are out
+        // of scope: the legacy investors are repaid via the amortization
+        // schedule, which this branch does not verify. Skip for manual review.
+        if ($loan->investments()->whereNull('loan_offer_id')->exists()) {
+            Log::warning('loans:process-late auto-repay skipped: offer-based loan also has legacy (no-offer) investments — manual review required', [
+                'loan_id' => $loan->id,
+            ]);
+            return false;
+        }
+
+        $totalRows = $loan->investmentSchedules()->count();
+        if ($totalRows === 0) {
+            // Same data-gap rule as legacy: an active offer loan whose
+            // schedules were never generated is broken data — don't touch.
+            Log::warning('loans:process-late auto-repay skipped: active offer-based loan without investment schedules', [
+                'loan_id' => $loan->id,
+            ]);
+            return false;
+        }
+
+        // Any non-paid row (pending / late / default) blocks auto-close —
+        // delinquent positions must go through the late/buyback path.
+        $nonPaid = $loan->investmentSchedules()
+            ->whereNotIn('status', ['paid'])
+            ->exists();
+        if ($nonPaid) {
+            return false;
+        }
+
+        // Defensive parity with the legacy rule: even with every investor
+        // fully paid out, a borrower-side schedule row in late/default means
+        // delinquency is in flight — the late path (or admin) resolves it
+        // first. Offer loans usually run without a borrower-side plan, so
+        // this only bites pre-generated (back-dated) schedules.
+        $borrowerDelinquent = $loan->amortizationSchedules()
+            ->whereIn('status', ['late', 'default'])
+            ->exists();
+        if ($borrowerDelinquent) {
+            Log::warning('loans:process-late auto-repay skipped: investors fully paid but borrower schedule has late/default rows — manual review required', [
+                'loan_id' => $loan->id,
+            ]);
+            return false;
+        }
+
+        $this->writeAutoRepayTransition($loan, $totalRows, 'all_investment_schedules_paid');
+
+        return true;
+    }
+
+    /** Shared active → repaid transition + audit event for both bases. */
+    private function writeAutoRepayTransition(Loan $loan, int $paidCount, string $reason): void
+    {
+        $loan->transitionTo(Loan::STATUS_REPAID);
+
+        LoanEvent::create([
+            'loan_id' => $loan->id,
+            'event_type' => LoanEvent::TYPE_STATUS_CHANGED,
+            'from_status' => Loan::STATUS_ACTIVE,
+            'to_status' => Loan::STATUS_REPAID,
+            'triggered_by' => LoanEvent::TRIGGERED_BY_SYSTEM,
+            'triggered_by_user_id' => null,
+            'metadata' => [
+                'total_installments_paid' => $paidCount,
+                'originator_id' => $loan->originator_id,
+                'auto_transitioned' => true,
+                'transition_reason' => $reason,
+            ],
+            'occurred_at' => now(),
+        ]);
     }
 }

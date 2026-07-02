@@ -33,6 +33,10 @@ class DashboardController extends Controller
 
         $latestLoans = Loan::with(['originator', 'anonymizedProfile'])
             ->whereIn('status', Loan::FUNDABLE_STATUSES)
+            // Like the marketplace board, the dashboard discovery feed never
+            // shows private (link-only) loans — those are reachable only via
+            // their share link / grant.
+            ->where('visibility', Loan::VISIBILITY_PUBLIC)
             ->latest('published_at')
             ->limit(5)
             ->get();

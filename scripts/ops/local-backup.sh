@@ -25,8 +25,13 @@ RETENTION_DAYS="${RETENTION_DAYS:-30}"
 LOG_FILE="${LOG_FILE:-/var/log/p2p-local-backup.log}"
 
 # --- Read DB + backup encryption + Telegram credentials from .env ---
+# `|| true`: a key missing from .env makes grep exit 1, and under
+# `set -euo pipefail` that killed the whole script on the assignment line —
+# BEFORE the validation loop and its Telegram alert could run. A missing
+# OPTIONAL key (DB_PORT, TELEGRAM_*, BACKUP_OWNER) must yield an empty
+# string; missing REQUIRED keys are caught by the validation loop below.
 read_env() {
-    grep "^$1=" "$APP_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
+    grep "^$1=" "$APP_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true
 }
 
 DB_HOST=$(read_env DB_HOST)
@@ -37,6 +42,10 @@ DB_PASSWORD=$(read_env DB_PASSWORD)
 BACKUP_PASS=$(read_env BACKUP_ENCRYPTION_PASS)
 TG_TOKEN=$(read_env TELEGRAM_BOT_TOKEN)
 TG_CHAT=$(read_env TELEGRAM_CHAT_ID)
+# Optional: OS user who downloads backups over SCP (the weekly laptop
+# ritual). The cron runs as root, so without this the 700/600 root-owned
+# dir+files are unreadable for the operator account.
+BACKUP_OWNER=$(read_env BACKUP_OWNER)
 
 DB_PORT="${DB_PORT:-3306}"
 
@@ -61,6 +70,9 @@ done
 # --- Setup ---
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
+if [ -n "$BACKUP_OWNER" ]; then
+    chown "$BACKUP_OWNER" "$BACKUP_DIR"
+fi
 mkdir -p "$(dirname "$LOG_FILE")"
 
 TIMESTAMP=$(date -u +%Y-%m-%d)
@@ -102,6 +114,9 @@ if MYSQL_PWD="$DB_PASSWORD" mysqldump \
     && mv "$OUTFILE.tmp" "$OUTFILE"; then
 
     chmod 600 "$OUTFILE"
+    if [ -n "$BACKUP_OWNER" ]; then
+        chown "$BACKUP_OWNER" "$OUTFILE"
+    fi
 
     SIZE_BYTES=$(stat -c%s "$OUTFILE")
     SIZE_HUMAN=$(du -h "$OUTFILE" | cut -f1)

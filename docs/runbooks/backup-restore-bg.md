@@ -157,6 +157,20 @@ rm /tmp/2026-04-25.sql.gz.enc
 2. Скриптът пада → `sudo tail -50 /var/log/p2p-local-backup.log`
 3. Telegram credentials грешни в `.env` → `php artisan telegram:test`
 4. Backup script-ът няма execute права → `sudo chmod +x /usr/local/bin/p2p-local-backup`
+5. **Стара версия на скрипта + липсващ ключ в `.env`** (напр. `DB_PORT`) —
+   версиите преди 2026-07-02 умираха тихо на реда за четене от `.env`,
+   ПРЕДИ да пратят каквото и да е известие и преди да пишат в лога
+   (симптом: cron-ът е инсталиран, а няма нито файл, нито лог, нито
+   Telegram). Диагноза: `sudo bash -x /usr/local/bin/p2p-local-backup 2>&1 | tail -20`.
+   Фикс: копирай актуалния скрипт от репото:
+   `sudo cp /var/www/p2p-lending/scripts/ops/local-backup.sh /usr/local/bin/p2p-local-backup`
+
+### „Permission denied" при SCP теглене от лаптопа
+
+Cron-ът върви като root и файловете са `600 root:root`. Добави в `.env` на
+сървъра `BACKUP_OWNER=yordan` — при следващия backup скриптът ще прехвърли
+собствеността на директорията и файла към този потребител и SCP ще работи
+без sudo.
 
 ### Telegram съобщава „BACKUP FAILED"
 

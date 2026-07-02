@@ -88,6 +88,25 @@ class DashboardTest extends TestCase
         $this->assertCount(3, $response->json('latest_loans'));
     }
 
+    public function test_dashboard_latest_loans_never_include_private_loans(): void
+    {
+        // Regression: latest_loans used to filter only by status, so private
+        // (link-only) loans leaked into every investor's dashboard feed.
+        $user = $this->createVerifiedInvestor();
+
+        Loan::factory()->count(2)->funding()->create();
+        $private = Loan::factory()->funding()->create(['visibility' => Loan::VISIBILITY_PRIVATE]);
+        $private->forceFill(['share_token' => Loan::generateShareToken()])->save();
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard');
+
+        $response->assertOk();
+        $loans = $response->json('latest_loans');
+        $this->assertCount(2, $loans);
+        $this->assertNotContains($private->id, array_column($loans, 'id'),
+            'a private loan must never appear in the dashboard feed without a grant');
+    }
+
     public function test_dashboard_loans_do_not_expose_borrower_id(): void
     {
         $user = $this->createVerifiedInvestor();

@@ -41,7 +41,12 @@ class TelegramDigest extends Command
 
         $newRegistrations = User::where('created_at', '>=', $since)->count();
         $kycPending = User::where('kyc_status', 'submitted')->count();
-        $depositsPending = DepositRequest::where('status', 'pending')->count();
+        // Same rule as the admin UI (DepositRequestResource / StatsOverview):
+        // pending rows without an amount are just issued reference codes the
+        // user never wired against — not actionable work, so not counted.
+        $depositsPending = DepositRequest::where('status', 'pending')
+            ->where('amount', '>', 0)
+            ->count();
         $withdrawalsPending = WithdrawalRequest::where('status', 'pending')->count();
         $loansLate = Loan::whereIn('status', ['late', 'default'])->count();
         $buybackQueue = Loan::whereNotNull('buyback_eligible_at')
