@@ -310,4 +310,36 @@ class EarlyRepaymentExecutionServiceTest extends TestCase
         $this->assertStringContainsString('early_repayment_amount', $sql);
         $this->assertStringContainsString('status', $sql);
     }
+
+    public function test_unpaid_schedule_rows_closed_on_early_repayment(): void
+    {
+        // Regression (audit 2026-07-02): the payoff settled the investors but
+        // left the borrower-side rows pending/late — and a row left 'late' on
+        // a terminal loan had its days_late refreshed by the nightly cron
+        // forever (zombie counter on a closed loan).
+        [$loan, $admin] = $this->makeScenario(status: 'late');
+        $loan->amortizationSchedules()->orderBy('due_date')->first()
+            ->forceFill(['status' => 'late', 'became_late_at' => now()->subDays(5), 'days_late' => 5])
+            ->save();
+
+        $this->service->execute($loan->id, $admin->id);
+
+        $this->assertSame(
+            0,
+            $loan->amortizationSchedules()->whereIn('status', ['pending', 'late'])->count(),
+            'every pending/late row is closed with the payoff',
+        );
+        $firstRow = $loan->amortizationSchedules()->orderBy('due_date')->first();
+        $this->assertSame('paid', $firstRow->status);
+        $this->assertNotNull($firstRow->paid_at);
+
+        // The nightly snapshot refresh no longer touches the closed loan.
+        $frozenDaysLate = $firstRow->days_late;
+        app(\App\Services\Loans\LateDetectionService::class)->refreshDaysLateSnapshots(now()->addDays(10));
+        $this->assertSame(
+            $frozenDaysLate,
+            $firstRow->fresh()->days_late,
+            'days_late must stay frozen on a closed loan',
+        );
+    }
 }

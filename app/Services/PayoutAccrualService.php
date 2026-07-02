@@ -219,15 +219,19 @@ class PayoutAccrualService
     }
 
     /**
-     * Net interest currently accrued for one investment (Σ accrued − Σ released),
-     * read from the immutable ledger by reference. The trailing ":" guards
-     * against investment-id prefix collisions (1 vs 11).
+     * Net interest currently accrued for one investment (Σ accrued − Σ released
+     * − Σ reversed), read from the immutable ledger by reference. The trailing
+     * ":" guards against investment-id prefix collisions (1 vs 11).
      */
     private function accruedToDate(int $loanId, int $investmentId): string
     {
         $rows = Transaction::query()
             ->where('reference', 'like', "loan:{$loanId}:investment:{$investmentId}:%")
-            ->whereIn('type', [Transaction::TYPE_INTEREST_ACCRUED, Transaction::TYPE_INTEREST_RELEASED])
+            ->whereIn('type', [
+                Transaction::TYPE_INTEREST_ACCRUED,
+                Transaction::TYPE_INTEREST_RELEASED,
+                Transaction::TYPE_INTEREST_ACCRUAL_REVERSED,
+            ])
             ->get(['type', 'amount']);
 
         $net = '0.00';

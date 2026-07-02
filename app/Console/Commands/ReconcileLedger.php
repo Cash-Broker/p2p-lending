@@ -64,6 +64,10 @@ class ReconcileLedger extends Command
         Transaction::TYPE_INTEREST_ACCRUED => ['cash' => 0,  'invested' => 0,  'earned' => 0, 'accrued' => 1],
         // Locked profit released into spendable available (+ earned counter).
         Transaction::TYPE_INTEREST_RELEASED => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => -1],
+        // Locked profit written OFF (principal-only buyback: the originator
+        // does not cover interest, so the accrued promise is reversed, not
+        // paid out). No cash move, no earned income.
+        Transaction::TYPE_INTEREST_ACCRUAL_REVERSED => ['cash' => 0, 'invested' => 0, 'earned' => 0, 'accrued' => -1],
     ];
 
     public function handle(): int

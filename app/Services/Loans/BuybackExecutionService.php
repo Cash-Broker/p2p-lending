@@ -179,8 +179,9 @@ class BuybackExecutionService
             // capitalized investor isn't paid twice); legacy loans split the
             // total pro-rata. Either way only the UNPAID remainder is credited,
             // so a loan already partly auto-paid is never double-paid.
+            $accruedReversed = '0.00';
             if ($loan->usesOffers()) {
-                $distributions = $this->creditOfferBuyback($loan, $calc->coverageType);
+                [$distributions, $accruedReversed] = $this->creditOfferBuyback($loan, $calc->coverageType);
             } else {
                 $distributions = $this->calculator->distribute($loan, $calc);
 
@@ -207,12 +208,41 @@ class BuybackExecutionService
                 }
             }
 
+            // The audit record (loan_event, Telegram, result object) reports what
+            // was ACTUALLY credited, not the calc estimate: the legacy branch
+            // returns each investor's exact ledger outstanding, which can diverge
+            // from the schedule-summed calc->principal (e.g. rows in 'default'
+            // status hold capital outside buyback scope while the ledger still
+            // tracks it as outstanding).
+            $actualPrincipal = '0.00';
+            $actualInterest = '0.00';
+            foreach ($distributions as $d) {
+                $actualPrincipal = bcadd($actualPrincipal, $d['principal'], 2);
+                $actualInterest = bcadd($actualInterest, $d['interest'], 2);
+            }
+            $actualTotal = bcadd($actualPrincipal, $actualInterest, 2);
+
+            // Close out the borrower-side plan: rows left pending/late on a
+            // terminal loan would keep feeding the nightly days_late snapshot
+            // refresh forever (zombie counters on a closed loan). Rows in
+            // 'default' status stay untouched — they are explicitly out of
+            // buyback scope and remain the admin's manual concern.
+            $unpaidBorrowerRows = $loan->amortizationSchedules()
+                ->whereIn('status', ['pending', 'late'])
+                ->lockForUpdate()
+                ->get();
+            foreach ($unpaidBorrowerRows as $row) {
+                $row->forceFill(['status' => 'paid', 'paid_at' => now()])->save();
+            }
+
             Log::info('BuybackExecutionService: distributed', [
                 'loan_id' => $loanId,
                 'admin_id' => $adminId,
                 'from_status' => $fromStatus,
                 'coverage_type' => $calc->coverageType,
-                'total' => $calc->total,
+                'calc_total' => $calc->total,
+                'credited_total' => $actualTotal,
+                'accrued_reversed' => $accruedReversed,
                 'investor_count' => count($distributions),
                 'uses_offers' => $loan->usesOffers(),
             ]);
@@ -232,12 +262,13 @@ class BuybackExecutionService
                 originatorId: $loan->originator_id,
                 fromStatus: $fromStatus,
                 coverageType: $calc->coverageType,
-                totalAmount: $calc->total,
-                totalPrincipal: $calc->principal,
-                totalInterest: $calc->interest,
+                totalAmount: $actualTotal,
+                totalPrincipal: $actualPrincipal,
+                totalInterest: $actualInterest,
                 investorCount: count($distributions),
                 executedAt: $boughtBackAt,
                 distributions: $distributions,
+                totalAccruedReversed: $accruedReversed,
             );
 
             // 9. LoanEvent. status_pair CHECK passes: late|default → bought_back
@@ -258,7 +289,7 @@ class BuybackExecutionService
                 'loan_id' => $loanId,
                 'admin_id' => $adminId,
                 'from_status' => $fromStatus,
-                'total' => $calc->total,
+                'total' => $actualTotal,
                 'investor_count' => count($distributions),
             ]);
 
@@ -296,7 +327,12 @@ class BuybackExecutionService
      * exactly ONCE (boss req: never pay twice). Unpaid rows are marked paid so
      * the auto-payout cron can never re-pay them.
      *
-     * @return array<int, array{user_id:int, user:User, principal:string, interest:string, total:string}>
+     * Under principal_only coverage NO interest is covered: the locked accrued
+     * bucket is REVERSED (written off), never released — the originator did
+     * not fund it, so paying it out would hand the investor un-backed money.
+     *
+     * @return array{0: array<int, array{user_id:int, user:User, principal:string, interest:string, total:string}>, 1: string}
+     *         [distributions, total accrued interest reversed]
      */
     private function creditOfferBuyback(Loan $loan, string $coverage): array
     {
@@ -307,6 +343,7 @@ class BuybackExecutionService
             ->get();
 
         $result = [];
+        $totalAccruedReversed = '0.00';
 
         foreach ($investments as $investment) {
             $unpaid = InvestmentSchedule::where('investment_id', $investment->id)
@@ -337,18 +374,30 @@ class BuybackExecutionService
 
             // Interest: release any LOCKED accrual first (it counts toward the
             // covered interest), then top up the remainder → net == covered
-            // interest, paid exactly once.
+            // interest, paid exactly once. Under principal_only the accrual is
+            // NOT covered — reverse it (accrued -= A, nothing paid out) so the
+            // investor receives exactly what the originator funded: principal.
             $accrued = $this->accruedToDate($loan->id, $investment->id);
             $interestPaid = '0.00';
 
             if (bccomp($accrued, '0', 2) > 0) {
-                $this->walletService->releaseAccrued(
-                    userId: $investment->user_id,
-                    amount: $accrued,
-                    description: "Buyback: release accrued interest for loan #{$loan->id}",
-                    reference: $reference,
-                );
-                $interestPaid = $accrued;
+                if ($coverage === BuybackCalculationService::COVERAGE_PRINCIPAL_PLUS_INTEREST) {
+                    $this->walletService->releaseAccrued(
+                        userId: $investment->user_id,
+                        amount: $accrued,
+                        description: "Buyback: release accrued interest for loan #{$loan->id}",
+                        reference: $reference,
+                    );
+                    $interestPaid = $accrued;
+                } else {
+                    $this->walletService->reverseAccrued(
+                        userId: $investment->user_id,
+                        amount: $accrued,
+                        description: "Buyback (principal-only): reverse uncovered accrued interest for loan #{$loan->id}",
+                        reference: $reference,
+                    );
+                    $totalAccruedReversed = bcadd($totalAccruedReversed, $accrued, 2);
+                }
             }
 
             $remainder = bcsub($scheduledInterest, $accrued, 2);
@@ -375,15 +424,19 @@ class BuybackExecutionService
             ];
         }
 
-        return $result;
+        return [$result, $totalAccruedReversed];
     }
 
-    /** Net interest accrued for one investment (Σ accrued − Σ released), from the immutable ledger. */
+    /** Net interest accrued for one investment (Σ accrued − Σ released − Σ reversed), from the immutable ledger. */
     private function accruedToDate(int $loanId, int $investmentId): string
     {
         $rows = Transaction::query()
             ->where('reference', 'like', "loan:{$loanId}:investment:{$investmentId}:%")
-            ->whereIn('type', [Transaction::TYPE_INTEREST_ACCRUED, Transaction::TYPE_INTEREST_RELEASED])
+            ->whereIn('type', [
+                Transaction::TYPE_INTEREST_ACCRUED,
+                Transaction::TYPE_INTEREST_RELEASED,
+                Transaction::TYPE_INTEREST_ACCRUAL_REVERSED,
+            ])
             ->get(['type', 'amount']);
 
         $net = '0.00';

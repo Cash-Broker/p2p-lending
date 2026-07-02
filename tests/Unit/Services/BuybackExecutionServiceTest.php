@@ -331,4 +331,58 @@ class BuybackExecutionServiceTest extends TestCase
         $this->assertStringContainsString('bought_back_at', $q['query']);
         $this->assertStringContainsString('status', $q['query']);
     }
+
+    public function test_metadata_reports_actually_credited_principal_when_schedule_and_ledger_diverge(): void
+    {
+        // Regression (audit 2026-07-02): the loan_event used to record
+        // calc->principal (Σ pending/late schedule rows), while distribute()
+        // credits each investor their EXACT ledger outstanding. A 'default'
+        // schedule row holds capital outside the calc sum, so the two diverge —
+        // the audit record must report what was actually paid.
+        [$loan, $admin, $investors] = $this->makeScenario(
+            investorCount: 1,
+            eachInvestment: '200.00',
+            scheduleCount: 2,
+            principalPerSchedule: '100.00',
+            interestPerSchedule: '5.00',
+        );
+        $loan->amortizationSchedules()->orderBy('due_date')->first()
+            ->forceFill(['status' => 'default'])->save();
+
+        $result = $this->service->execute($loan->id, $admin->id);
+
+        // Credited: full ledger outstanding (200) + the covered interest of
+        // the single remaining unpaid row (5).
+        $this->assertSame('200.00', $result->totalPrincipal);
+        $this->assertSame('5.00', $result->totalInterest);
+        $this->assertSame('205.00', $result->totalAmount);
+
+        $event = LoanEvent::where('loan_id', $loan->id)
+            ->where('event_type', LoanEvent::TYPE_BUYBACK_COMPLETED)
+            ->first();
+        $this->assertSame('200.00', $event->metadata['total_principal']);
+        $this->assertSame('205.00', $event->metadata['total_amount']);
+
+        $wallet = Wallet::where('user_id', $investors[0]->id)->first();
+        $this->assertSame('0.00', $wallet->invested, 'investor fully paid out');
+    }
+
+    public function test_unpaid_borrower_rows_closed_and_default_rows_untouched_on_buyback(): void
+    {
+        // Terminal loans must not keep pending/late rows alive — the nightly
+        // days_late refresh would tick them forever. 'default' rows stay:
+        // they are explicitly out of buyback scope (admin manual handling).
+        [$loan, $admin] = $this->makeScenario(scheduleCount: 3);
+        $rows = $loan->amortizationSchedules()->orderBy('due_date')->get();
+        $rows[0]->forceFill(['status' => 'late', 'became_late_at' => now()->subDays(5), 'days_late' => 5])->save();
+        $rows[1]->forceFill(['status' => 'default'])->save();
+
+        $this->service->execute($loan->id, $admin->id);
+
+        $this->assertSame(0, $loan->amortizationSchedules()->whereIn('status', ['pending', 'late'])->count(),
+            'pending/late rows are closed on the terminal transition');
+        $this->assertSame(1, $loan->amortizationSchedules()->where('status', 'default')->count(),
+            'default rows remain admin scope');
+        $this->assertNotNull($loan->amortizationSchedules()->orderBy('due_date')->first()->fresh()->paid_at);
+    }
 }

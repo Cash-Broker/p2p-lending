@@ -202,6 +202,19 @@ class EarlyRepaymentExecutionService
                 }
             }
 
+            // 5b. Close out the borrower-side plan: the payoff settles every
+            //     remaining installment. Rows left 'late' on a terminal loan
+            //     would keep their days_late counters ticking in the nightly
+            //     snapshot refresh forever (zombie counters on a closed loan).
+            //     'default' rows stay untouched — admin manual scope.
+            $unpaidRows = $loan->amortizationSchedules()
+                ->whereIn('status', ['pending', 'late'])
+                ->lockForUpdate()
+                ->get();
+            foreach ($unpaidRows as $row) {
+                $row->forceFill(['status' => 'paid', 'paid_at' => now()])->save();
+            }
+
             // 6. STAMP early_repaid_at + early_repayment_amount + TRANSITION
             //    in ONE UPDATE. forceFill sets the fields dirty; transitionTo()'s
             //    save persists all dirty fields (including early_repaid_at +

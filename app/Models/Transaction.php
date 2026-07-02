@@ -53,6 +53,13 @@ class Transaction extends Model
 
     const TYPE_INTEREST_RELEASED = 'interest_released';
 
+    //   INTEREST_ACCRUAL_REVERSED — write-off of previously-accrued locked
+    //                       profit that will never be funded (e.g. a
+    //                       principal-only buyback: the originator covers no
+    //                       interest). Decrements `accrued` only — no cash
+    //                       move, no earned income.
+    const TYPE_INTEREST_ACCRUAL_REVERSED = 'interest_accrual_reversed';
+
     const TYPES = [
         self::TYPE_DEPOSIT,
         self::TYPE_WITHDRAWAL,
@@ -65,6 +72,7 @@ class Transaction extends Model
         self::TYPE_EARLY_REPAYMENT_INTEREST,
         self::TYPE_INTEREST_ACCRUED,
         self::TYPE_INTEREST_RELEASED,
+        self::TYPE_INTEREST_ACCRUAL_REVERSED,
         self::TYPE_FEE,
     ];
 

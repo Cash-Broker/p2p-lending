@@ -347,6 +347,42 @@ class WalletService
     }
 
     /**
+     * Write OFF locked profit from `accrued` without paying it out — the
+     * mirror image of releaseAccrued for promises that will never be funded
+     * (e.g. a principal-only buyback: the originator covers no interest, so
+     * interest recognised on schedule must be reversed, not released).
+     * Decrements `accrued` only; `available` and `earned` are untouched.
+     */
+    public function reverseAccrued(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        if (bccomp($amount, '0', 2) <= 0) {
+            throw new InvalidArgumentException('Reversal amount must be positive.');
+        }
+
+        return DB::transaction(function () use ($userId, $amount, $description, $reference) {
+            $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
+
+            if (bccomp($wallet->accrued, $amount, 2) < 0) {
+                throw new InvalidArgumentException('Insufficient accrued balance to reverse.');
+            }
+
+            $wallet->forceFill([
+                'accrued' => bcsub($wallet->accrued, $amount, 2),
+            ])->save();
+
+            return Transaction::create([
+                'user_id' => $userId,
+                'type' => Transaction::TYPE_INTEREST_ACCRUAL_REVERSED,
+                'amount' => $amount,
+                'description' => $description,
+                'reference' => $reference,
+                'ip_address' => request()?->ip(),
+                'user_agent' => request()?->userAgent(),
+            ]);
+        });
+    }
+
+    /**
      * Shared helper: move funds from `invested` bucket to `available`.
      * Used by repayPrincipal, buybackPrincipal AND earlyRepayPrincipal —
      * same wallet-bucket arithmetic, different transaction type + description.

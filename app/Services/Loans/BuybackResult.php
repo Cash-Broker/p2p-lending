@@ -41,6 +41,8 @@ final class BuybackResult
         public readonly CarbonInterface $executedAt,
         /** @var array<int, array{user_id:int, user:User, principal:string, interest:string, total:string}> */
         public readonly array $distributions,
+        /** Accrued interest written OFF (not paid) under principal_only coverage. */
+        public readonly string $totalAccruedReversed = '0.00',
     ) {}
 
     /**
@@ -59,6 +61,7 @@ final class BuybackResult
             'total_amount' => $this->totalAmount,
             'total_principal' => $this->totalPrincipal,
             'total_interest' => $this->totalInterest,
+            'accrued_reversed' => $this->totalAccruedReversed,
             'investor_count' => $this->investorCount,
             'originator_id' => $this->originatorId,
             'executed_at' => $this->executedAt->toIso8601String(),

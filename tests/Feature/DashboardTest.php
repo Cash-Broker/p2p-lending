@@ -155,6 +155,35 @@ class DashboardTest extends TestCase
         $this->assertCount(6, $response->json('monthly_earnings'));
     }
 
+    public function test_monthly_earnings_include_buyback_early_repayment_and_released_interest(): void
+    {
+        // Regression (audit 2026-07-02): the chart summed only scheduled
+        // repayments, silently dropping buyback / early-repayment / released
+        // capitalized interest — the exact bug class PortfolioController
+        // already fixed by reading wallet.earned.
+        $user = $this->createVerifiedInvestor();
+
+        foreach ([
+            ['type' => Transaction::TYPE_BUYBACK_INTEREST, 'amount' => 50],
+            ['type' => Transaction::TYPE_EARLY_REPAYMENT_INTEREST, 'amount' => 25],
+            ['type' => Transaction::TYPE_INTEREST_RELEASED, 'amount' => 25],
+            ['type' => Transaction::TYPE_BUYBACK_PRINCIPAL, 'amount' => 60],
+            ['type' => Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL, 'amount' => 40],
+            // Locked recognition must NOT count — its release above does.
+            ['type' => Transaction::TYPE_INTEREST_ACCRUED, 'amount' => 999],
+        ] as $tx) {
+            Transaction::factory()->create(['user_id' => $user->id] + $tx);
+        }
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard');
+
+        $month = collect($response->json('monthly_earnings'))
+            ->firstWhere('month', now()->format('Y-m'));
+        $this->assertNotNull($month);
+        $this->assertEquals('100.00', $month['interest'], 'all interest income paths must count');
+        $this->assertEquals('100.00', $month['principal'], 'all principal return paths must count');
+    }
+
     // ── Financial precision tests ──
 
     public function test_wallet_total_uses_precise_decimal_math(): void

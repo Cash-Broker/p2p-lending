@@ -15,9 +15,11 @@ use Tests\TestCase;
 
 /**
  * Guards the additive boundary: legacy loans (investments with no offer) keep
- * the original per-loan amortization path untouched, and the lifecycle actions
- * that assume that single schedule (buyback / early repayment) refuse to run
- * on offer-based loans rather than mis-compute.
+ * the original per-loan amortization path untouched. Early repayment still
+ * assumes the single per-loan schedule and refuses to run on offer-based
+ * loans rather than mis-compute; buyback gained offer support with the
+ * scheduled-accrual feature (see OfferBuybackTest) and is guarded only by
+ * the late/default status rule.
  */
 class OfferLegacyAndGuardsTest extends TestCase
 {
@@ -82,12 +84,15 @@ class OfferLegacyAndGuardsTest extends TestCase
         app(EarlyRepaymentExecutionService::class)->execute($loan->id, 1);
     }
 
-    public function test_buyback_blocked_for_offer_based_loan(): void
+    public function test_buyback_on_offer_loan_requires_late_or_default_status(): void
     {
+        // Buyback SUPPORTS offer-based loans since the scheduled-accrual
+        // feature (OfferBuybackTest covers the money math) — the guard that
+        // remains is the lifecycle one: only late/default loans buy back.
         $loan = $this->activeOfferLoan();
 
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('per-offer investor payouts');
+        $this->expectExceptionMessage("Buyback is only allowed from 'late' or 'default'");
         app(BuybackExecutionService::class)->execute($loan->id, 1);
     }
 }

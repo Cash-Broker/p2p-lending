@@ -52,18 +52,39 @@ class DashboardController extends Controller
         ]);
     }
 
-    // Aggregate principal + interest repayments by month for chart data.
+    // Aggregate principal + interest income by month for chart data.
     private function getMonthlyEarnings(int $userId): \Illuminate\Support\Collection
     {
         $sixMonthsAgo = Carbon::now()->subMonths(6)->startOfMonth();
 
+        // Every path that actually pays the investor counts: scheduled
+        // repayments, buyback (originator), early repayment, and the release
+        // of locked capitalized interest. `interest_accrued` is deliberately
+        // excluded — it is locked recognition only; counting it AND its later
+        // release would double-count. Same income definition as wallet.earned
+        // (see PortfolioController::summary).
+        $principalTypes = [
+            Transaction::TYPE_REPAYMENT_PRINCIPAL,
+            Transaction::TYPE_BUYBACK_PRINCIPAL,
+            Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL,
+        ];
+        $interestTypes = [
+            Transaction::TYPE_REPAYMENT_INTEREST,
+            Transaction::TYPE_BUYBACK_INTEREST,
+            Transaction::TYPE_EARLY_REPAYMENT_INTEREST,
+            Transaction::TYPE_INTEREST_RELEASED,
+        ];
+
+        $principalIn = implode(',', array_fill(0, count($principalTypes), '?'));
+        $interestIn = implode(',', array_fill(0, count($interestTypes), '?'));
+
         $rawEarnings = Transaction::where('user_id', $userId)
-            ->whereIn('type', [Transaction::TYPE_REPAYMENT_PRINCIPAL, Transaction::TYPE_REPAYMENT_INTEREST])
+            ->whereIn('type', array_merge($principalTypes, $interestTypes))
             ->where('created_at', '>=', $sixMonthsAgo)
             ->selectRaw("DATE_FORMAT(created_at, '%Y-%m') as month,
-                SUM(CASE WHEN type = ? THEN amount ELSE 0 END) as principal,
-                SUM(CASE WHEN type = ? THEN amount ELSE 0 END) as interest",
-                [Transaction::TYPE_REPAYMENT_PRINCIPAL, Transaction::TYPE_REPAYMENT_INTEREST])
+                SUM(CASE WHEN type IN ($principalIn) THEN amount ELSE 0 END) as principal,
+                SUM(CASE WHEN type IN ($interestIn) THEN amount ELSE 0 END) as interest",
+                array_merge($principalTypes, $interestTypes))
             ->groupByRaw("DATE_FORMAT(created_at, '%Y-%m')")
             ->orderBy('month')
             ->get();
