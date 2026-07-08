@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { KYC_MAX_FILE_BYTES, validateKycFile } from './kycFile'
+import { KYC_MAX_FILE_BYTES, isHeicFile, validateKycFile } from './kycFile'
 
 const file = (name, type, size = 1024) => ({ name, type, size })
 
@@ -89,5 +89,22 @@ describe('validateKycFile', () => {
 
   it('applies the size limit to HEIC picks as well', () => {
     expect(validateKycFile(file('big.heic', 'image/heic', KYC_MAX_FILE_BYTES + 1))).toContain('10 MB')
+  })
+})
+
+describe('isHeicFile', () => {
+  it.each([
+    ['by MIME', file('photo.heic', 'image/heic')],
+    ['HEIF by MIME', file('photo.x', 'image/heif')],
+    ['by extension with empty MIME', file('IMG_0001.HEIC', '')],
+  ])('detects HEIC %s', (_label, f) => {
+    expect(isHeicFile(f)).toBe(true)
+  })
+
+  it.each([
+    ['JPEG', file('photo.jpg', 'image/jpeg')],
+    ['extensionless empty-MIME pick', file('capture', '')],
+  ])('does not flag %s', (_label, f) => {
+    expect(isHeicFile(f)).toBe(false)
   })
 })

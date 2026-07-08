@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api/axios'
 import { useAuthStore } from '../stores/auth'
-import { validateKycFile } from '../utils/kycFile'
+import { isHeicFile, validateKycFile } from '../utils/kycFile'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -64,10 +64,11 @@ const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
 
 const kycStatus = computed(() => auth.user?.kyc_status ?? 'pending')
-const kycStatusLabels = { pending: 'Очаква верификация', submitted: 'Изпратен', approved: 'Верифициран', rejected: 'Отхвърлен' }
+const kycStatusLabels = { pending: 'Очаква верификация', submitted: 'Изпратен', in_review: 'В процес на преглед', approved: 'Верифициран', rejected: 'Отхвърлен' }
 const kycStatusClasses = {
   pending: 'bg-amber-50 text-amber-600',
   submitted: 'bg-blue-50 text-blue-600',
+  in_review: 'bg-indigo-50 text-indigo-600',
   approved: 'bg-green-50 text-green-600',
   rejected: 'bg-red-50 text-red-600',
 }
@@ -161,7 +162,10 @@ const KYC_FIELDS = { front: 'document_front', back: 'document_back', selfie: 'se
 function setKycPreview(side, file) {
   const target = side === 'front' ? kycFrontPreview : side === 'back' ? kycBackPreview : kycSelfiePreview
   if (target.value) URL.revokeObjectURL(target.value)
-  target.value = file && !isPdf(file) ? URL.createObjectURL(file) : null
+  // No preview for PDFs (nothing to render) or HEIC (browsers render HEIC
+  // blobs black or not at all — the "accepted" note in the template covers
+  // it; the server converts HEIC to JPEG anyway).
+  target.value = file && !isPdf(file) && !isHeicFile(file) ? URL.createObjectURL(file) : null
 }
 
 function onFileChange(e, side) {
@@ -192,9 +196,14 @@ onBeforeUnmount(() => {
   }
 })
 
+// 0-100 while the multipart body is uploading; 100 + kycLoading means the
+// server is converting/storing (HEIC conversion takes a few seconds).
+const kycUploadProgress = ref(0)
+
 async function submitKyc() {
   if (!kycFrontFile.value || !kycBackFile.value || !kycSelfieFile.value || !kycBiometricConsent.value) return
   kycLoading.value = true
+  kycUploadProgress.value = 0
   kycError.value = null
   kycErrors.value = {}
   kycSuccess.value = false
@@ -204,7 +213,12 @@ async function submitKyc() {
     formData.append('document_back', kycBackFile.value)
     formData.append('selfie', kycSelfieFile.value)
     formData.append('biometric_consent', kycBiometricConsent.value ? '1' : '0')
-    await api.post('/profile/kyc', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+    await api.post('/profile/kyc', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (event) => {
+        if (event.total) kycUploadProgress.value = Math.round((event.loaded / event.total) * 100)
+      },
+    })
     kycSuccess.value = true
     await auth.fetchUser()
   } catch (e) {
@@ -397,7 +411,7 @@ onMounted(() => loadData())
           </div>
 
           <!-- Submitted -->
-          <div v-else-if="kycStatus === 'submitted' || kycSuccess" class="text-center py-6">
+          <div v-else-if="kycStatus === 'submitted' || kycStatus === 'in_review' || kycSuccess" class="text-center py-6">
             <div class="flex size-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-500 mx-auto mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-7"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
             </div>
@@ -428,6 +442,7 @@ onMounted(() => loadData())
               <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
               <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
               <img v-if="kycFrontPreview" :src="kycFrontPreview" @error="kycFrontPreview = null" alt="Преглед — лицева страна" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
+              <p v-else-if="kycFrontFile" class="mt-1 text-xs font-medium text-green-600">✓ Снимката е приета и ще бъде изпратена.</p>
               <p v-if="kycErrors.document_front" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_front[0] }}</p>
             </div>
 
@@ -437,6 +452,7 @@ onMounted(() => loadData())
               <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
               <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
               <img v-if="kycBackPreview" :src="kycBackPreview" @error="kycBackPreview = null" alt="Преглед — гръб" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
+              <p v-else-if="kycBackFile" class="mt-1 text-xs font-medium text-green-600">✓ Снимката е приета и ще бъде изпратена.</p>
               <p v-if="kycErrors.document_back" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_back[0] }}</p>
             </div>
 
@@ -446,6 +462,7 @@ onMounted(() => loadData())
               <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" @change="e => onFileChange(e, 'selfie')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
               <p class="mt-1 text-xs text-gray-400">Ясна снимка на лицето ви — JPG, PNG или WEBP, до 10 MB.</p>
               <img v-if="kycSelfiePreview" :src="kycSelfiePreview" @error="kycSelfiePreview = null" alt="Преглед — селфи" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
+              <p v-else-if="kycSelfieFile" class="mt-1 text-xs font-medium text-green-600">✓ Снимката е приета и ще бъде изпратена.</p>
               <p v-if="kycErrors.selfie" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.selfie[0] }}</p>
             </div>
 
@@ -462,7 +479,7 @@ onMounted(() => loadData())
             <p v-if="kycErrors.biometric_consent" role="alert" aria-live="polite" class="mt-1 mb-3 text-xs text-red-500">{{ kycErrors.biometric_consent[0] }}</p>
 
             <button @click="submitKyc" :disabled="!kycFrontFile || !kycBackFile || !kycSelfieFile || !kycBiometricConsent || kycLoading" class="w-full py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
-              {{ kycLoading ? 'Изпращане...' : 'Изпрати за верификация' }}
+              {{ !kycLoading ? 'Изпрати за верификация' : kycUploadProgress < 100 ? `Качване… ${kycUploadProgress}%` : 'Обработка на снимките…' }}
             </button>
           </div>
         </div>

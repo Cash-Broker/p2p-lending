@@ -8,4 +8,13 @@ use Filament\Resources\Pages\ViewRecord;
 class ViewUser extends ViewRecord
 {
     protected static string $resource = UserResource::class;
+
+    /**
+     * The reviewer approves/rejects WHILE looking at the documents — the
+     * same actions as the table rows, pinned to the page header.
+     */
+    protected function getHeaderActions(): array
+    {
+        return UserResource::kycStatusActions();
+    }
 }

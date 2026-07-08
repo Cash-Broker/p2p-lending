@@ -33,6 +33,9 @@ class AdminPanelProvider extends PanelProvider
                 'warning' => Color::hex('#F59E0B'),
                 'danger' => Color::hex('#EF4444'),
             ])
+            // In-panel inbox (bell icon): new-KYC alerts for the reviewer, with
+            // built-in mark-as-read / clear controls.
+            ->databaseNotifications()
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([

@@ -22,6 +22,11 @@ class KycImageNormalizer
 {
     private const JPEG_QUALITY = 85;
 
+    // Plenty for reading an ID document or face-matching; a 48MP original
+    // would otherwise become a 10-20MB JPEG that is slow to convert, slow
+    // for the admin panel to load, and wasteful on disk.
+    private const MAX_EDGE_PX = 2560;
+
     public function isHeic(UploadedFile $file): bool
     {
         $mime = strtolower((string) $file->getMimeType()); // content-sniffed
@@ -51,6 +56,14 @@ class KycImageNormalizer
         // Multi-frame HEIC (bursts/live photos) — keep the primary frame.
         $image->setIteratorIndex(0);
         $this->autoOrient($image);
+
+        if (max($image->getImageWidth(), $image->getImageHeight()) > self::MAX_EDGE_PX) {
+            // 0 for the other dimension keeps the aspect ratio.
+            $image->getImageWidth() >= $image->getImageHeight()
+                ? $image->scaleImage(self::MAX_EDGE_PX, 0)
+                : $image->scaleImage(0, self::MAX_EDGE_PX);
+        }
+
         $image->setImageFormat('jpeg');
         $image->setImageCompressionQuality(self::JPEG_QUALITY);
 

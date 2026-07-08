@@ -9,9 +9,12 @@ use App\Http\Requests\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
 use App\Models\ConsentRecord;
 use App\Models\SavedIban;
+use App\Models\User;
 use App\Rules\ValidIban;
 use App\Services\AccountDeletionService;
 use App\Services\KycImageNormalizer;
+use Filament\Actions\Action as FilamentAction;
+use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -218,6 +221,30 @@ class ProfileController extends Controller
             ]);
         } finally {
             $lock->release();
+        }
+
+        // In-panel inbox alert for the reviewers (bell icon in Filament).
+        // Best-effort: a notification hiccup must never fail the submission.
+        try {
+            $viewUrl = url('/admin/users/'.$user->id);
+            User::where('role', 'admin')->get()->each(function (User $admin) use ($user, $viewUrl) {
+                // notify(->toDatabase()) inserts the row immediately —
+                // sendToDatabase() would go through the queue and depend on a
+                // worker being alive for the reviewer to see anything.
+                $admin->notify(
+                    FilamentNotification::make()
+                        ->title('Нова KYC заявка')
+                        ->body("{$user->name} изпрати документи за верификация.")
+                        ->icon('heroicon-o-identification')
+                        ->info()
+                        ->actions([
+                            FilamentAction::make('view')->label('Преглед')->url($viewUrl)->markAsRead(),
+                        ])
+                        ->toDatabase(),
+                );
+            });
+        } catch (\Throwable $e) {
+            report($e);
         }
 
         return response()->json(['message' => 'KYC document submitted successfully.']);

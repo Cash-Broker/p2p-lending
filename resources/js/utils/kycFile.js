@@ -28,6 +28,16 @@ const REJECTED_TYPES = ['image/gif', 'image/bmp', 'image/tiff', 'image/svg+xml',
 const REJECTED_EXTENSIONS = ['gif', 'bmp', 'tif', 'tiff', 'svg', 'avif']
 
 /**
+ * HEIC picks upload fine (the server converts them) but many browsers —
+ * including some iOS Safari versions with blob URLs — render them black or
+ * not at all, so the UI shows a "file accepted" note instead of a preview.
+ */
+export function isHeicFile(file) {
+  const ext = ((file.name || '').split('.').pop() || '').toLowerCase()
+  return /hei[cf]/.test((file.type || '').toLowerCase()) || ext === 'heic' || ext === 'heif'
+}
+
+/**
  * @param {{ name: string, type: string, size: number }} file
  * @param {{ allowPdf?: boolean }} opts — the selfie is a photo, never a PDF
  * @returns {string|null} Bulgarian error message, or null when the file may be submitted.
