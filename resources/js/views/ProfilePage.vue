@@ -40,6 +40,12 @@ const passwordSuccess = ref(false)
 const kycFrontFile = ref(null)
 const kycBackFile = ref(null)
 const kycSelfieFile = ref(null)
+// The native <input type="file"> is hidden and triggered from styled buttons:
+// iOS renders its own mini-thumbnail inside the visible input (black for the
+// HEIC originals) and it cannot be styled away — so it never gets rendered.
+const kycFrontInput = ref(null)
+const kycBackInput = ref(null)
+const kycSelfieInput = ref(null)
 const kycBiometricConsent = ref(false)
 const kycLoading = ref(false)
 const kycError = ref(null)
@@ -414,10 +420,15 @@ onMounted(() => loadData())
             <!-- Front side -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">1. Лицева страна на личната карта (отпред)</label>
-              <!-- Explicit types instead of image/*: iOS 17+ Safari uploads raw
-                   HEIC when image/* matches it, but transcodes to JPEG when the
-                   accept list names only JPEG/PNG/WEBP. -->
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <!-- Explicit HEIC in accept keeps iOS handing over the ORIGINAL
+                   photo (its on-the-fly transcode produces black files). -->
+              <!-- Hidden native input + own button: iOS draws an unstylable
+                   mini-thumbnail inside a visible file input (black for HEIC
+                   originals) — hiding the input is the only way around it. -->
+              <input ref="kycFrontInput" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" class="hidden" @change="e => onFileChange(e, 'front')" />
+              <button type="button" :disabled="kycLoading" @click="kycFrontInput?.click()" class="px-4 py-2 rounded-xl bg-navy-700/10 text-navy-700 text-sm font-medium hover:bg-navy-700/20 disabled:opacity-50 transition-colors">
+                {{ kycFrontFile ? 'Промени снимката' : 'Избери снимка' }}
+              </button>
               <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
               <p v-if="kycFrontFile" class="mt-1 text-xs font-medium text-green-600">✓ Снимката е приета и ще бъде изпратена.</p>
               <p v-if="kycErrors.document_front" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_front[0] }}</p>
@@ -426,7 +437,10 @@ onMounted(() => loadData())
             <!-- Back side -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">2. Гръб на личната карта (отзад)</label>
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <input ref="kycBackInput" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" class="hidden" @change="e => onFileChange(e, 'back')" />
+              <button type="button" :disabled="kycLoading" @click="kycBackInput?.click()" class="px-4 py-2 rounded-xl bg-navy-700/10 text-navy-700 text-sm font-medium hover:bg-navy-700/20 disabled:opacity-50 transition-colors">
+                {{ kycBackFile ? 'Промени снимката' : 'Избери снимка' }}
+              </button>
               <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
               <p v-if="kycBackFile" class="mt-1 text-xs font-medium text-green-600">✓ Снимката е приета и ще бъде изпратена.</p>
               <p v-if="kycErrors.document_back" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_back[0] }}</p>
@@ -435,7 +449,10 @@ onMounted(() => loadData())
             <!-- Selfie photo (plain upload — product decision: no live capture) -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">3. Ваша снимка (селфи)</label>
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" @change="e => onFileChange(e, 'selfie')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <input ref="kycSelfieInput" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" class="hidden" @change="e => onFileChange(e, 'selfie')" />
+              <button type="button" :disabled="kycLoading" @click="kycSelfieInput?.click()" class="px-4 py-2 rounded-xl bg-navy-700/10 text-navy-700 text-sm font-medium hover:bg-navy-700/20 disabled:opacity-50 transition-colors">
+                {{ kycSelfieFile ? 'Промени снимката' : 'Избери снимка' }}
+              </button>
               <p class="mt-1 text-xs text-gray-400">Ясна снимка на лицето ви — JPG, PNG или WEBP, до 10 MB.</p>
               <p v-if="kycSelfieFile" class="mt-1 text-xs font-medium text-green-600">✓ Снимката е приета и ще бъде изпратена.</p>
               <p v-if="kycErrors.selfie" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.selfie[0] }}</p>
