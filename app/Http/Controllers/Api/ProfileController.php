@@ -81,8 +81,9 @@ class ProfileController extends Controller
             // (admin session takeover). PDF added for ID-document scans.
             'document_front' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
             'document_back' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
-            // Liveness selfie — captured live from the camera on the client, so
-            // it's always a photo (no PDF). Lets the admin face-match the person
+            // Selfie photo — a plain upload (product decision 2026-07-08: the
+            // live-camera capture was dropped to keep onboarding easy). Always
+            // a photo, never a PDF. Lets the admin face-match the person
             // against the ID document.
             'selfie' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
             // Explicit consent for biometric processing of the selfie
@@ -91,7 +92,7 @@ class ProfileController extends Controller
         ], [
             'document_front.required' => 'Моля, качете снимка на лицевата страна (отпред) на личната карта.',
             'document_back.required' => 'Моля, качете снимка на гърба (отзад) на личната карта.',
-            'selfie.required' => 'Моля, направете селфи с камерата за верификация.',
+            'selfie.required' => 'Моля, качете ваша снимка (селфи) за верификация.',
             'biometric_consent.accepted' => 'Необходимо е изрично съгласие за обработка на селфи (биометрични данни) за верификация.',
             // The app runs with APP_LOCALE=en, so without these the framework
             // falls back to English messages on a Bulgarian UI. HEIC is the

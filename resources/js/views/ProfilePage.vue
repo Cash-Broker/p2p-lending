@@ -3,7 +3,6 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api/axios'
 import { useAuthStore } from '../stores/auth'
-import SelfieCapture from '../components/SelfieCapture.vue'
 import { validateKycFile } from '../utils/kycFile'
 
 const router = useRouter()
@@ -40,10 +39,11 @@ const passwordSuccess = ref(false)
 // KYC — both sides of the ID card + a live selfie are required
 const kycFrontFile = ref(null)
 const kycBackFile = ref(null)
-// Thumbnail previews of the picked ID photos, so the user SEES what they are
+// Thumbnail previews of the picked photos, so the user SEES what they are
 // about to submit (object URLs; PDFs get no preview — the input shows the name)
 const kycFrontPreview = ref(null)
 const kycBackPreview = ref(null)
+const kycSelfiePreview = ref(null)
 const kycSelfieFile = ref(null)
 const kycBiometricConsent = ref(false)
 const kycLoading = ref(false)
@@ -153,18 +153,23 @@ function isPdf(file) {
   return file.type === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf')
 }
 
+// side → validation field name; the selfie is a plain photo upload (product
+// decision 2026-07-08: no live capture — keep it easy for users), PDF not
+// allowed there.
+const KYC_FIELDS = { front: 'document_front', back: 'document_back', selfie: 'selfie' }
+
 function setKycPreview(side, file) {
-  const target = side === 'front' ? kycFrontPreview : kycBackPreview
+  const target = side === 'front' ? kycFrontPreview : side === 'back' ? kycBackPreview : kycSelfiePreview
   if (target.value) URL.revokeObjectURL(target.value)
   target.value = file && !isPdf(file) ? URL.createObjectURL(file) : null
 }
 
 function onFileChange(e, side) {
-  const field = side === 'front' ? 'document_front' : 'document_back'
+  const field = KYC_FIELDS[side]
   const file = e.target.files[0] || null
   // Client-side pre-check (HEIC, format, 10MB) with Bulgarian messages —
   // catches the common mobile failures before burning a rate-limited request.
-  const error = file ? validateKycFile(file) : null
+  const error = file ? validateKycFile(file, { allowPdf: side !== 'selfie' }) : null
 
   const nextErrors = { ...kycErrors.value }
   if (error) nextErrors[field] = [error]
@@ -173,7 +178,8 @@ function onFileChange(e, side) {
 
   const accepted = error ? null : file
   if (side === 'front') kycFrontFile.value = accepted
-  else kycBackFile.value = accepted
+  else if (side === 'back') kycBackFile.value = accepted
+  else kycSelfieFile.value = accepted
   setKycPreview(side, accepted)
   // Reset the input on rejection so re-picking the same (now converted/smaller)
   // file still fires a change event.
@@ -181,20 +187,10 @@ function onFileChange(e, side) {
 }
 
 onBeforeUnmount(() => {
-  if (kycFrontPreview.value) URL.revokeObjectURL(kycFrontPreview.value)
-  if (kycBackPreview.value) URL.revokeObjectURL(kycBackPreview.value)
-})
-
-function onSelfieCaptured(file) {
-  kycSelfieFile.value = file
-  // A fresh selfie invalidates a server-returned selfie error from the
-  // previous submit — same clear-on-change behaviour as the document fields.
-  if (file && kycErrors.value.selfie) {
-    const next = { ...kycErrors.value }
-    delete next.selfie
-    kycErrors.value = next
+  for (const preview of [kycFrontPreview, kycBackPreview, kycSelfiePreview]) {
+    if (preview.value) URL.revokeObjectURL(preview.value)
   }
-}
+})
 
 async function submitKyc() {
   if (!kycFrontFile.value || !kycBackFile.value || !kycSelfieFile.value || !kycBiometricConsent.value) return
@@ -412,13 +408,13 @@ onMounted(() => loadData())
           <!-- Pending / Rejected — show upload form -->
           <div v-else>
             <p class="text-sm text-gray-500 mb-3">
-              {{ kycStatus === 'rejected' ? 'Верификацията ви е отхвърлена. Моля, изпратете нови снимки и селфи.' : 'За да потвърдим самоличността ви, качете личната си карта и направете селфи на живо.' }}
+              {{ kycStatus === 'rejected' ? 'Верификацията ви е отхвърлена. Моля, изпратете нови снимки и селфи.' : 'За да потвърдим самоличността ви, качете снимки на личната си карта и ваша снимка (селфи).' }}
             </p>
 
             <!-- All three are mandatory -->
             <div class="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700 mb-4 flex gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 shrink-0 mt-0.5"><path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
-              <span>Необходими са <strong>три неща</strong> — лицевата страна (<strong>отпред</strong>) и гърбът (<strong>отзад</strong>) на личната карта, и <strong>селфи на живо</strong>, на което ясно се вижда лицето ви.</span>
+              <span>Необходими са <strong>три неща</strong> — лицевата страна (<strong>отпред</strong>) и гърбът (<strong>отзад</strong>) на личната карта, и <strong>ваша снимка (селфи)</strong>, на която ясно се вижда лицето ви.</span>
             </div>
 
             <div v-if="kycError" class="rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700 mb-4">{{ kycError }}</div>
@@ -444,10 +440,12 @@ onMounted(() => loadData())
               <p v-if="kycErrors.document_back" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_back[0] }}</p>
             </div>
 
-            <!-- Live selfie -->
+            <!-- Selfie photo (plain upload — product decision: no live capture) -->
             <div class="mb-4">
-              <label class="block text-sm font-medium text-navy-700 mb-1">3. Селфи на живо</label>
-              <SelfieCapture @captured="onSelfieCaptured" />
+              <label class="block text-sm font-medium text-navy-700 mb-1">3. Ваша снимка (селфи)</label>
+              <input type="file" accept="image/jpeg,image/png,image/webp" @change="e => onFileChange(e, 'selfie')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <p class="mt-1 text-xs text-gray-400">Ясна снимка на лицето ви — JPG, PNG или WEBP, до 10 MB.</p>
+              <img v-if="kycSelfiePreview" :src="kycSelfiePreview" alt="Преглед — селфи" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.selfie" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.selfie[0] }}</p>
             </div>
 

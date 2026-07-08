@@ -62,6 +62,20 @@ describe('validateKycFile', () => {
     expect(validateKycFile(f)).toContain('JPG, PNG, WEBP или PDF')
   })
 
+  // ── Selfie mode (allowPdf: false) ──
+
+  it('rejects a PDF selfie with a photo-specific message', () => {
+    expect(validateKycFile(file('selfie.pdf', 'application/pdf'), { allowPdf: false })).toContain('не PDF')
+  })
+
+  it('rejects a PDF selfie detected by extension only', () => {
+    expect(validateKycFile(file('selfie.pdf', ''), { allowPdf: false })).toContain('не PDF')
+  })
+
+  it('accepts a JPEG selfie in selfie mode', () => {
+    expect(validateKycFile(file('selfie.jpg', 'image/jpeg'), { allowPdf: false })).toBeNull()
+  })
+
   // ── Size limit (mirrors server max:10240 KB) ──
 
   it('accepts a file at exactly the 10 MB boundary', () => {

@@ -25,15 +25,20 @@ const REJECTED_EXTENSIONS = ['gif', 'bmp', 'tif', 'tiff', 'svg', 'avif']
 
 /**
  * @param {{ name: string, type: string, size: number }} file
+ * @param {{ allowPdf?: boolean }} opts — the selfie is a photo, never a PDF
  * @returns {string|null} Bulgarian error message, or null when the file may be submitted.
  */
-export function validateKycFile(file) {
+export function validateKycFile(file, { allowPdf = true } = {}) {
   const name = file.name || ''
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
   const type = (file.type || '').toLowerCase()
 
   if (/hei[cf]/.test(type) || ext === 'heic' || ext === 'heif') {
     return 'Снимки във формат HEIC/HEIF не се поддържат. Направете нова снимка директно от тук или изберете снимка във формат JPEG/PNG.'
+  }
+
+  if (!allowPdf && (type === 'application/pdf' || ext === 'pdf')) {
+    return 'Селфито трябва да е снимка (JPG, PNG или WEBP), не PDF.'
   }
 
   const typeOk = ALLOWED_TYPES.includes(type)
