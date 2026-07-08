@@ -3,8 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api/axios'
 import { useAuthStore } from '../stores/auth'
-import { classifyKycPick, imageErrorMessage } from '../utils/kycFile'
-import { reencodeImageFile } from '../utils/imageFile'
+import { validateKycFile } from '../utils/kycFile'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -159,88 +158,37 @@ function isPdf(file) {
 // allowed there.
 const KYC_FIELDS = { front: 'document_front', back: 'document_back', selfie: 'selfie' }
 
-// Counts in-flight decode/re-encode jobs — submit stays disabled meanwhile.
-const kycProcessingCount = ref(0)
-// Monotonic per-side tokens: if the user re-picks while a decode is running,
-// the stale job's result is dropped instead of overwriting the newer pick.
-const kycPickTokens = { front: 0, back: 0, selfie: 0 }
-
 function setKycPreview(side, file) {
   const target = side === 'front' ? kycFrontPreview : side === 'back' ? kycBackPreview : kycSelfiePreview
   if (target.value) URL.revokeObjectURL(target.value)
   target.value = file && !isPdf(file) ? URL.createObjectURL(file) : null
 }
 
-function setKycFile(side, file) {
-  if (side === 'front') kycFrontFile.value = file
-  else if (side === 'back') kycBackFile.value = file
-  else kycSelfieFile.value = file
-  setKycPreview(side, file)
-}
-
-function setKycFieldError(field, error) {
-  const next = { ...kycErrors.value }
-  if (error) next[field] = [error]
-  else delete next[field]
-  kycErrors.value = next
-}
-
-// Every picked photo is decoded and re-encoded to a clean JPEG in the browser
-// (see utils/imageFile.js): iOS Safari's HEIC transcode hands over broken or
-// fully BLACK files for some gallery picks — those are caught here with a
-// clear message instead of being uploaded silently. PDFs (ID scans) pass
-// through unchanged.
-async function onFileChange(e, side) {
+function onFileChange(e, side) {
   const field = KYC_FIELDS[side]
-  const input = e.target
-  const raw = input.files[0] || null
-  const token = ++kycPickTokens[side]
+  const file = e.target.files[0] || null
+  // Client-side pre-check (HEIC, format, 10MB) with Bulgarian messages —
+  // catches the common mobile failures before burning a rate-limited request.
+  const error = file ? validateKycFile(file, { allowPdf: side !== 'selfie' }) : null
 
-  setKycFieldError(field, null)
-  setKycFile(side, null)
-  if (!raw) return
+  const nextErrors = { ...kycErrors.value }
+  if (error) nextErrors[field] = [error]
+  else delete nextErrors[field]
+  kycErrors.value = nextErrors
 
-  const pick = classifyKycPick(raw, { allowPdf: side !== 'selfie' })
-  if (pick.kind === 'rejected') {
-    setKycFieldError(field, pick.error)
-    input.value = ''
-    return
-  }
-  if (pick.kind === 'pdf') {
-    setKycFile(side, raw)
-    return
-  }
-
-  kycProcessingCount.value++
-  try {
-    const result = await reencodeImageFile(raw)
-    if (token !== kycPickTokens[side]) return // superseded by a newer pick
-    if (result.error) {
-      setKycFieldError(field, imageErrorMessage(result.error, pick.heic))
-      input.value = ''
-      return
-    }
-    setKycFile(side, result.file)
-  } catch {
-    // reencodeImageFile is designed to resolve, but OOM on low-end phones can
-    // still throw — never leave the field silently empty with no message.
-    if (token !== kycPickTokens[side]) return
-    setKycFieldError(field, imageErrorMessage('decode', pick.heic))
-    input.value = ''
-  } finally {
-    kycProcessingCount.value--
-  }
+  const accepted = error ? null : file
+  if (side === 'front') kycFrontFile.value = accepted
+  else if (side === 'back') kycBackFile.value = accepted
+  else kycSelfieFile.value = accepted
+  setKycPreview(side, accepted)
+  // Reset the input on rejection so re-picking the same (now converted/smaller)
+  // file still fires a change event.
+  if (error) e.target.value = ''
 }
 
 onBeforeUnmount(() => {
-  // Invalidate in-flight re-encode jobs — their results would otherwise
-  // create object URLs on a dead component that nothing ever revokes.
-  for (const side of Object.keys(kycPickTokens)) kycPickTokens[side]++
   for (const preview of [kycFrontPreview, kycBackPreview, kycSelfiePreview]) {
-    if (preview.value) {
-      URL.revokeObjectURL(preview.value)
-      preview.value = null
-    }
+    if (preview.value) URL.revokeObjectURL(preview.value)
   }
 })
 
@@ -474,12 +422,11 @@ onMounted(() => loadData())
             <!-- Front side -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">1. Лицева страна на личната карта (отпред)</label>
-              <!-- Broad image/*: naming only JPEG/PNG in accept forces iOS to
-                   transcode HEIC on the fly, which produces broken/black files
-                   for some gallery picks. We accept anything the gallery gives
-                   and re-encode to JPEG ourselves (utils/imageFile.js). -->
-              <input type="file" accept="image/*,application/pdf" :disabled="kycLoading" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
-              <p class="mt-1 text-xs text-gray-400">Снимка от телефона или PDF (до 10 MB за PDF).</p>
+              <!-- Explicit types instead of image/*: iOS 17+ Safari uploads raw
+                   HEIC when image/* matches it, but transcodes to JPEG when the
+                   accept list names only JPEG/PNG/WEBP. -->
+              <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
               <img v-if="kycFrontPreview" :src="kycFrontPreview" alt="Преглед — лицева страна" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.document_front" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_front[0] }}</p>
             </div>
@@ -487,8 +434,8 @@ onMounted(() => loadData())
             <!-- Back side -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">2. Гръб на личната карта (отзад)</label>
-              <input type="file" accept="image/*,application/pdf" :disabled="kycLoading" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
-              <p class="mt-1 text-xs text-gray-400">Снимка от телефона или PDF (до 10 MB за PDF).</p>
+              <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
               <img v-if="kycBackPreview" :src="kycBackPreview" alt="Преглед — гръб" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.document_back" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_back[0] }}</p>
             </div>
@@ -496,8 +443,8 @@ onMounted(() => loadData())
             <!-- Selfie photo (plain upload — product decision: no live capture) -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">3. Ваша снимка (селфи)</label>
-              <input type="file" accept="image/*" :disabled="kycLoading" @change="e => onFileChange(e, 'selfie')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
-              <p class="mt-1 text-xs text-gray-400">Ясна снимка на лицето ви.</p>
+              <input type="file" accept="image/jpeg,image/png,image/webp" @change="e => onFileChange(e, 'selfie')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <p class="mt-1 text-xs text-gray-400">Ясна снимка на лицето ви — JPG, PNG или WEBP, до 10 MB.</p>
               <img v-if="kycSelfiePreview" :src="kycSelfiePreview" alt="Преглед — селфи" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.selfie" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.selfie[0] }}</p>
             </div>
@@ -514,8 +461,8 @@ onMounted(() => loadData())
             </label>
             <p v-if="kycErrors.biometric_consent" role="alert" aria-live="polite" class="mt-1 mb-3 text-xs text-red-500">{{ kycErrors.biometric_consent[0] }}</p>
 
-            <button @click="submitKyc" :disabled="!kycFrontFile || !kycBackFile || !kycSelfieFile || !kycBiometricConsent || kycLoading || kycProcessingCount > 0" class="w-full py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
-              {{ kycLoading ? 'Изпращане...' : kycProcessingCount > 0 ? 'Обработка на снимките…' : 'Изпрати за верификация' }}
+            <button @click="submitKyc" :disabled="!kycFrontFile || !kycBackFile || !kycSelfieFile || !kycBiometricConsent || kycLoading" class="w-full py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors">
+              {{ kycLoading ? 'Изпращане...' : 'Изпрати за верификация' }}
             </button>
           </div>
         </div>

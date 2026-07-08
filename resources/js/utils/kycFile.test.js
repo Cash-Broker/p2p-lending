@@ -1,117 +1,92 @@
 import { describe, expect, it } from 'vitest'
-import {
-  KYC_MAX_PDF_BYTES,
-  KYC_MAX_SOURCE_BYTES,
-  classifyKycPick,
-  imageErrorMessage,
-  isMostlyBlack,
-} from './kycFile'
+import { KYC_MAX_FILE_BYTES, validateKycFile } from './kycFile'
 
 const file = (name, type, size = 1024) => ({ name, type, size })
 
-describe('classifyKycPick', () => {
-  // ── Images: everything decodable goes to the re-encode pipeline ──
+describe('validateKycFile', () => {
+  // ── Accepted formats ──
 
   it.each([
-    ['JPEG', file('id.jpg', 'image/jpeg')],
-    ['PNG', file('id.png', 'image/png')],
-    ['nonstandard image/jpg MIME', file('photo.jpg', 'image/jpg')],
-    ['empty MIME (WebView pickers)', file('photo.jpg', '')],
-    ['extensionless content-URI name', file('capture', '')],
-    ['GIF (canvas will rasterize it)', file('scan.gif', 'image/gif')],
-  ])('routes %s to the image pipeline', (_label, f) => {
-    expect(classifyKycPick(f)).toEqual({ kind: 'image', heic: false })
+    ['JPEG', file('id-front.jpg', 'image/jpeg')],
+    ['PNG', file('id-front.png', 'image/png')],
+    ['WEBP', file('id-front.webp', 'image/webp')],
+    ['PDF', file('scan.pdf', 'application/pdf')],
+    ['uppercase extension', file('ID-FRONT.JPG', 'image/jpeg')],
+  ])('accepts %s', (_label, f) => {
+    expect(validateKycFile(f)).toBeNull()
   })
+
+  // ── Permissive pass-through (server content-sniffing is the authority) ──
+
+  it('accepts the nonstandard image/jpg MIME some Android pickers report', () => {
+    expect(validateKycFile(file('photo.jpg', 'image/jpg'))).toBeNull()
+  })
+
+  it('accepts an empty MIME type when the extension is allowed (WebView pickers)', () => {
+    expect(validateKycFile(file('photo.jpg', ''))).toBeNull()
+  })
+
+  it('passes through extensionless content-URI names with empty MIME (server decides)', () => {
+    expect(validateKycFile(file('capture', ''))).toBeNull()
+  })
+
+  it('passes through unknown type + unknown extension combos (server decides)', () => {
+    expect(validateKycFile(file('photo.xyz', 'application/x-something'))).toBeNull()
+  })
+
+  // ── HEIC/HEIF — the dominant real-world mobile rejection ──
 
   it.each([
     ['HEIC by MIME', file('photo.heic', 'image/heic')],
     ['HEIF by MIME', file('photo.heif', 'image/heif')],
+    ['HEIC sequence MIME', file('photo.heic', 'image/heic-sequence')],
     ['HEIC by extension, empty MIME', file('IMG_0001.heic', '')],
-  ])('flags %s as heic for the decode-failure message', (_label, f) => {
-    expect(classifyKycPick(f)).toEqual({ kind: 'image', heic: true })
+    ['HEIF by extension, empty MIME', file('IMG_0001.heif', '')],
+  ])('rejects %s with the HEIC message', (_label, f) => {
+    expect(validateKycFile(f)).toContain('HEIC')
   })
 
-  it('does not flag image/jpeg as heic (the hei[cf] regex must not overmatch)', () => {
-    expect(classifyKycPick(file('photo.jpeg', 'image/jpeg')).heic).toBe(false)
+  it('does not misread image/jpeg as HEIC (the hei[cf] regex must not overmatch)', () => {
+    expect(validateKycFile(file('photo.jpeg', 'image/jpeg'))).toBeNull()
   })
 
-  it('rejects an oversized image before decoding', () => {
-    const result = classifyKycPick(file('huge.jpg', 'image/jpeg', KYC_MAX_SOURCE_BYTES + 1))
-    expect(result.kind).toBe('rejected')
-    expect(result.error).toContain('25 MB')
+  // ── Known-bad formats blocked early ──
+
+  it.each([
+    ['GIF', file('anim.gif', 'image/gif')],
+    ['BMP', file('scan.bmp', 'image/bmp')],
+    ['SVG', file('img.svg', 'image/svg+xml')],
+    ['AVIF', file('photo.avif', 'image/avif')],
+    ['GIF by extension only', file('anim.gif', '')],
+  ])('rejects %s with the format message', (_label, f) => {
+    expect(validateKycFile(f)).toContain('JPG, PNG, WEBP или PDF')
   })
 
-  it('accepts an image at exactly the pre-decode boundary', () => {
-    expect(classifyKycPick(file('big.jpg', 'image/jpeg', KYC_MAX_SOURCE_BYTES)).kind).toBe('image')
-  })
-
-  // ── PDFs: pass through unchanged, so the server's 10 MB rule applies ──
-
-  it('passes a PDF through for document uploads', () => {
-    expect(classifyKycPick(file('scan.pdf', 'application/pdf'))).toEqual({ kind: 'pdf' })
-  })
-
-  it('detects PDFs by extension when the MIME type is empty', () => {
-    expect(classifyKycPick(file('scan.pdf', ''))).toEqual({ kind: 'pdf' })
-  })
-
-  it('rejects a PDF over the server limit', () => {
-    const result = classifyKycPick(file('scan.pdf', 'application/pdf', KYC_MAX_PDF_BYTES + 1))
-    expect(result.kind).toBe('rejected')
-    expect(result.error).toContain('10 MB')
-  })
+  // ── Selfie mode (allowPdf: false) ──
 
   it('rejects a PDF selfie with a photo-specific message', () => {
-    const result = classifyKycPick(file('selfie.pdf', 'application/pdf'), { allowPdf: false })
-    expect(result.kind).toBe('rejected')
-    expect(result.error).toContain('не PDF')
-  })
-})
-
-describe('isMostlyBlack', () => {
-  const rgba = (pixels) => new Uint8ClampedArray(pixels.flatMap(([r, g, b]) => [r, g, b, 255]))
-  const solid = (r, g, b, count) => rgba(Array.from({ length: count }, () => [r, g, b]))
-
-  it('detects a fully black frame (broken iOS HEIC transcode signature)', () => {
-    expect(isMostlyBlack(solid(0, 0, 0, 64))).toBe(true)
+    expect(validateKycFile(file('selfie.pdf', 'application/pdf'), { allowPdf: false })).toContain('не PDF')
   })
 
-  it('detects a near-black frame below the luminance threshold', () => {
-    expect(isMostlyBlack(solid(10, 10, 10, 64))).toBe(true)
+  it('rejects a PDF selfie detected by extension only', () => {
+    expect(validateKycFile(file('selfie.pdf', ''), { allowPdf: false })).toContain('не PDF')
   })
 
-  it('does not flag a dark but real photo', () => {
-    expect(isMostlyBlack(solid(40, 40, 40, 64))).toBe(false)
+  it('accepts a JPEG selfie in selfie mode', () => {
+    expect(validateKycFile(file('selfie.jpg', 'image/jpeg'), { allowPdf: false })).toBeNull()
   })
 
-  it('does not flag a frame with meaningful bright content', () => {
-    const mostlyBlackButReal = new Uint8ClampedArray([
-      ...solid(0, 0, 0, 60),
-      ...solid(255, 255, 255, 4), // 6% bright pixels — a real (terrible) photo
-    ])
-    expect(isMostlyBlack(mostlyBlackButReal)).toBe(false)
+  // ── Size limit (mirrors server max:10240 KB) ──
+
+  it('accepts a file at exactly the 10 MB boundary', () => {
+    expect(validateKycFile(file('id.jpg', 'image/jpeg', KYC_MAX_FILE_BYTES))).toBeNull()
   })
 
-  it('treats an empty frame as black', () => {
-    expect(isMostlyBlack(new Uint8ClampedArray([]))).toBe(true)
-  })
-})
-
-describe('imageErrorMessage', () => {
-  it('explains the all-black case with recovery steps', () => {
-    expect(imageErrorMessage('black')).toContain('черна')
+  it('rejects a file one byte over the 10 MB boundary', () => {
+    expect(validateKycFile(file('id.jpg', 'image/jpeg', KYC_MAX_FILE_BYTES + 1))).toContain('10 MB')
   })
 
-  it('names HEIC when the unreadable pick was HEIC', () => {
-    expect(imageErrorMessage('decode', true)).toContain('HEIC')
-  })
-
-  it('suggests the iCloud recovery for generic decode failures', () => {
-    expect(imageErrorMessage('decode')).toContain('iCloud')
-  })
-
-  it('does not blame the format for encode failures (image already decoded fine)', () => {
-    expect(imageErrorMessage('encode', true)).not.toContain('HEIC')
-    expect(imageErrorMessage('encode', true)).toContain('обработката')
+  it('reports HEIC before size for an oversized HEIC (format is the actionable problem)', () => {
+    expect(validateKycFile(file('big.heic', 'image/heic', KYC_MAX_FILE_BYTES + 1))).toContain('HEIC')
   })
 })
