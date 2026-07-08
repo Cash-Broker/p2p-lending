@@ -19,7 +19,10 @@ class SecurityTest extends TestCase
         $response->assertHeader('X-Frame-Options', 'DENY');
         $response->assertHeader('X-Content-Type-Options', 'nosniff');
         $response->assertHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->assertHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+        // camera=(self) — NOT camera=() — because the KYC live selfie calls
+        // getUserMedia; an empty allowlist disables the camera for our own
+        // origin and no browser permission prompt can override it.
+        $response->assertHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
     }
 
     public function test_api_responses_include_security_headers(): void

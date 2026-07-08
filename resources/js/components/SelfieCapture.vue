@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onBeforeUnmount } from 'vue'
+import { isInAppBrowser, isStandaloneDisplayMode } from '../utils/browser'
 
 // Camera-only selfie capture with live face guidance. There is intentionally NO
 // file-upload fallback: the point of the selfie is liveness.
@@ -18,11 +19,28 @@ const stream = ref(null)
 const state = ref('idle') // idle | starting | live | captured | error
 const previewUrl = ref(null)
 const errorMsg = ref(null)
+const errorKind = ref(null) // 'in-app' | 'denied' | 'unsupported' | 'interrupted'
+const linkCopied = ref(false)
 const faceDetected = ref(false)
+
+// Messenger WebViews (Viber/Facebook/Instagram…) don't forward the camera
+// permission from the host app, so "allow access" is a dead end there — the
+// only fix is opening the link in a real browser. Links to the platform are
+// shared mostly over Viber, so this case gets its own message + copy button.
+// Only consulted AFTER a camera failure — a false positive can't block anything.
+// Standalone check first: an iOS home-screen PWA has the same UA as a WebView
+// but a working camera, so its failures must get the normal retry path.
+const inAppBrowser = !isStandaloneDisplayMode()
+  && isInAppBrowser(typeof navigator !== 'undefined' ? navigator.userAgent : '')
+
+const IN_APP_MSG = 'Отворили сте сайта във вграден браузър (напр. Viber или Facebook), който не дава достъп до камерата. Копирайте линка и го отворете в Chrome или Safari, за да направите селфито.'
+const INTERRUPTED_MSG = 'Камерата беше прекъсната — това се случва при превключване към друго приложение. Натиснете „Опитай отново“.'
 
 const detectorSupported = typeof window !== 'undefined' && 'FaceDetector' in window
 let detector = null
 let detectTimer = null
+let detectionActive = false
+let unmounted = false
 
 const statusText = computed(() => {
   if (!detectorSupported) return 'Центрирайте лицето си в рамката и натиснете „Снимай".'
@@ -31,10 +49,17 @@ const statusText = computed(() => {
 
 async function start() {
   errorMsg.value = null
+  errorKind.value = null
 
   if (!navigator.mediaDevices?.getUserMedia) {
     state.value = 'error'
-    errorMsg.value = 'Браузърът или устройството ви не поддържа достъп до камера, затова селфи не може да бъде направено тук.'
+    if (inAppBrowser) {
+      errorKind.value = 'in-app'
+      errorMsg.value = IN_APP_MSG
+    } else {
+      errorKind.value = 'unsupported'
+      errorMsg.value = 'Браузърът или устройството ви не поддържа достъп до камера, затова селфи не може да бъде направено тук.'
+    }
     return
   }
 
@@ -44,6 +69,12 @@ async function start() {
       video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false,
     })
+    // iOS Safari kills the stream when the tab is backgrounded (e.g. the user
+    // switches away to photograph their ID card for steps 1-2). Without these
+    // hooks the UI stays "live" over a frozen frame and the shutter silently
+    // does nothing.
+    stream.value.getTracks().forEach((t) => t.addEventListener('ended', onStreamInterrupted))
+    document.addEventListener('visibilitychange', onVisibilityChange)
     state.value = 'live'
     if (video.value) {
       video.value.srcObject = stream.value
@@ -51,8 +82,59 @@ async function start() {
     }
     startDetection()
   } catch {
+    // video.play() can reject AFTER getUserMedia succeeded (e.g. backgrounded
+    // mid-start on iOS) — release the acquired stream or it leaks: a retry
+    // would overwrite stream.value and the orphaned camera stays on forever.
+    stop()
+    // If a track-'ended' event already routed through onStreamInterrupted,
+    // keep its accurate message — don't relabel the error as a permission one.
+    if (errorKind.value === 'interrupted') return
     state.value = 'error'
-    errorMsg.value = 'Няма достъп до камерата. Разрешете достъпа в браузъра и опитайте отново — без камера не може да направите селфи.'
+    if (inAppBrowser) {
+      errorKind.value = 'in-app'
+      errorMsg.value = IN_APP_MSG
+    } else {
+      errorKind.value = 'denied'
+      errorMsg.value = 'Няма достъп до камерата. Разрешете достъпа в браузъра и опитайте отново — без камера не може да направите селфи.'
+    }
+  }
+}
+
+function onStreamInterrupted() {
+  if (state.value !== 'live' && state.value !== 'starting') return
+  stop()
+  state.value = 'error'
+  errorKind.value = 'interrupted'
+  errorMsg.value = INTERRUPTED_MSG
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState !== 'visible' || state.value !== 'live') return
+  const tracks = stream.value?.getTracks() ?? []
+  if (tracks.length === 0 || tracks.some((t) => t.readyState === 'ended')) onStreamInterrupted()
+}
+
+async function copyLink() {
+  const url = window.location.href
+  try {
+    await navigator.clipboard.writeText(url)
+    linkCopied.value = true
+  } catch {
+    // Older WebViews without the async clipboard API.
+    const ta = document.createElement('textarea')
+    ta.value = url
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      document.execCommand('copy')
+      linkCopied.value = true
+    } catch {
+      // Clipboard completely unavailable — the user can still copy from the address bar.
+    }
+    document.body.removeChild(ta)
   }
 }
 
@@ -65,8 +147,12 @@ function startDetection() {
     return
   }
 
+  detectionActive = true
   const tick = async () => {
-    if (state.value !== 'live' || !detector) return
+    // detectionActive (not just state) — an in-flight detect() survives
+    // clearTimeout, and unmount doesn't change state, so without the flag the
+    // loop would re-arm forever after onBeforeUnmount.
+    if (!detectionActive || state.value !== 'live' || !detector) return
     const v = video.value
     const c = overlay.value
     if (v && c && v.videoWidth) {
@@ -82,7 +168,7 @@ function startDetection() {
         // FaceDetector can throw intermittently — skip this frame.
       }
     }
-    detectTimer = setTimeout(tick, 160) // ~6fps is plenty for a guide overlay
+    if (detectionActive) detectTimer = setTimeout(tick, 160) // ~6fps is plenty for a guide overlay
   }
   tick()
 }
@@ -107,6 +193,7 @@ function drawFaces(c, faces) {
 }
 
 function stopDetection() {
+  detectionActive = false
   if (detectTimer) {
     clearTimeout(detectTimer)
     detectTimer = null
@@ -118,8 +205,12 @@ function stopDetection() {
 
 function stop() {
   stopDetection()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (stream.value) {
-    stream.value.getTracks().forEach((t) => t.stop())
+    stream.value.getTracks().forEach((t) => {
+      t.removeEventListener('ended', onStreamInterrupted)
+      t.stop()
+    })
     stream.value = null
   }
 }
@@ -127,7 +218,18 @@ function stop() {
 function capture() {
   const v = video.value
   const c = canvas.value
-  if (!v || !c || !v.videoWidth) return
+  if (!v || !c) return
+
+  // A dead stream (iOS backgrounding) would either bake a stale frame into the
+  // selfie or make the shutter a silent no-op — surface it as an error instead.
+  const streamAlive = stream.value?.getTracks().some((t) => t.readyState === 'live')
+  if (!streamAlive) {
+    onStreamInterrupted()
+    return
+  }
+  // Alive but videoWidth still 0 = metadata not loaded yet (the first few
+  // hundred ms after start). The camera is fine — just not ready to shoot.
+  if (!v.videoWidth) return
 
   const w = v.videoWidth
   const h = v.videoHeight
@@ -142,7 +244,13 @@ function capture() {
 
   c.toBlob(
     (blob) => {
-      if (!blob) return
+      // The callback can outlive the component (navigation mid-capture) — a
+      // fresh object URL created then would never be revoked.
+      if (unmounted) return
+      if (!blob) {
+        onStreamInterrupted()
+        return
+      }
       if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
       previewUrl.value = URL.createObjectURL(blob)
       emit('captured', new File([blob], 'selfie.jpg', { type: 'image/jpeg' }))
@@ -164,6 +272,7 @@ function retake() {
 }
 
 onBeforeUnmount(() => {
+  unmounted = true
   stop()
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
 })
@@ -227,8 +336,21 @@ onBeforeUnmount(() => {
 
     <!-- Controls -->
     <div class="p-3 bg-white border-t border-gray-100 flex items-center justify-center gap-3">
+      <!-- In-app browser: retrying is pointless (the host app never forwards the
+           camera permission) — offer copying the link for Chrome/Safari instead. -->
       <button
-        v-if="state === 'idle' || state === 'error'"
+        v-if="state === 'error' && errorKind === 'in-app'"
+        type="button"
+        @click="copyLink"
+        class="flex items-center gap-2 px-5 py-2.5 bg-navy-700 hover:bg-navy-600 text-white text-sm font-semibold rounded-xl transition-colors"
+      >
+        <svg v-if="!linkCopied" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" /></svg>
+        <svg v-else xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+        {{ linkCopied ? 'Линкът е копиран' : 'Копирай линка' }}
+      </button>
+
+      <button
+        v-else-if="state === 'idle' || state === 'error'"
         type="button"
         @click="start"
         class="px-5 py-2.5 bg-navy-700 hover:bg-navy-600 text-white text-sm font-semibold rounded-xl transition-colors"

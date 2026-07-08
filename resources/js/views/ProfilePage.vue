@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import api from '../api/axios'
 import { useAuthStore } from '../stores/auth'
 import SelfieCapture from '../components/SelfieCapture.vue'
+import { validateKycFile } from '../utils/kycFile'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -145,13 +146,34 @@ async function changePassword() {
 }
 
 function onFileChange(e, side) {
+  const field = side === 'front' ? 'document_front' : 'document_back'
   const file = e.target.files[0] || null
-  if (side === 'front') kycFrontFile.value = file
-  else kycBackFile.value = file
+  // Client-side pre-check (HEIC, format, 10MB) with Bulgarian messages —
+  // catches the common mobile failures before burning a rate-limited request.
+  const error = file ? validateKycFile(file) : null
+
+  const nextErrors = { ...kycErrors.value }
+  if (error) nextErrors[field] = [error]
+  else delete nextErrors[field]
+  kycErrors.value = nextErrors
+
+  const accepted = error ? null : file
+  if (side === 'front') kycFrontFile.value = accepted
+  else kycBackFile.value = accepted
+  // Reset the input on rejection so re-picking the same (now converted/smaller)
+  // file still fires a change event.
+  if (error) e.target.value = ''
 }
 
 function onSelfieCaptured(file) {
   kycSelfieFile.value = file
+  // A fresh selfie invalidates a server-returned selfie error from the
+  // previous submit — same clear-on-change behaviour as the document fields.
+  if (file && kycErrors.value.selfie) {
+    const next = { ...kycErrors.value }
+    delete next.selfie
+    kycErrors.value = next
+  }
 }
 
 async function submitKyc() {
@@ -172,6 +194,13 @@ async function submitKyc() {
   } catch (e) {
     if (e.response?.status === 422 && e.response.data.errors) {
       kycErrors.value = e.response.data.errors
+    } else if (e.response?.status === 413) {
+      // Server post-size limit hit by the AGGREGATE body — each file already
+      // passed the per-file 10 MB check, so "use files up to 10 MB" would be
+      // circular advice. Smaller photos are the only real way out.
+      kycError.value = 'Файловете са твърде големи за изпращане наведнъж. Опитайте с по-малки снимки (например до 3–4 MB на файл).'
+    } else if (e.response?.status === 429) {
+      kycError.value = 'Твърде много опити за кратко време. Изчакайте една минута и опитайте отново.'
     } else {
       kycError.value = e.response?.data?.message || 'Грешка при изпращане.'
     }
@@ -377,14 +406,19 @@ onMounted(() => loadData())
             <!-- Front side -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">1. Лицева страна на личната карта (отпред)</label>
-              <input type="file" accept="image/*,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <!-- Explicit types instead of image/*: iOS 17+ Safari uploads raw
+                   HEIC when image/* matches it, but transcodes to JPEG when the
+                   accept list names only JPEG/PNG/WEBP. -->
+              <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
               <p v-if="kycErrors.document_front" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_front[0] }}</p>
             </div>
 
             <!-- Back side -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">2. Гръб на личната карта (отзад)</label>
-              <input type="file" accept="image/*,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
               <p v-if="kycErrors.document_back" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_back[0] }}</p>
             </div>
 

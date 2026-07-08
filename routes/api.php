@@ -82,8 +82,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/profile', [ProfileController::class, 'update']);
         Route::put('/profile/company', [ProfileController::class, 'updateCompany']);
         Route::put('/profile/password', [ProfileController::class, 'changePassword']);
+        // 6/min (was 3): failed validation attempts count toward the limit, and
+        // a user re-picking rejected files (wrong format, too big) legitimately
+        // retries several times inside a minute.
         Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
-            ->middleware(['throttle:3,1', 'consent.current']);
+            ->middleware(['throttle:6,1', 'consent.current']);
         Route::get('/profile/ibans', [ProfileController::class, 'ibans']);
         Route::post('/profile/ibans', [ProfileController::class, 'storeIban']);
         Route::delete('/profile/ibans/{iban}', [ProfileController::class, 'destroyIban']);

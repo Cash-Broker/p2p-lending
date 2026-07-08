@@ -15,7 +15,9 @@ use Symfony\Component\HttpFoundation\Response;
  * X-XSS-Protection: 0 — disabled because modern CSP replaces it, and the filter
  *   itself can introduce XSS vectors in some browsers
  * Strict-Transport-Security — forces HTTPS for 1 year (added only in production)
- * Permissions-Policy — disables camera, microphone, geolocation access
+ * Permissions-Policy — camera allowed for our own origin only (the KYC live
+ *   selfie uses getUserMedia; an empty allowlist would block it for everyone,
+ *   no browser prompt can override that); microphone and geolocation disabled
  * X-Robots-Tag — pre-launch hard-block for search engines + AI crawlers.
  *   Defence-in-depth on top of robots.txt and the noindex meta tag in HTML.
  *   Toggle off via SEO_INDEXABLE=true in env at launch (after legal review).
@@ -30,7 +32,7 @@ class SecurityHeaders
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
         $response->headers->set('X-XSS-Protection', '0');
-        $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+        $response->headers->set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
 
         // Pre-launch crawler block. The env flag defaults to FALSE so the
         // header stays in place even if someone forgets to copy the env var

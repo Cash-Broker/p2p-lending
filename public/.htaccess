@@ -41,7 +41,12 @@
     Header set X-Content-Type-Options "nosniff"
     Header set X-Frame-Options "SAMEORIGIN"
     Header set Referrer-Policy "strict-origin-when-cross-origin"
-    Header set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+    # camera=(self): the KYC live selfie uses getUserMedia on our own origin;
+    # an empty allowlist blocks the camera outright — no browser prompt can
+    # override it. Keep in sync with app/Http/Middleware/SecurityHeaders.php
+    # (mod_headers `Header set` replaces the PHP-emitted value, so this file
+    # wins on Apache).
+    Header set Permissions-Policy "geolocation=(), microphone=(), camera=(self), payment=()"
 
     # HSTS — production only (don't accidentally pin localhost).
     # Uncomment after first successful HTTPS deploy.

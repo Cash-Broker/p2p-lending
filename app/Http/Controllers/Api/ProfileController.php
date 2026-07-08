@@ -13,6 +13,7 @@ use App\Rules\ValidIban;
 use App\Services\AccountDeletionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 
@@ -92,6 +93,20 @@ class ProfileController extends Controller
             'document_back.required' => 'Моля, качете снимка на гърба (отзад) на личната карта.',
             'selfie.required' => 'Моля, направете селфи с камерата за верификация.',
             'biometric_consent.accepted' => 'Необходимо е изрично съгласие за обработка на селфи (биометрични данни) за верификация.',
+            // The app runs with APP_LOCALE=en, so without these the framework
+            // falls back to English messages on a Bulgarian UI. HEIC is the
+            // dominant real-world rejection (iPhone/Samsung default format).
+            'document_front.mimes' => 'Лицевата страна трябва да е JPG, PNG, WEBP или PDF файл. Снимки във формат HEIC (iPhone) не се поддържат — направете снимката отново или я изберете като JPEG.',
+            'document_back.mimes' => 'Гърбът трябва да е JPG, PNG, WEBP или PDF файл. Снимки във формат HEIC (iPhone) не се поддържат — направете снимката отново или я изберете като JPEG.',
+            'selfie.mimes' => 'Селфито трябва да е JPG, PNG или WEBP изображение.',
+            'document_front.max' => 'Файлът за лицевата страна не може да е по-голям от 10 MB.',
+            'document_back.max' => 'Файлът за гърба не може да е по-голям от 10 MB.',
+            'selfie.max' => 'Селфито не може да е по-голямо от 10 MB.',
+            // `uploaded` fires when PHP itself refused the upload (ini limits) —
+            // the file never reached the validator.
+            'document_front.uploaded' => 'Качването на лицевата страна не бе успешно — файлът вероятно е твърде голям.',
+            'document_back.uploaded' => 'Качването на гърба не бе успешно — файлът вероятно е твърде голям.',
+            'selfie.uploaded' => 'Качването на селфито не бе успешно — файлът вероятно е твърде голям.',
         ]);
 
         $user = $request->user();
@@ -100,39 +115,54 @@ class ProfileController extends Controller
             return response()->json(['message' => 'KYC already approved.'], 422);
         }
 
-        // A resubmission (e.g. after rejection) overwrites the path columns —
-        // capture the previous files so we can delete them and not orphan them
-        // on disk once the new ones are persisted.
-        $previousFiles = array_filter([
-            $user->kyc_document_front_path,
-            $user->kyc_document_back_path,
-            $user->kyc_selfie_path,
-        ]);
+        // Per-user lock: the read-previous → store → save → delete sequence
+        // below is not atomic. Concurrent submissions would each capture the
+        // SAME previous paths, so all but one set of freshly stored ID
+        // documents would be orphaned on disk — unreferenced by any user row,
+        // surviving both resubmission cleanup and account deletion (GDPR).
+        $lock = Cache::lock('kyc-submit:'.$user->id, 15);
 
-        $frontPath = $request->file('document_front')->store('kyc-documents', 'local');
-        $backPath = $request->file('document_back')->store('kyc-documents', 'local');
-        $selfiePath = $request->file('selfie')->store('kyc-documents', 'local');
-
-        $user->forceFill([
-            'kyc_status' => 'submitted',
-            'kyc_selfie_path' => $selfiePath,
-            'kyc_document_front_path' => $frontPath,
-            'kyc_document_back_path' => $backPath,
-        ])->save();
-
-        if ($previousFiles !== []) {
-            Storage::disk('local')->delete($previousFiles);
+        if (! $lock->get()) {
+            return response()->json(['message' => 'Вече се обработва изпращане за верификация. Изчакайте момент и опитайте отново.'], 429);
         }
 
-        // Evidence of explicit Art. 9(2)(a) consent for the biometric selfie,
-        // captured at the moment of processing.
-        $user->consentRecords()->create([
-            'type' => ConsentRecord::TYPE_BIOMETRIC,
-            'version' => ConsentRecord::CURRENT_BIOMETRIC_VERSION,
-            'ip_address' => $request->ip(),
-            'user_agent' => (string) $request->userAgent(),
-            'accepted_at' => now(),
-        ]);
+        try {
+            // A resubmission (e.g. after rejection) overwrites the path columns —
+            // capture the previous files so we can delete them and not orphan them
+            // on disk once the new ones are persisted.
+            $previousFiles = array_filter([
+                $user->kyc_document_front_path,
+                $user->kyc_document_back_path,
+                $user->kyc_selfie_path,
+            ]);
+
+            $frontPath = $request->file('document_front')->store('kyc-documents', 'local');
+            $backPath = $request->file('document_back')->store('kyc-documents', 'local');
+            $selfiePath = $request->file('selfie')->store('kyc-documents', 'local');
+
+            $user->forceFill([
+                'kyc_status' => 'submitted',
+                'kyc_selfie_path' => $selfiePath,
+                'kyc_document_front_path' => $frontPath,
+                'kyc_document_back_path' => $backPath,
+            ])->save();
+
+            if ($previousFiles !== []) {
+                Storage::disk('local')->delete($previousFiles);
+            }
+
+            // Evidence of explicit Art. 9(2)(a) consent for the biometric selfie,
+            // captured at the moment of processing.
+            $user->consentRecords()->create([
+                'type' => ConsentRecord::TYPE_BIOMETRIC,
+                'version' => ConsentRecord::CURRENT_BIOMETRIC_VERSION,
+                'ip_address' => $request->ip(),
+                'user_agent' => (string) $request->userAgent(),
+                'accepted_at' => now(),
+            ]);
+        } finally {
+            $lock->release();
+        }
 
         return response()->json(['message' => 'KYC document submitted successfully.']);
     }

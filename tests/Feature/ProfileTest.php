@@ -6,6 +6,7 @@ use App\Models\SavedIban;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -230,6 +231,131 @@ class ProfileTest extends TestCase
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('selfie');
+    }
+
+    public function test_kyc_submit_rejects_heic_photo_with_bulgarian_message(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // Minimal HEIC container signature — iOS 17+ Safari uploads these raw
+        // when the file input's accept list matches them.
+        $heic = UploadedFile::fake()->createWithContent(
+            'id-front.heic',
+            "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00heicmif1"
+        );
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document_front' => $heic,
+            'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+            'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('document_front');
+        // The message must be the Bulgarian one from the controller, not the
+        // English framework fallback (APP_LOCALE is en).
+        $this->assertStringContainsString('HEIC', $response->json('errors.document_front.0'));
+        $this->assertStringContainsString('JPG, PNG, WEBP или PDF', $response->json('errors.document_front.0'));
+    }
+
+    public function test_kyc_submit_rejects_oversized_file_with_bulgarian_message(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            // Valid JPEG content but reported as 10241 KB — one over max:10240.
+            'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600)->size(10241),
+            'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+            'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('document_front');
+        $this->assertSame(
+            'Файлът за лицевата страна не може да е по-голям от 10 MB.',
+            $response->json('errors.document_front.0')
+        );
+    }
+
+    public function test_kyc_submit_accepts_file_at_exactly_the_size_limit(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // Locks in max:10240 as an ACCEPTANCE boundary — an accidental
+        // tightening of the rule would reject every real phone photo while
+        // all the rejection tests stayed green.
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600)->size(10240),
+            'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+            'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
+        ]);
+
+        $response->assertOk();
+        $this->assertEquals('submitted', $user->fresh()->kyc_status);
+    }
+
+    public function test_kyc_submit_rejects_concurrent_submission_for_same_user(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // Simulate an in-flight submission holding the per-user lock — a second
+        // request must not run the read-store-save-delete sequence in parallel
+        // (it would orphan the first request's stored ID documents on disk).
+        $lock = Cache::lock('kyc-submit:'.$user->id, 15);
+        $this->assertTrue($lock->get());
+
+        try {
+            $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+                'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
+                'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+                'selfie' => $this->fakeSelfie(),
+                'biometric_consent' => '1',
+            ]);
+        } finally {
+            $lock->release();
+        }
+
+        $response->assertStatus(429);
+        $this->assertEquals('pending', $user->fresh()->kyc_status);
+        $this->assertNull($user->fresh()->kyc_document_front_path);
+    }
+
+    public function test_kyc_selfie_mime_rejection_message_is_in_bulgarian(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document_front' => UploadedFile::fake()->image('id-front.jpg', 800, 600),
+            'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+            'selfie' => $this->fakePdf('selfie.pdf'),
+            'biometric_consent' => '1',
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertSame(
+            'Селфито трябва да е JPG, PNG или WEBP изображение.',
+            $response->json('errors.selfie.0')
+        );
+    }
+
+    public function test_kyc_submission_is_throttled_after_six_attempts(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        // Failed validation attempts consume the limit too — 6/min must absorb
+        // a realistic pick-file → 422 → re-pick cycle before the 7th hits 429.
+        for ($i = 0; $i < 6; $i++) {
+            $this->actingAs($user)->postJson('/api/profile/kyc', [])->assertStatus(422);
+        }
+
+        $this->actingAs($user)->postJson('/api/profile/kyc', [])->assertStatus(429);
     }
 
     public function test_kyc_submit_fails_without_back(): void
