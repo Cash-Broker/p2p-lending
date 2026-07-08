@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api/axios'
 import { useAuthStore } from '../stores/auth'
@@ -40,6 +40,10 @@ const passwordSuccess = ref(false)
 // KYC — both sides of the ID card + a live selfie are required
 const kycFrontFile = ref(null)
 const kycBackFile = ref(null)
+// Thumbnail previews of the picked ID photos, so the user SEES what they are
+// about to submit (object URLs; PDFs get no preview — the input shows the name)
+const kycFrontPreview = ref(null)
+const kycBackPreview = ref(null)
 const kycSelfieFile = ref(null)
 const kycBiometricConsent = ref(false)
 const kycLoading = ref(false)
@@ -145,6 +149,16 @@ async function changePassword() {
   }
 }
 
+function isPdf(file) {
+  return file.type === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf')
+}
+
+function setKycPreview(side, file) {
+  const target = side === 'front' ? kycFrontPreview : kycBackPreview
+  if (target.value) URL.revokeObjectURL(target.value)
+  target.value = file && !isPdf(file) ? URL.createObjectURL(file) : null
+}
+
 function onFileChange(e, side) {
   const field = side === 'front' ? 'document_front' : 'document_back'
   const file = e.target.files[0] || null
@@ -160,10 +174,16 @@ function onFileChange(e, side) {
   const accepted = error ? null : file
   if (side === 'front') kycFrontFile.value = accepted
   else kycBackFile.value = accepted
+  setKycPreview(side, accepted)
   // Reset the input on rejection so re-picking the same (now converted/smaller)
   // file still fires a change event.
   if (error) e.target.value = ''
 }
+
+onBeforeUnmount(() => {
+  if (kycFrontPreview.value) URL.revokeObjectURL(kycFrontPreview.value)
+  if (kycBackPreview.value) URL.revokeObjectURL(kycBackPreview.value)
+})
 
 function onSelfieCaptured(file) {
   kycSelfieFile.value = file
@@ -411,6 +431,7 @@ onMounted(() => loadData())
                    accept list names only JPEG/PNG/WEBP. -->
               <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
               <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
+              <img v-if="kycFrontPreview" :src="kycFrontPreview" alt="Преглед — лицева страна" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.document_front" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_front[0] }}</p>
             </div>
 
@@ -419,6 +440,7 @@ onMounted(() => loadData())
               <label class="block text-sm font-medium text-navy-700 mb-1">2. Гръб на личната карта (отзад)</label>
               <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
               <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
+              <img v-if="kycBackPreview" :src="kycBackPreview" alt="Преглед — гръб" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.document_back" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_back[0] }}</p>
             </div>
 
