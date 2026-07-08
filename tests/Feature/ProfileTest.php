@@ -279,6 +279,39 @@ class ProfileTest extends TestCase
         $this->assertSame('converted-jpeg-bytes', Storage::disk('local')->get($front));
     }
 
+    public function test_kyc_submit_rejects_corrupt_heic_with_bulgarian_message(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        $this->app->instance(KycImageNormalizer::class, new class extends KycImageNormalizer
+        {
+            public function heicSupported(): bool
+            {
+                return true;
+            }
+
+            public function toJpeg(UploadedFile $file): string
+            {
+                throw new \RuntimeException('unable to read image');
+            }
+        });
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document_front' => $this->fakeHeic(),
+            'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+            'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
+        ]);
+
+        // A corrupt HEIC must surface as a clear 422, never a 500, and must
+        // not leave any stored files or a submitted status behind.
+        $response->assertStatus(422)->assertJsonValidationErrors('document_front');
+        $this->assertStringContainsString('повреден', $response->json('errors.document_front.0'));
+        $this->assertEquals('pending', $user->fresh()->kyc_status);
+        $this->assertEmpty(Storage::disk('local')->allFiles('kyc-documents'));
+    }
+
     public function test_kyc_submit_refuses_heic_with_bulgarian_message_when_conversion_unavailable(): void
     {
         Storage::fake('local');

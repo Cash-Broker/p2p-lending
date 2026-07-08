@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "laravel",
-      "cwd": ".",
+      "name": "app",
       "runtimeExecutable": "php",
-      "runtimeArgs": ["artisan", "serve", "--port=8123"],
+      "runtimeArgs": ["artisan", "serve", "--host=127.0.0.1", "--port=8123"],
+      "cwd": "./",
       "port": 8123
     }
   ]

@@ -141,6 +141,26 @@ class ProfileController extends Controller
             ));
         }
 
+        // Convert BEFORE taking the lock and storing anything: a corrupt HEIC
+        // must produce a clear 422 (not a 500), and a mid-sequence failure
+        // must not leave already-stored files orphaned on disk.
+        $prepared = [];
+        foreach ($files as $field => $file) {
+            if (! $images->isHeic($file)) {
+                $prepared[$field] = ['file' => $file];
+
+                continue;
+            }
+            try {
+                $prepared[$field] = ['jpeg' => $images->toJpeg($file)];
+            } catch (\Throwable $e) {
+                report($e);
+                throw ValidationException::withMessages([
+                    $field => ['Снимката не може да бъде обработена — файлът изглежда повреден. Опитайте с друга снимка.'],
+                ]);
+            }
+        }
+
         // Per-user lock: the read-previous → store → save → delete sequence
         // below is not atomic. Concurrent submissions would each capture the
         // SAME previous paths, so all but one set of freshly stored ID
@@ -162,19 +182,19 @@ class ProfileController extends Controller
                 $user->kyc_selfie_path,
             ]);
 
-            $storeKycFile = function (UploadedFile $file) use ($images): string {
-                if (! $images->isHeic($file)) {
-                    return $file->store('kyc-documents', 'local');
+            $storeKycFile = function (array $item): string {
+                if (isset($item['file'])) {
+                    return $item['file']->store('kyc-documents', 'local');
                 }
                 $path = 'kyc-documents/'.Str::random(40).'.jpg';
-                Storage::disk('local')->put($path, $images->toJpeg($file));
+                Storage::disk('local')->put($path, $item['jpeg']);
 
                 return $path;
             };
 
-            $frontPath = $storeKycFile($request->file('document_front'));
-            $backPath = $storeKycFile($request->file('document_back'));
-            $selfiePath = $storeKycFile($request->file('selfie'));
+            $frontPath = $storeKycFile($prepared['document_front']);
+            $backPath = $storeKycFile($prepared['document_back']);
+            $selfiePath = $storeKycFile($prepared['selfie']);
 
             $user->forceFill([
                 'kyc_status' => 'submitted',
