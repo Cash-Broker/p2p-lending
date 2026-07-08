@@ -33,6 +33,14 @@
 # of search results. REMOVE the X-Robots-Tag block at launch (and flip the
 # robots.txt and meta tag at the same time).
 # ─────────────────────────────────────────────────────────────────────────────
+<IfModule php_module>
+    # PHP upload limits under mod_php (PHP 8.x). Under PHP-FPM this whole
+    # block is skipped (php_module absent) and public/.user.ini applies
+    # instead. Contract: KYC accepts 3 files x 10 MB per POST.
+    php_value upload_max_filesize 12M
+    php_value post_max_size 40M
+</IfModule>
+
 <IfModule mod_headers.c>
     # Hard noindex while pre-launch — hits every response, not just HTML.
     Header set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"

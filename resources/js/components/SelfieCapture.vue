@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { isInAppBrowser, isStandaloneDisplayMode } from '../utils/browser'
+import { streamHealth } from '../utils/mediaStream'
 
 // Camera-only selfie capture with live face guidance. There is intentionally NO
 // file-upload fallback: the point of the selfie is liveness.
@@ -41,6 +42,7 @@ let detector = null
 let detectTimer = null
 let detectionActive = false
 let unmounted = false
+let muteRecoveryTimer = null
 
 const statusText = computed(() => {
   if (!detectorSupported) return 'Центрирайте лицето си в рамката и натиснете „Снимай".'
@@ -110,8 +112,23 @@ function onStreamInterrupted() {
 
 function onVisibilityChange() {
   if (document.visibilityState !== 'visible' || state.value !== 'live') return
-  const tracks = stream.value?.getTracks() ?? []
-  if (tracks.length === 0 || tracks.some((t) => t.readyState === 'ended')) onStreamInterrupted()
+  const health = streamHealth(stream.value?.getTracks())
+  if (health === 'ended') {
+    onStreamInterrupted()
+    return
+  }
+  if (health === 'muted') {
+    // iOS mutes (doesn't end) the track on backgrounding: readyState stays
+    // 'live' but the video is frozen black. A play() nudge usually resumes
+    // it; if the track is still muted after a grace period, surface the
+    // interruption so the user restarts instead of shooting a black selfie.
+    video.value?.play().catch(() => {})
+    clearTimeout(muteRecoveryTimer)
+    muteRecoveryTimer = setTimeout(() => {
+      if (state.value !== 'live') return
+      if (streamHealth(stream.value?.getTracks()) !== 'ok') onStreamInterrupted()
+    }, 1200)
+  }
 }
 
 async function copyLink() {
@@ -206,6 +223,7 @@ function stopDetection() {
 function stop() {
   stopDetection()
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  clearTimeout(muteRecoveryTimer)
   if (stream.value) {
     stream.value.getTracks().forEach((t) => {
       t.removeEventListener('ended', onStreamInterrupted)
@@ -220,14 +238,14 @@ function capture() {
   const c = canvas.value
   if (!v || !c) return
 
-  // A dead stream (iOS backgrounding) would either bake a stale frame into the
-  // selfie or make the shutter a silent no-op — surface it as an error instead.
-  const streamAlive = stream.value?.getTracks().some((t) => t.readyState === 'live')
-  if (!streamAlive) {
+  // A dead OR muted stream (iOS backgrounding mutes instead of ending the
+  // track) shows a frozen black frame — capturing would bake a BLACK selfie
+  // into the KYC submission. Surface the interruption instead.
+  if (streamHealth(stream.value?.getTracks()) !== 'ok') {
     onStreamInterrupted()
     return
   }
-  // Alive but videoWidth still 0 = metadata not loaded yet (the first few
+  // Healthy but videoWidth still 0 = metadata not loaded yet (the first few
   // hundred ms after start). The camera is fine — just not ready to shoot.
   if (!v.videoWidth) return
 
