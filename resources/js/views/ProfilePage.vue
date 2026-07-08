@@ -425,27 +425,27 @@ onMounted(() => loadData())
               <!-- Explicit types instead of image/*: iOS 17+ Safari uploads raw
                    HEIC when image/* matches it, but transcodes to JPEG when the
                    accept list names only JPEG/PNG/WEBP. -->
-              <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" @change="e => onFileChange(e, 'front')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
               <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
-              <img v-if="kycFrontPreview" :src="kycFrontPreview" alt="Преглед — лицева страна" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
+              <img v-if="kycFrontPreview" :src="kycFrontPreview" @error="kycFrontPreview = null" alt="Преглед — лицева страна" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.document_front" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_front[0] }}</p>
             </div>
 
             <!-- Back side -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">2. Гръб на личната карта (отзад)</label>
-              <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" @change="e => onFileChange(e, 'back')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
               <p class="mt-1 text-xs text-gray-400">JPG, PNG, WEBP или PDF, до 10 MB.</p>
-              <img v-if="kycBackPreview" :src="kycBackPreview" alt="Преглед — гръб" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
+              <img v-if="kycBackPreview" :src="kycBackPreview" @error="kycBackPreview = null" alt="Преглед — гръб" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.document_back" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.document_back[0] }}</p>
             </div>
 
             <!-- Selfie photo (plain upload — product decision: no live capture) -->
             <div class="mb-4">
               <label class="block text-sm font-medium text-navy-700 mb-1">3. Ваша снимка (селфи)</label>
-              <input type="file" accept="image/jpeg,image/png,image/webp" @change="e => onFileChange(e, 'selfie')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" @change="e => onFileChange(e, 'selfie')" class="block w-full text-sm text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-navy-700/10 file:text-navy-700 file:font-medium file:text-sm" />
               <p class="mt-1 text-xs text-gray-400">Ясна снимка на лицето ви — JPG, PNG или WEBP, до 10 MB.</p>
-              <img v-if="kycSelfiePreview" :src="kycSelfiePreview" alt="Преглед — селфи" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
+              <img v-if="kycSelfiePreview" :src="kycSelfiePreview" @error="kycSelfiePreview = null" alt="Преглед — селфи" class="mt-2 max-h-40 rounded-xl border border-gray-200 object-contain" />
               <p v-if="kycErrors.selfie" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ kycErrors.selfie[0] }}</p>
             </div>
 

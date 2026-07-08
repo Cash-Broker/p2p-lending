@@ -16,8 +16,12 @@
 
 export const KYC_MAX_FILE_BYTES = 10 * 1024 * 1024
 
-const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf']
-const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'pdf']
+// HEIC/HEIF are ACCEPTED: naming them explicitly in the accept list makes iOS
+// hand over the ORIGINAL photo instead of transcoding on the fly — that
+// transcoder produces black/broken files on some devices (observed in prod).
+// The server converts HEIC to JPEG (KycImageNormalizer).
+const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf']
+const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf']
 
 // Common formats the server will definitely reject — safe to block early.
 const REJECTED_TYPES = ['image/gif', 'image/bmp', 'image/tiff', 'image/svg+xml', 'image/avif']
@@ -32,10 +36,6 @@ export function validateKycFile(file, { allowPdf = true } = {}) {
   const name = file.name || ''
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
   const type = (file.type || '').toLowerCase()
-
-  if (/hei[cf]/.test(type) || ext === 'heic' || ext === 'heif') {
-    return 'Снимки във формат HEIC/HEIF не се поддържат. Направете нова снимка директно от тук или изберете снимка във формат JPEG/PNG.'
-  }
 
   if (!allowPdf && (type === 'application/pdf' || ext === 'pdf')) {
     return 'Селфито трябва да е снимка (JPG, PNG или WEBP), не PDF.'

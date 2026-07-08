@@ -11,11 +11,15 @@ use App\Models\ConsentRecord;
 use App\Models\SavedIban;
 use App\Rules\ValidIban;
 use App\Services\AccountDeletionService;
+use App\Services\KycImageNormalizer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class ProfileController extends Controller
 {
@@ -68,7 +72,7 @@ class ProfileController extends Controller
         return response()->json(['message' => 'Password changed successfully.']);
     }
 
-    public function submitKyc(Request $request): JsonResponse
+    public function submitKyc(Request $request, KycImageNormalizer $images): JsonResponse
     {
         $request->validate([
             // Both sides of the ID are mandatory — users routinely uploaded only
@@ -79,13 +83,18 @@ class ProfileController extends Controller
             // Explicit MIME allow-list — Laravel's `image` rule includes SVG which
             // can carry JavaScript and execute when admin views the document
             // (admin session takeover). PDF added for ID-document scans.
-            'document_front' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
-            'document_back' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:10240'],
+            //
+            // HEIC/HEIF accepted: iPhones shoot HEIC by default and iOS's
+            // pick-time transcode produces black/broken files on some devices,
+            // so the frontend requests the ORIGINAL and we convert to JPEG
+            // here (KycImageNormalizer) before storing.
+            'document_front' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,heic,heif,pdf', 'max:10240'],
+            'document_back' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,heic,heif,pdf', 'max:10240'],
             // Selfie photo — a plain upload (product decision 2026-07-08: the
             // live-camera capture was dropped to keep onboarding easy). Always
             // a photo, never a PDF. Lets the admin face-match the person
             // against the ID document.
-            'selfie' => ['required', 'file', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
+            'selfie' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,heic,heif', 'max:10240'],
             // Explicit consent for biometric processing of the selfie
             // (GDPR Art. 9(2)(a)) — a separate, un-prechecked opt-in.
             'biometric_consent' => ['accepted'],
@@ -95,11 +104,10 @@ class ProfileController extends Controller
             'selfie.required' => 'Моля, качете ваша снимка (селфи) за верификация.',
             'biometric_consent.accepted' => 'Необходимо е изрично съгласие за обработка на селфи (биометрични данни) за верификация.',
             // The app runs with APP_LOCALE=en, so without these the framework
-            // falls back to English messages on a Bulgarian UI. HEIC is the
-            // dominant real-world rejection (iPhone/Samsung default format).
-            'document_front.mimes' => 'Лицевата страна трябва да е JPG, PNG, WEBP или PDF файл. Снимки във формат HEIC (iPhone) не се поддържат — направете снимката отново или я изберете като JPEG.',
-            'document_back.mimes' => 'Гърбът трябва да е JPG, PNG, WEBP или PDF файл. Снимки във формат HEIC (iPhone) не се поддържат — направете снимката отново или я изберете като JPEG.',
-            'selfie.mimes' => 'Селфито трябва да е JPG, PNG или WEBP изображение.',
+            // falls back to English messages on a Bulgarian UI.
+            'document_front.mimes' => 'Лицевата страна трябва да е снимка (JPG, PNG, WEBP, HEIC) или PDF файл.',
+            'document_back.mimes' => 'Гърбът трябва да е снимка (JPG, PNG, WEBP, HEIC) или PDF файл.',
+            'selfie.mimes' => 'Селфито трябва да е снимка (JPG, PNG, WEBP или HEIC).',
             'document_front.max' => 'Файлът за лицевата страна не може да е по-голям от 10 MB.',
             'document_back.max' => 'Файлът за гърба не може да е по-голям от 10 MB.',
             'selfie.max' => 'Селфито не може да е по-голямо от 10 MB.',
@@ -114,6 +122,23 @@ class ProfileController extends Controller
 
         if ($user->kyc_status === 'approved') {
             return response()->json(['message' => 'KYC already approved.'], 422);
+        }
+
+        // HEIC arrives only when the server can actually convert it — without
+        // Imagick+libheif we must refuse now, not store files the admin can't
+        // open. (Ops: `apt install php-imagick` provides the delegate.)
+        $files = [
+            'document_front' => $request->file('document_front'),
+            'document_back' => $request->file('document_back'),
+            'selfie' => $request->file('selfie'),
+        ];
+        $needsConversion = array_filter($files, fn ($f) => $images->isHeic($f));
+
+        if ($needsConversion !== [] && ! $images->heicSupported()) {
+            throw ValidationException::withMessages(array_map(
+                fn () => ['Снимки във формат HEIC не могат да бъдат обработени в момента. Изберете снимката като JPEG/PNG или опитайте по-късно.'],
+                $needsConversion
+            ));
         }
 
         // Per-user lock: the read-previous → store → save → delete sequence
@@ -137,9 +162,19 @@ class ProfileController extends Controller
                 $user->kyc_selfie_path,
             ]);
 
-            $frontPath = $request->file('document_front')->store('kyc-documents', 'local');
-            $backPath = $request->file('document_back')->store('kyc-documents', 'local');
-            $selfiePath = $request->file('selfie')->store('kyc-documents', 'local');
+            $storeKycFile = function (UploadedFile $file) use ($images): string {
+                if (! $images->isHeic($file)) {
+                    return $file->store('kyc-documents', 'local');
+                }
+                $path = 'kyc-documents/'.Str::random(40).'.jpg';
+                Storage::disk('local')->put($path, $images->toJpeg($file));
+
+                return $path;
+            };
+
+            $frontPath = $storeKycFile($request->file('document_front'));
+            $backPath = $storeKycFile($request->file('document_back'));
+            $selfiePath = $storeKycFile($request->file('selfie'));
 
             $user->forceFill([
                 'kyc_status' => 'submitted',

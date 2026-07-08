@@ -34,20 +34,21 @@ describe('validateKycFile', () => {
     expect(validateKycFile(file('photo.xyz', 'application/x-something'))).toBeNull()
   })
 
-  // ── HEIC/HEIF — the dominant real-world mobile rejection ──
+  // ── HEIC/HEIF — accepted so iOS hands over the ORIGINAL photo ──
+  // (naming HEIC in accept prevents iOS's pick-time transcode, which produces
+  // black/broken files on some devices; the SERVER converts HEIC to JPEG)
 
   it.each([
     ['HEIC by MIME', file('photo.heic', 'image/heic')],
     ['HEIF by MIME', file('photo.heif', 'image/heif')],
-    ['HEIC sequence MIME', file('photo.heic', 'image/heic-sequence')],
     ['HEIC by extension, empty MIME', file('IMG_0001.heic', '')],
     ['HEIF by extension, empty MIME', file('IMG_0001.heif', '')],
-  ])('rejects %s with the HEIC message', (_label, f) => {
-    expect(validateKycFile(f)).toContain('HEIC')
+  ])('accepts %s (server converts to JPEG)', (_label, f) => {
+    expect(validateKycFile(f)).toBeNull()
   })
 
-  it('does not misread image/jpeg as HEIC (the hei[cf] regex must not overmatch)', () => {
-    expect(validateKycFile(file('photo.jpeg', 'image/jpeg'))).toBeNull()
+  it('accepts a HEIC selfie too', () => {
+    expect(validateKycFile(file('selfie.heic', 'image/heic'), { allowPdf: false })).toBeNull()
   })
 
   // ── Known-bad formats blocked early ──
@@ -86,7 +87,7 @@ describe('validateKycFile', () => {
     expect(validateKycFile(file('id.jpg', 'image/jpeg', KYC_MAX_FILE_BYTES + 1))).toContain('10 MB')
   })
 
-  it('reports HEIC before size for an oversized HEIC (format is the actionable problem)', () => {
-    expect(validateKycFile(file('big.heic', 'image/heic', KYC_MAX_FILE_BYTES + 1))).toContain('HEIC')
+  it('applies the size limit to HEIC picks as well', () => {
+    expect(validateKycFile(file('big.heic', 'image/heic', KYC_MAX_FILE_BYTES + 1))).toContain('10 MB')
   })
 })

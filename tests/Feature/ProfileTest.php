@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\SavedIban;
 use App\Models\User;
+use App\Services\KycImageNormalizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
@@ -233,30 +234,75 @@ class ProfileTest extends TestCase
         $response->assertStatus(422)->assertJsonValidationErrors('selfie');
     }
 
-    public function test_kyc_submit_rejects_heic_photo_with_bulgarian_message(): void
+    /** Minimal HEIC container signature — iPhones upload these raw now that
+     *  the accept list names HEIC explicitly (prevents iOS's broken
+     *  pick-time transcode). */
+    private function fakeHeic(string $name = 'id-front.heic'): UploadedFile
+    {
+        return UploadedFile::fake()->createWithContent(
+            $name,
+            "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00heicmif1"
+        );
+    }
+
+    public function test_kyc_submit_converts_heic_to_jpeg_when_supported(): void
     {
         Storage::fake('local');
         $user = $this->createVerifiedInvestor();
 
-        // Minimal HEIC container signature — iOS 17+ Safari uploads these raw
-        // when the file input's accept list matches them.
-        $heic = UploadedFile::fake()->createWithContent(
-            'id-front.heic',
-            "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00heicmif1"
-        );
+        // Conversion capability is environment-specific (Imagick+libheif on
+        // prod) — stub it so the test pins the CONTROLLER contract: HEIC in,
+        // .jpg stored.
+        $this->app->instance(KycImageNormalizer::class, new class extends KycImageNormalizer
+        {
+            public function heicSupported(): bool
+            {
+                return true;
+            }
+
+            public function toJpeg(UploadedFile $file): string
+            {
+                return 'converted-jpeg-bytes';
+            }
+        });
 
         $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
-            'document_front' => $heic,
+            'document_front' => $this->fakeHeic(),
+            'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
+            'selfie' => $this->fakeSelfie(),
+            'biometric_consent' => '1',
+        ]);
+
+        $response->assertOk();
+        $front = $user->fresh()->kyc_document_front_path;
+        $this->assertStringEndsWith('.jpg', $front);
+        $this->assertSame('converted-jpeg-bytes', Storage::disk('local')->get($front));
+    }
+
+    public function test_kyc_submit_refuses_heic_with_bulgarian_message_when_conversion_unavailable(): void
+    {
+        Storage::fake('local');
+        $user = $this->createVerifiedInvestor();
+
+        $this->app->instance(KycImageNormalizer::class, new class extends KycImageNormalizer
+        {
+            public function heicSupported(): bool
+            {
+                return false;
+            }
+        });
+
+        $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
+            'document_front' => $this->fakeHeic(),
             'document_back' => UploadedFile::fake()->image('id-back.jpg', 800, 600),
             'selfie' => $this->fakeSelfie(),
             'biometric_consent' => '1',
         ]);
 
         $response->assertStatus(422)->assertJsonValidationErrors('document_front');
-        // The message must be the Bulgarian one from the controller, not the
-        // English framework fallback (APP_LOCALE is en).
         $this->assertStringContainsString('HEIC', $response->json('errors.document_front.0'));
-        $this->assertStringContainsString('JPG, PNG, WEBP или PDF', $response->json('errors.document_front.0'));
+        // Nothing may be stored on the refusal path.
+        $this->assertNull($user->fresh()->kyc_document_front_path);
     }
 
     public function test_kyc_submit_rejects_oversized_file_with_bulgarian_message(): void
@@ -339,7 +385,7 @@ class ProfileTest extends TestCase
 
         $response->assertStatus(422);
         $this->assertSame(
-            'Селфито трябва да е JPG, PNG или WEBP изображение.',
+            'Селфито трябва да е снимка (JPG, PNG, WEBP или HEIC).',
             $response->json('errors.selfie.0')
         );
     }
