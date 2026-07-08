@@ -62,15 +62,29 @@ class AdminKycReviewTest extends TestCase
         $this->assertSame(0, $investor->notifications()->where('data->title', 'Нова KYC заявка')->count());
     }
 
-    // ── Status actions: reachable from the users table ──
+    // ── The users table stays clean: only the View action ──
 
-    public function test_admin_can_mark_submission_in_review(): void
+    public function test_users_table_has_no_kyc_status_actions(): void
     {
         $this->actingAs($this->admin());
         $user = $this->submittedUser();
 
         Livewire::test(ListUsers::class)
-            ->callTableAction('review_kyc', $user)
+            ->assertTableActionExists('view')
+            ->assertTableActionDoesNotExist('review_kyc')
+            ->assertTableActionDoesNotExist('approve_kyc')
+            ->assertTableActionDoesNotExist('reject_kyc');
+    }
+
+    // ── Status actions: on the profile view page header ──
+
+    public function test_admin_can_mark_submission_in_review_from_view_page(): void
+    {
+        $this->actingAs($this->admin());
+        $user = $this->submittedUser();
+
+        Livewire::test(ViewUser::class, ['record' => $user->id])
+            ->callAction('review_kyc')
             ->assertHasNoErrors();
 
         $this->assertSame('in_review', $user->fresh()->kyc_status);
@@ -81,8 +95,8 @@ class AdminKycReviewTest extends TestCase
         $this->actingAs($this->admin());
         $user = User::factory()->create(['email_verified_at' => now(), 'kyc_status' => 'in_review']);
 
-        Livewire::test(ListUsers::class)
-            ->callTableAction('approve_kyc', $user)
+        Livewire::test(ViewUser::class, ['record' => $user->id])
+            ->callAction('approve_kyc')
             ->assertHasNoErrors();
 
         $this->assertSame('approved', $user->fresh()->kyc_status);
@@ -93,11 +107,9 @@ class AdminKycReviewTest extends TestCase
         $this->actingAs($this->admin());
         $pending = User::factory()->create(['email_verified_at' => now(), 'kyc_status' => 'pending']);
 
-        Livewire::test(ListUsers::class)
-            ->assertTableActionHidden('review_kyc', $pending);
+        Livewire::test(ViewUser::class, ['record' => $pending->id])
+            ->assertActionHidden('review_kyc');
     }
-
-    // ── Status actions: reachable from the profile view page header ──
 
     public function test_admin_can_approve_from_the_user_view_page(): void
     {

@@ -12,7 +12,6 @@ use Filament\Schemas\Schema;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
-use Filament\Tables\Enums\RecordActionsPosition;
 use Filament\Tables\Table;
 
 class UserResource extends Resource
@@ -70,18 +69,17 @@ class UserResource extends Resource
                 Tables\Filters\SelectFilter::make('role')->options(['investor' => 'Инвеститор', 'admin' => 'Админ']),
                 Tables\Filters\SelectFilter::make('kyc_status')->options(['pending' => 'Очакващ', 'submitted' => 'Изпратен', 'in_review' => 'В преглед', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен']),
             ])
-            // BeforeColumns: the reviewer works these actions constantly — they
-            // must be reachable WITHOUT scrolling right across the wide table.
+            // The table stays clean: only "Преглед", at the default right end.
+            // All KYC status actions live in the ViewUser page header — the
+            // reviewer decides while looking at the documents.
             ->recordActions([
                 \Filament\Actions\ViewAction::make(),
-                ...static::kycStatusActions(),
-            ], position: RecordActionsPosition::BeforeColumns);
+            ]);
     }
 
     /**
-     * KYC review actions, shared by the table rows and the ViewUser header —
-     * the reviewer approves either from the list or while looking at the
-     * documents on the profile page.
+     * KYC review actions for the ViewUser page header — the reviewer
+     * approves/rejects while looking at the documents.
      */
     public static function kycStatusActions(): array
     {
