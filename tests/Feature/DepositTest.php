@@ -6,6 +6,8 @@ use App\Models\DepositRequest;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Services\DepositService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -20,6 +22,7 @@ class DepositTest extends TestCase
         if ($walletOverrides) {
             $wallet->forceFill($walletOverrides)->save();
         }
+
         return $user;
     }
 
@@ -59,10 +62,10 @@ class DepositTest extends TestCase
 
     public function test_deposit_returns_same_code_on_repeated_calls(): void
     {
-        // Idempotency contract: while the active code hasn't expired or been
-        // approved/rejected, /api/deposit returns the SAME code. The user
-        // should never see a different code mid-wire (would break their
-        // bank reference paste).
+        // Idempotency contract: until an admin approves/rejects a deposit
+        // against the active code, /api/deposit returns the SAME code. The
+        // user should never see a different code mid-wire (would break
+        // their bank reference paste).
         $user = $this->createVerifiedInvestor();
 
         $first = $this->actingAs($user)->getJson('/api/deposit')->json('reference_code');
@@ -76,18 +79,49 @@ class DepositTest extends TestCase
         $this->assertEquals(1, DepositRequest::where('user_id', $user->id)->count());
     }
 
-    public function test_deposit_mints_new_code_after_expiry(): void
+    public function test_deposit_keeps_code_past_old_policy_expiry_date(): void
     {
+        // Codes no longer expire (client decision 2026-07-17): a pending
+        // code with a stale expires_at (row issued under the old 30-day
+        // policy) is still THE active code — the user may have wired money
+        // against it, and rotating it would strand that transfer.
         $user = $this->createVerifiedInvestor();
 
         $first = $this->actingAs($user)->getJson('/api/deposit')->json('reference_code');
 
-        // Force expiry on the existing code
         DepositRequest::where('user_id', $user->id)->update(['expires_at' => now()->subDay()]);
 
         $second = $this->actingAs($user)->getJson('/api/deposit')->json('reference_code');
 
-        $this->assertNotEquals($first, $second);
+        $this->assertEquals($first, $second);
+        $this->assertEquals(1, DepositRequest::where('user_id', $user->id)->count());
+    }
+
+    public function test_deposit_code_is_stable_when_duplicate_pending_rows_exist(): void
+    {
+        // Pre-fix races could leave a user with two pending codes created in
+        // the same second. Selection must be deterministic (latest by id) —
+        // created_at has second precision, so ordering by it alone could
+        // show a different code on every request.
+        $user = $this->createVerifiedInvestor();
+        $ts = now();
+        $older = DepositRequest::factory()->create([
+            'user_id' => $user->id, 'amount' => null, 'status' => 'pending',
+            'created_at' => $ts, 'updated_at' => $ts,
+        ]);
+        $newer = DepositRequest::factory()->create([
+            'user_id' => $user->id, 'amount' => null, 'status' => 'pending',
+            'created_at' => $ts, 'updated_at' => $ts,
+        ]);
+
+        for ($i = 0; $i < 3; $i++) {
+            $code = $this->actingAs($user)->getJson('/api/deposit')->json('reference_code');
+            $this->assertEquals($newer->reference_code, $code);
+        }
+
+        // The older duplicate stays pending (still creditable by admin if a
+        // wire arrives with it) — no new rows minted.
+        $this->assertEquals('pending', $older->fresh()->status);
         $this->assertEquals(2, DepositRequest::where('user_id', $user->id)->count());
     }
 
@@ -105,6 +139,21 @@ class DepositTest extends TestCase
             'amount' => '100.00',
             'confirmed_at' => now(),
         ]);
+
+        $second = $this->actingAs($user)->getJson('/api/deposit')->json('reference_code');
+
+        $this->assertNotEquals($first, $second);
+    }
+
+    public function test_deposit_mints_new_code_after_previous_was_rejected(): void
+    {
+        // Reject also consumes the code — an admin decision on an actual
+        // wire was made, which is the only event allowed to retire a code.
+        $user = $this->createVerifiedInvestor();
+
+        $first = $this->actingAs($user)->getJson('/api/deposit')->json('reference_code');
+
+        DepositRequest::where('user_id', $user->id)->update(['status' => 'rejected']);
 
         $second = $this->actingAs($user)->getJson('/api/deposit')->json('reference_code');
 
@@ -176,8 +225,8 @@ class DepositTest extends TestCase
         $this->assertNotNull($created->reference_code);
         $this->assertNull($created->amount);
         $this->assertEquals('pending', $created->status);
-        $this->assertNotNull($created->expires_at);
-        $this->assertTrue($created->expires_at->isFuture());
+        // Codes are non-expiring — no expiry is stamped at issuance.
+        $this->assertNull($created->expires_at);
     }
 
     // ── Service: approve ──
@@ -239,6 +288,93 @@ class DepositTest extends TestCase
         $service->approve($deposit->id, 1);
     }
 
+    public function test_approve_stamps_wire_details_atomically_even_on_old_policy_code(): void
+    {
+        // The credit-by-code flow passes amount + bank_reference INTO
+        // approve() — stamped inside the locked transaction, not
+        // pre-committed by the caller. Fixture uses a stale expires_at to
+        // also pin the admin-side half of the no-expiry decision: an
+        // old-policy code is still creditable.
+        $user = $this->createVerifiedInvestor(['available' => 100]);
+        $placeholder = DepositRequest::factory()->create([
+            'user_id' => $user->id,
+            'amount' => null,
+            'status' => 'pending',
+        ]);
+        $placeholder->forceFill(['expires_at' => now()->subMonths(2)])->save();
+
+        $service = app(DepositService::class);
+        $result = $service->approve($placeholder->id, 1, '250.00', 'WIRE-STAMP-1');
+
+        $this->assertEquals('350.00', $user->wallet->fresh()->available);
+        $fresh = $result->fresh();
+        $this->assertEquals('approved', $fresh->status);
+        $this->assertEquals('250.00', $fresh->amount);
+        $this->assertEquals('WIRE-STAMP-1', $fresh->bank_reference);
+        $this->assertDatabaseHas('transactions', [
+            'user_id' => $user->id,
+            'type' => Transaction::TYPE_DEPOSIT,
+            'amount' => 250,
+        ]);
+    }
+
+    public function test_approve_refuses_deleted_account_code_without_burning_bank_reference(): void
+    {
+        // GDPR-anonymized accounts have no wallet row, but their legacy
+        // pending codes may still resolve. approve() must refuse BEFORE
+        // anything persists — otherwise the wire's UNIQUE bank_reference
+        // gets burned onto a row that can never be credited.
+        $user = $this->createVerifiedInvestor();
+        $placeholder = DepositRequest::factory()->create([
+            'user_id' => $user->id,
+            'amount' => null,
+            'status' => 'pending',
+        ]);
+        $user->wallet()->delete();
+
+        $service = app(DepositService::class);
+
+        try {
+            $service->approve($placeholder->id, 1, '100.00', 'WIRE-GONE-1');
+            $this->fail('Expected DomainException for a wallet-less account.');
+        } catch (\DomainException $e) {
+            $this->assertStringContainsString('account has been closed', $e->getMessage());
+        }
+
+        $fresh = $placeholder->fresh();
+        $this->assertEquals('pending', $fresh->status);
+        $this->assertNull($fresh->amount);
+        $this->assertNull($fresh->bank_reference);
+    }
+
+    public function test_approve_on_consumed_code_throws_and_leaves_first_credit_untouched(): void
+    {
+        // Two admins racing the same code: the loser must fail the locked
+        // status=pending recheck and must NOT overwrite the winner's wire
+        // details (record-vs-ledger divergence).
+        $user = $this->createVerifiedInvestor(['available' => 0]);
+        $placeholder = DepositRequest::factory()->create([
+            'user_id' => $user->id,
+            'amount' => null,
+            'status' => 'pending',
+        ]);
+
+        $service = app(DepositService::class);
+        $service->approve($placeholder->id, 1, '100.00', 'WIRE-FIRST');
+
+        try {
+            $service->approve($placeholder->id, 2, '900.00', 'WIRE-SECOND');
+            $this->fail('Expected ModelNotFoundException for a consumed code.');
+        } catch (ModelNotFoundException) {
+            // expected
+        }
+
+        $fresh = $placeholder->fresh();
+        $this->assertEquals('100.00', $fresh->amount);
+        $this->assertEquals('WIRE-FIRST', $fresh->bank_reference);
+        $this->assertEquals('100.00', $user->wallet->fresh()->available);
+    }
+
     public function test_db_unique_constraint_blocks_duplicate_bank_reference(): void
     {
         // Audit H5: same bank wire cannot be applied to two deposits.
@@ -256,7 +392,7 @@ class DepositTest extends TestCase
             'status' => 'approved',
         ]);
 
-        $this->expectException(\Illuminate\Database\UniqueConstraintViolationException::class);
+        $this->expectException(UniqueConstraintViolationException::class);
         DepositRequest::factory()->create([
             'user_id' => $user2->id,
             'amount' => 500,
@@ -296,7 +432,7 @@ class DepositTest extends TestCase
 
     // ── DepositRequest model ──
 
-    public function test_model_auto_generates_dep_code_and_expiry(): void
+    public function test_model_auto_generates_dep_code_without_expiry(): void
     {
         $user = $this->createVerifiedInvestor();
         $deposit = DepositRequest::create([
@@ -306,28 +442,6 @@ class DepositTest extends TestCase
         ]);
 
         $this->assertMatchesRegularExpression('/^DEP-[A-Z0-9]{8}$/', $deposit->reference_code);
-        $this->assertNotNull($deposit->expires_at);
-        $this->assertTrue($deposit->expires_at->isFuture());
-    }
-
-    public function test_is_expired_returns_false_for_legacy_null_expires_at(): void
-    {
-        // Legacy rows from before the refactor have NULL expires_at and must
-        // continue to work (treated as never-expiring). This guards against
-        // a regression that breaks production rows on first deploy.
-        $user = $this->createVerifiedInvestor();
-        $deposit = DepositRequest::factory()->create(['user_id' => $user->id]);
-        $deposit->forceFill(['expires_at' => null])->save();
-
-        $this->assertFalse($deposit->fresh()->isExpired());
-    }
-
-    public function test_is_expired_returns_true_for_past_expiry(): void
-    {
-        $user = $this->createVerifiedInvestor();
-        $deposit = DepositRequest::factory()->create(['user_id' => $user->id]);
-        $deposit->forceFill(['expires_at' => now()->subDay()])->save();
-
-        $this->assertTrue($deposit->fresh()->isExpired());
+        $this->assertNull($deposit->expires_at);
     }
 }

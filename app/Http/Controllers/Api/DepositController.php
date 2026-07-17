@@ -18,10 +18,15 @@ class DepositController extends Controller
      *
      * The reference code is a per-DepositRequest random DEP-XXXXXXXX value,
      * not a sequential function of user_id. The same code is reused across
-     * /api/deposit calls until it expires (30 days) or gets approved/rejected,
-     * at which point a fresh code is minted. The user pastes this code into
-     * the bank wire reference; admin matches the wire to the user via the
-     * code (not by guessing from sender name).
+     * /api/deposit calls until an admin approves/rejects a deposit against
+     * it — only then is a fresh code minted. Codes do not expire: the user
+     * may have wired money against the code before the transfer lands, so
+     * retiring an unused code would strand a real bank transfer. The user
+     * pastes this code into the bank wire reference; admin matches the wire
+     * to the user via the code (not by guessing from sender name).
+     *
+     * `expires_at` stays in the response for API-shape compatibility with
+     * older SPA bundles; it is always null for active codes.
      */
     public function index(Request $request): JsonResponse
     {

@@ -5,23 +5,32 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\DepositRequestResource\Pages;
 use App\Models\DepositRequest;
 use App\Services\DepositService;
+use App\Support\Money;
 use BackedEnum;
+use Filament\Actions\Action;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
-use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\Log;
 use UnitEnum;
 
 class DepositRequestResource extends Resource
 {
     protected static ?string $model = DepositRequest::class;
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-arrow-down-tray';
+
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-arrow-down-tray';
+
     protected static ?string $navigationLabel = 'Депозити';
-    protected static string | UnitEnum | null $navigationGroup = 'Финанси';
+
+    protected static string|UnitEnum|null $navigationGroup = 'Финанси';
+
     protected static ?string $pluralModelLabel = 'Депозити';
+
     protected static ?string $modelLabel = 'Депозит';
+
     protected static ?int $navigationSort = 2;
 
     /**
@@ -47,11 +56,12 @@ class DepositRequestResource extends Resource
                 Tables\Columns\TextColumn::make('bank_reference')->label('Bank ref')
                     ->placeholder('—')->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
-                    ->formatStateUsing(fn (string $state) => match ($state) { 'pending' => 'Чакащ', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен', default => $state })
+                    ->formatStateUsing(fn (string $state) => match ($state) {
+                        'pending' => 'Чакащ', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен', default => $state
+                    })
                     ->colors(['warning' => 'pending', 'success' => 'approved', 'danger' => 'rejected']),
                 Tables\Columns\TextColumn::make('admin_note')->label('Бележка')->limit(30)->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('created_at')->label('Дата')->date('d.m.Y H:i'),
-                Tables\Columns\TextColumn::make('expires_at')->label('Изтича')->date('d.m.Y')->toggleable(isToggledHiddenByDefault: true),
             ])
             ->defaultSort('created_at', 'desc')
             // Hide unfunded placeholder rows (amount=null, status=pending) by
@@ -71,7 +81,7 @@ class DepositRequestResource extends Resource
                 // Replaces the old free-text user-search flow that required
                 // admin to manually correlate sender name → registered user
                 // (audit C2 attack vector). Now the code does the matching.
-                \Filament\Actions\Action::make('credit_account')
+                Action::make('credit_account')
                     ->label('Захрани сметка')
                     ->icon('heroicon-o-plus-circle')
                     ->color('success')
@@ -102,15 +112,19 @@ class DepositRequestResource extends Resource
                                 if (! $deposit) {
                                     return '⚠️ Кодът не съществува или вече е обработен.';
                                 }
-                                if ($deposit->isExpired()) {
-                                    return "⚠️ Кодът на {$deposit->user->name} е изтекъл на " . $deposit->expires_at->format('d.m.Y') . '.';
+                                // Legacy pending codes of GDPR-deleted accounts
+                                // (wallet hard-deleted) — approve() will refuse;
+                                // warn upfront instead of a late error.
+                                if (! $deposit->user->wallet) {
+                                    return "⚠️ Акаунтът на {$deposit->user->name} е закрит — кодът не може да бъде кредитиран.";
                                 }
+
                                 return "✓ {$deposit->user->name} ({$deposit->user->email})";
                             }),
                         Forms\Components\TextInput::make('amount')
                             ->label('Сума по bank statement (€)')
                             ->numeric()->required()->minValue(1)->step(0.01)
-                            ->maxValue(\App\Support\Money::MAX),
+                            ->maxValue(Money::MAX),
                         Forms\Components\TextInput::make('bank_reference')
                             ->label('Bank reference (от statement-а)')
                             ->required()
@@ -120,28 +134,29 @@ class DepositRequestResource extends Resource
                     ->action(function (array $data) {
                         $code = strtoupper(trim($data['reference_code']));
 
-                        // Lock the row so two admins racing on the same code
-                        // can't both credit (one will fail the firstOrFail
-                        // inside DepositService::approve once the other
-                        // commits status=approved).
+                        // Non-locking resolve, for friendly errors only. The
+                        // authoritative guard is inside DepositService::approve:
+                        // row lock + status=pending recheck, with the wire
+                        // details stamped in the SAME transaction — a Filament
+                        // action closure runs in autocommit, so a lock taken
+                        // here would be released per-statement and serialize
+                        // nothing.
                         $deposit = DepositRequest::where('reference_code', $code)
                             ->where('status', 'pending')
-                            ->lockForUpdate()
                             ->first();
 
                         if (! $deposit) {
                             Notification::make()->title('Невалиден код')
                                 ->body("Код {$code} не съществува или вече е обработен.")
                                 ->danger()->send();
+
                             return;
                         }
 
-                        if ($deposit->isExpired()) {
-                            Notification::make()->title('Кодът е изтекъл')
-                                ->body("Кодът {$code} на {$deposit->user->name} е изтекъл. Помоли потребителя да генерира нов от страницата за депозит.")
-                                ->danger()->send();
-                            return;
-                        }
+                        // No expiry check: a pending code is valid until it's
+                        // consumed here — the wire it references is already
+                        // real money on the bank statement (client decision
+                        // 2026-07-17).
 
                         // Pre-flight bank_reference duplicate check — gives
                         // a friendly error before the DB UNIQUE constraint
@@ -153,36 +168,51 @@ class DepositRequestResource extends Resource
                             Notification::make()->title('Дублиран bank reference')
                                 ->body("Bank reference '{$data['bank_reference']}' вече е използван за друг депозит.")
                                 ->danger()->send();
+
                             return;
                         }
 
                         try {
                             // bcmath-safe ingress — never float-cast user input.
-                            $amount = \App\Support\Money::normalizePositive($data['amount']);
+                            $amount = Money::normalizePositive($data['amount']);
                         } catch (\InvalidArgumentException $e) {
                             Notification::make()->title('Невалидна сума')
                                 ->body($e->getMessage())->danger()->send();
+
                             return;
                         }
 
-                        $deposit->update([
-                            'amount' => $amount,
-                            'bank_reference' => $data['bank_reference'],
-                        ]);
-
                         try {
-                            app(DepositService::class)->approve($deposit->id, auth()->id());
+                            $deposit = app(DepositService::class)->approve(
+                                $deposit->id,
+                                auth()->id(),
+                                $amount,
+                                $data['bank_reference'],
+                            );
+                            // Report the CREDITED amount from the model, not
+                            // the raw form input — they must never diverge.
                             Notification::make()
-                                ->title("Сметката на {$deposit->user->name} е захранена с {$data['amount']} €")
+                                ->title("Сметката на {$deposit->user->name} е захранена с {$deposit->amount} €")
                                 ->success()->send();
+                        } catch (ModelNotFoundException) {
+                            // Another admin consumed the code between our
+                            // resolve above and the locked recheck.
+                            Notification::make()->title('Кодът вече е обработен')
+                                ->body("Код {$code} беше обработен от друг администратор междувременно. Провери списъка с депозити.")
+                                ->danger()->send();
                         } catch (\DomainException $e) {
                             Notification::make()->title('Грешка при credit')
                                 ->body($e->getMessage())->danger()->send();
+                        } catch (\Throwable $e) {
+                            Log::error('credit_account action failed', ['code' => $code, 'error' => $e->getMessage()]);
+                            Notification::make()->title('Грешка')
+                                ->body('Неочаквана грешка при захранване. Депозитът НЕ е кредитиран — провери лога.')
+                                ->danger()->send();
                         }
                     }),
             ])
             ->actions([
-                \Filament\Actions\Action::make('approve')->label('Одобри')->icon('heroicon-o-check-circle')->color('success')
+                Action::make('approve')->label('Одобри')->icon('heroicon-o-check-circle')->color('success')
                     ->visible(fn (DepositRequest $r) => $r->status === 'pending' && $r->amount !== null)
                     ->requiresConfirmation()
                     ->action(function (DepositRequest $r) {
@@ -193,7 +223,7 @@ class DepositRequestResource extends Resource
                             Notification::make()->title('Грешка')->body($e->getMessage())->danger()->send();
                         }
                     }),
-                \Filament\Actions\Action::make('reject')->label('Отхвърли')->icon('heroicon-o-x-circle')->color('danger')
+                Action::make('reject')->label('Отхвърли')->icon('heroicon-o-x-circle')->color('danger')
                     ->visible(fn (DepositRequest $r) => $r->status === 'pending')
                     ->form([Forms\Components\Textarea::make('admin_note')->label('Причина')->required()])
                     ->action(function (DepositRequest $r, array $data) {

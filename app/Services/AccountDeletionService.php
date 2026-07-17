@@ -81,6 +81,22 @@ class AccountDeletionService
                 'ip_address' => request()?->ip(),
             ]);
 
+            // Retire the unused deposit code placeholder(s) (amount=NULL —
+            // funded pending deposits were already blocked above). Deposit
+            // codes are non-expiring (2026-07-17) and the wallet row is
+            // deleted below, so an un-retired code would stay creditable
+            // forever and dead-end in the admin credit flow. Account closure
+            // is the processing event that consumes it; a wire that still
+            // arrives with this code is handled manually (refund flow —
+            // open product decision).
+            $user->depositRequests()
+                ->where('status', 'pending')
+                ->whereNull('amount')
+                ->update([
+                    'status' => 'rejected',
+                    'admin_note' => 'Автоматично отхвърлен: акаунтът е закрит (GDPR изтриване).',
+                ]);
+
             // Anonymize PII — replace with non-identifying placeholders
             $user->forceFill([
                 'name' => "Изтрит потребител #{$userId}",

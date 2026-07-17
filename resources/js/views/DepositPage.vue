@@ -149,8 +149,8 @@ onMounted(() => load())
                 </button>
               </div>
             </div>
-            <div v-if="depositInfo.expires_at" class="text-xs text-gray-400 pt-1 text-right">
-              Кодът важи до {{ new Date(depositInfo.expires_at).toLocaleDateString('bg-BG') }}
+            <div class="text-xs text-gray-400 pt-1 text-right">
+              Кодът е личен и остава валиден, докато депозитът бъде обработен.
             </div>
           </div>
         </div>

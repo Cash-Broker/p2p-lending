@@ -11,14 +11,7 @@ use Illuminate\Support\Str;
 class DepositRequest extends Model
 {
     /** @use HasFactory<DepositRequestFactory> */
-    use HasFactory, \App\Traits\Auditable;
-
-    /**
-     * Code lifetime in days. Picked generously because bank wires from
-     * different countries can take 3–5 business days; 30 days gives the
-     * user breathing room while still rotating stale codes.
-     */
-    public const CODE_LIFETIME_DAYS = 30;
+    use \App\Traits\Auditable, HasFactory;
 
     protected $fillable = [
         'user_id',
@@ -44,16 +37,19 @@ class DepositRequest extends Model
 
     protected static function booted(): void
     {
-        // Auto-generate code + expiry on first save. Both are user-facing
-        // contract: code = what user pastes in bank reference; expires_at
-        // = how long that code is honoured. Setting both here keeps every
-        // creation path (controller, service, factory) consistent.
+        // Auto-generate the code on first save — it's the user-facing
+        // contract (what the user pastes in the bank wire reference).
+        // Generating it here keeps every creation path (controller,
+        // service, factory) consistent.
+        //
+        // No expires_at: a pending code stays valid until admin
+        // approves/rejects a deposit against it. The user may have wired
+        // money days ago — a code that dies on a timer strands that
+        // transfer (client decision 2026-07-17). The column survives for
+        // historical rows only.
         static::creating(function (DepositRequest $request) {
             if (empty($request->reference_code)) {
-                $request->reference_code = 'DEP-' . strtoupper(Str::random(8));
-            }
-            if (empty($request->expires_at)) {
-                $request->expires_at = now()->addDays(self::CODE_LIFETIME_DAYS);
+                $request->reference_code = 'DEP-'.strtoupper(Str::random(8));
             }
         });
     }
@@ -61,14 +57,5 @@ class DepositRequest extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
-    }
-
-    /**
-     * NULL `expires_at` is a legacy row from before the refactor —
-     * treated as non-expiring to preserve old behaviour.
-     */
-    public function isExpired(): bool
-    {
-        return $this->expires_at !== null && $this->expires_at->isPast();
     }
 }

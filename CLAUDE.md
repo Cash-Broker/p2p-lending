@@ -24,6 +24,9 @@ Virtual P2P / marketplace lending (Mintos/Bondora model), brand **Vamaasset** (Ð
 - **All money stays inside the investor's platform profile** (virtual ledger). Deposits arrive
   by bank wire (admin confirms against a `DEP-XXXXXXXX` reference code); withdrawals are wired
   out by the admin externally. No PSP in the payout flow yet (ConnectPay offer pending).
+  Deposit codes are **non-expiring** (client decision 2026-07-17, reverses audit M1 rotation):
+  a pending code is retired ONLY by admin approve/reject; issuance is serialized per user
+  (users-row `lockForUpdate` in `getOrCreateActiveCode`) + deterministic `latest('id')` pick.
 - **Users:** Investor (individual or legal entity) and Admin (Filament). **Borrower is not a
   user** â€” data only: full `Borrower` (encrypted PII) + `BorrowerAnonymizedProfile` for investors.
 - Investor picks one of **3 offers per loan** (payout structures at different rates); repayments
