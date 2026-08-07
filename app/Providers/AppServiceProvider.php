@@ -8,6 +8,7 @@ use App\Listeners\TelegramFailedLoginAlert;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Mail\Markdown;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
@@ -21,6 +22,17 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Markdown-mail injection guard (2026-08-07 security review): Blade
+        // {{ }} escaping alone is NOT enough in markdown mails — the escaped
+        // output is re-parsed as CommonMark, so a user-controlled value like
+        // "[Преглед](https://evil)" becomes a LIVE link in an admin's inbox.
+        // Secured encoding escapes [ < > in echoed values before the
+        // CommonMark pass, neutralizing link/format injection in all
+        // markdown mails at once. (Newline-based block injection is closed
+        // separately at ingress — the users.name regex rejects control
+        // characters.) Pinned by AdminActionItemAlertsTest.
+        Markdown::withSecuredEncoding();
+
         // Financial platform password policy — applies globally to Password::defaults()
         // which is used in RegisterRequest, reset password, and any future password fields.
         // Requirements: 8+ chars, mixed case, at least 1 number, at least 1 symbol.
@@ -53,7 +65,8 @@ class AppServiceProvider extends ServiceProvider
         // stub in routes/web.php.
         ResetPassword::createUrlUsing(function ($notifiable, string $token) {
             $email = urlencode($notifiable->getEmailForVerification());
-            return config('app.url') . "/reset-password/{$token}?email={$email}";
+
+            return config('app.url')."/reset-password/{$token}?email={$email}";
         });
     }
 }

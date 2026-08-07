@@ -254,7 +254,13 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
   AccountDeletionService reset); the review decisions (in_review/approved/rejected) come only
   from admin actions (`UserResource::kycStatusActions()` — transactional with from-state
   recheck). KYC submission notifies all admins via Filament DB-notification inbox (immediate
-  insert, deliberately not queued).
+  insert, deliberately not queued) **+ event-driven EMAIL** (`KycSubmittedAdminNotification`,
+  queued, mail-only; fires only on transition INTO the review queue — re-upload while already
+  submitted/in_review refreshes docs + bell without re-emailing). Withdrawal creation mirrors
+  the same pattern (`WithdrawalController::store` → sync bell + queued
+  `WithdrawalRequestedAdminNotification`, no IBAN in the email). Deposits have NO event alert
+  (wire lands at the bank, off-platform — nothing to hook); buyback has its own 03:45 cron
+  email. All event alerts added 2026-08-07 ("когато има какво, без час").
 - Upload `POST /api/profile/kyc` (throttle 6/1 + `consent.current`): `document_front`,
   `document_back`, `selfie` (plain upload — **live selfie capture was removed 2026-07-08**,
   client decision), `biometric_consent` (GDPR Art. 9 → ConsentRecord). Accepts
@@ -281,7 +287,7 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 | 03:30                                                                                                 | `loans:process-late`              | F1: late detection + recovery + auto-repay; flags `--dry-run --loan= --detail --force`; kill switch `late_check_enabled` |
 | 03:45                                                                                                 | `loans:detect-buyback-eligible`   | F2; same flags; kill switch `buyback_check_enabled`; must run after F1                                                   |
 | 04:00                                                                                                 | `loans:process-payouts`           | offer payout engine, automatic loans only                                                                                |
-| 09:00                                                                                                 | `telegram:digest`                 | BG morning digest (INFO tier, silent) + admin ACTION-ITEMS EMAIL (`AdminActionItemsNotification`, queued, only when KYC/deposits/withdrawals/buyback > 0, only to role=admin; independent of Telegram config) |
+| 09:00                                                                                                 | `telegram:digest`                 | BG morning digest (INFO tier, silent) + admin ACTION-ITEMS EMAIL (`AdminActionItemsNotification`, queued, only when KYC/deposits/withdrawals/buyback > 0, only to role=admin; independent of Telegram config). Since 2026-08-07 the digest email is a REMINDER backstop — the primary admin alerting is event-driven (see KYC section) |
 
 - Health: `GET /api/health/scheduler` (public, 60/min) — F1 flat fields + nested `buyback`;
   worst-of excluding disabled; 503 iff critical (>48h). **Does NOT monitor the payouts cron.**

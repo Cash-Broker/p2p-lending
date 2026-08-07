@@ -14,8 +14,19 @@ class UpdateProfileRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:255'],
+            // No Unicode control characters — mirrors RegisterRequest; the
+            // name is rendered in admin-facing emails/notifications where
+            // newlines would enable markdown block injection (2026-08-07
+            // security review).
+            'name' => ['required', 'string', 'max:255', 'regex:/^[^\p{C}]+$/u'],
             'phone' => ['nullable', 'string', 'max:20'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.regex' => 'Името съдържа непозволени знаци.',
         ];
     }
 }

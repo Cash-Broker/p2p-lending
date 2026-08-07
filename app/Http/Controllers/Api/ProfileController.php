@@ -10,6 +10,7 @@ use App\Http\Resources\UserResource;
 use App\Models\ConsentRecord;
 use App\Models\SavedIban;
 use App\Models\User;
+use App\Notifications\KycSubmittedAdminNotification;
 use App\Rules\ValidIban;
 use App\Services\AccountDeletionService;
 use App\Services\KycImageNormalizer;
@@ -17,8 +18,8 @@ use Filament\Actions\Action as FilamentAction;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -176,6 +177,23 @@ class ProfileController extends Controller
         }
 
         try {
+            // Fresh read UNDER the lock (2026-08-07 review): the model was
+            // hydrated at request start and the (multi-second) HEIC
+            // conversion runs before the lock — an admin decision or an
+            // earlier serialized submission may have committed since. The
+            // stale snapshot would corrupt BOTH the previous-files capture
+            // (orphaned documents) and the email transition guard below
+            // (duplicate or suppressed admin email).
+            $user->refresh();
+
+            // Re-check after the refresh — an approval that landed during
+            // the conversion window must not be silently knocked back to
+            // 'submitted'. (No files are stored yet, so returning here
+            // orphans nothing.)
+            if ($user->kyc_status === 'approved') {
+                return response()->json(['message' => 'KYC already approved.'], 422);
+            }
+
             // A resubmission (e.g. after rejection) overwrites the path columns —
             // capture the previous files so we can delete them and not orphan them
             // on disk once the new ones are persisted.
@@ -199,52 +217,100 @@ class ProfileController extends Controller
             $backPath = $storeKycFile($prepared['document_back']);
             $selfiePath = $storeKycFile($prepared['selfie']);
 
-            $user->forceFill([
-                'kyc_status' => 'submitted',
-                'kyc_selfie_path' => $selfiePath,
-                'kyc_document_front_path' => $frontPath,
-                'kyc_document_back_path' => $backPath,
-            ])->save();
+            // Captured BEFORE the forceFill below — decides whether this
+            // submission enters the review queue anew (email trigger) or
+            // just refreshes documents already awaiting review.
+            $previousKycStatus = $user->kyc_status;
 
+            // Status flip + consent evidence commit or roll back TOGETHER:
+            // if the consent INSERT fails, kyc_status must NOT stay
+            // 'submitted' — a durable flip without notifications would
+            // suppress the admin email forever for this cycle (the retry
+            // would read previous status 'submitted' and skip it).
+            DB::transaction(function () use ($user, $request, $frontPath, $backPath, $selfiePath) {
+                $user->forceFill([
+                    'kyc_status' => 'submitted',
+                    'kyc_selfie_path' => $selfiePath,
+                    'kyc_document_front_path' => $frontPath,
+                    'kyc_document_back_path' => $backPath,
+                ])->save();
+
+                // Evidence of explicit Art. 9(2)(a) consent for the biometric
+                // selfie, captured at the moment of processing.
+                $user->consentRecords()->create([
+                    'type' => ConsentRecord::TYPE_BIOMETRIC,
+                    'version' => ConsentRecord::CURRENT_BIOMETRIC_VERSION,
+                    'ip_address' => $request->ip(),
+                    'user_agent' => (string) $request->userAgent(),
+                    'accepted_at' => now(),
+                ]);
+            });
+
+            // Old files removed only AFTER the commit — a rollback must not
+            // find the still-referenced previous documents deleted.
             if ($previousFiles !== []) {
                 Storage::disk('local')->delete($previousFiles);
             }
-
-            // Evidence of explicit Art. 9(2)(a) consent for the biometric selfie,
-            // captured at the moment of processing.
-            $user->consentRecords()->create([
-                'type' => ConsentRecord::TYPE_BIOMETRIC,
-                'version' => ConsentRecord::CURRENT_BIOMETRIC_VERSION,
-                'ip_address' => $request->ip(),
-                'user_agent' => (string) $request->userAgent(),
-                'accepted_at' => now(),
-            ]);
         } finally {
             $lock->release();
         }
 
         // In-panel inbox alert for the reviewers (bell icon in Filament).
-        // Best-effort: a notification hiccup must never fail the submission.
+        // Best-effort, isolated PER DISPATCH: one failed send must neither
+        // fail the submission nor suppress the remaining bells/emails.
+        $safeNotify = function (User $admin, $notification, bool $now = false): void {
+            try {
+                $now ? $admin->notifyNow($notification) : $admin->notify($notification);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        };
+
+        $viewUrl = url('/admin/users/'.$user->id);
         try {
-            $viewUrl = url('/admin/users/'.$user->id);
-            User::where('role', 'admin')->get()->each(function (User $admin) use ($user, $viewUrl) {
-                // notify(->toDatabase()) inserts the row immediately —
-                // sendToDatabase() would go through the queue and depend on a
-                // worker being alive for the reviewer to see anything.
-                $admin->notify(
-                    FilamentNotification::make()
-                        ->title('Нова KYC заявка')
-                        ->body("{$user->name} изпрати документи за верификация.")
-                        ->icon('heroicon-o-identification')
-                        ->info()
-                        ->actions([
-                            FilamentAction::make('view')->label('Преглед')->url($viewUrl)->markAsRead(),
-                        ])
-                        ->toDatabase(),
-                );
-            });
+            $admins = User::where('role', 'admin')->get();
         } catch (\Throwable $e) {
             report($e);
+            $admins = collect();
+        }
+        foreach ($admins as $admin) {
+            // notifyNow: Filament v5's DatabaseNotification implements
+            // ShouldQueue, so a plain notify() would ride the queue and
+            // panel visibility would depend on a worker being alive —
+            // notifyNow() bypasses ShouldQueue and inserts the row inline,
+            // restoring the documented deliberate behavior. The name is
+            // e()-escaped: Filament renders bell bodies as sanitized HTML
+            // (not escaped text), so a raw name could smuggle a live link
+            // into the admin panel.
+            $safeNotify($admin, FilamentNotification::make()
+                ->title('Нова KYC заявка')
+                ->body(e($user->name).' изпрати документи за верификация.')
+                ->icon('heroicon-o-identification')
+                ->info()
+                ->actions([
+                    FilamentAction::make('view')->label('Преглед')->url($viewUrl)->markAsRead(),
+                ])
+                ->toDatabase(), now: true);
+        }
+
+        // EMAIL to the reviewers — event-driven (client request 2026-08-07:
+        // "когато има какво, без час"), but only when the submission enters
+        // the review queue anew: in practice pending or rejected → submitted
+        // (approved users are 422-blocked earlier in this method; the guard
+        // still handles 'approved' correctly should that policy ever be
+        // relaxed). A re-upload while already awaiting review refreshes the
+        // documents and the bell above without re-paging the admin's inbox.
+        if (! in_array($previousKycStatus, ['submitted', 'in_review'], true)) {
+            $submittedAt = now();
+            foreach ($admins as $admin) {
+                $safeNotify($admin, new KycSubmittedAdminNotification(
+                    applicantId: $user->id,
+                    applicantName: $user->name,
+                    applicantEmail: $user->email,
+                    accountType: $user->account_type,
+                    submittedAt: $submittedAt,
+                ));
+            }
         }
 
         return response()->json(['message' => 'KYC document submitted successfully.']);

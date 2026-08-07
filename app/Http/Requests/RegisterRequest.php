@@ -39,7 +39,7 @@ class RegisterRequest extends FormRequest
             && ! $this->filled('name')
         ) {
             $first = trim((string) $this->input('first_name', ''));
-            $last  = trim((string) $this->input('last_name', ''));
+            $last = trim((string) $this->input('last_name', ''));
             $combined = trim("{$first} {$last}");
             if ($combined !== '') {
                 $this->merge(['name' => $combined]);
@@ -56,8 +56,12 @@ class RegisterRequest extends FormRequest
                 User::TYPE_INDIVIDUAL,
                 User::TYPE_LEGAL_ENTITY,
             ])],
-            'name'     => ['required', 'string', 'max:255'],
-            'email'    => ['required', 'string', 'email', 'max:255', 'unique:users'],
+            // No Unicode control characters (\n \r \0, zero-width, bidi):
+            // a legal name never contains them, and the name is rendered in
+            // admin-facing emails/notifications where newlines would enable
+            // markdown block injection (2026-08-07 security review).
+            'name' => ['required', 'string', 'max:255', 'regex:/^[^\p{C}]+$/u'],
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users'],
             'password' => ['required', 'confirmed', Password::defaults()],
 
             'terms_accepted' => ['required', 'accepted'],
@@ -72,7 +76,7 @@ class RegisterRequest extends FormRequest
             // `name` by prepareForValidation above. We still validate the
             // raw inputs so empty strings produce clear field-level errors.
             'first_name' => ['required', 'string', 'max:120'],
-            'last_name'  => ['required', 'string', 'max:120'],
+            'last_name' => ['required', 'string', 'max:120'],
 
             // Phone — saved on users.phone so the contact channel is on the
             // user record, not the profile. AML "company_phone" stays for
@@ -83,25 +87,27 @@ class RegisterRequest extends FormRequest
             // registration. Everything else (address, AML declarations, UBO,
             // representative ID) is deferred to a post-registration KYC flow.
             'legal_name' => ['required', 'string', 'max:255'],
-            'eik'        => ['required', 'string', new ValidEik],
+            'eik' => ['required', 'string', new ValidEik],
         ]);
     }
 
     public function messages(): array
     {
         return [
+            'name.regex' => 'Името съдържа непозволени знаци.',
+
             'terms_accepted.required' => 'Трябва да приемете условията за ползване.',
             'terms_accepted.accepted' => 'Трябва да приемете условията за ползване.',
 
             'account_type.required' => 'Изберете тип акаунт (физическо или юридическо лице).',
-            'account_type.in'       => 'Невалиден тип акаунт.',
+            'account_type.in' => 'Невалиден тип акаунт.',
 
             'first_name.required' => 'Името на контактното лице е задължително.',
-            'last_name.required'  => 'Фамилията на контактното лице е задължителна.',
-            'phone.required'      => 'Телефонът е задължителен.',
+            'last_name.required' => 'Фамилията на контактното лице е задължителна.',
+            'phone.required' => 'Телефонът е задължителен.',
 
             'legal_name.required' => 'Името на фирмата е задължително.',
-            'eik.required'        => 'ЕИК е задължителен.',
+            'eik.required' => 'ЕИК е задължителен.',
         ];
     }
 }
