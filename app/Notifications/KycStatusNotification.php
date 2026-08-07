@@ -25,7 +25,7 @@ class KycStatusNotification extends Notification
                 ->greeting("Здравейте, {$notifiable->name}!")
                 ->line('Вашата KYC верификация е одобрена.')
                 ->line('Вече имате пълен достъп до платформата — можете да депозирате, инвестирате и теглите средства.')
-                ->action('Започни да инвестираш', config('app.url') . '/invest')
+                ->action('Започни да инвестираш', config('app.url').'/invest')
                 ->salutation('Поздрави, екипът на Vamaasset');
         }
 
@@ -34,12 +34,12 @@ class KycStatusNotification extends Notification
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line('Вашата KYC верификация е отхвърлена.')
             ->line('Моля, качете нови снимки на личната си карта — и от двете страни (отпред и отзад) — с по-добро качество.')
-            ->action('Качи нов документ', config('app.url') . '/profile')
+            ->action('Качи нов документ', config('app.url').'/profile')
             ->salutation('Поздрави, екипът на Vamaasset');
     }
 
     public function toArray(object $notifiable): array
     {
-        return ['type' => 'kyc_' . $this->status];
+        return ['type' => 'kyc_'.$this->status];
     }
 }

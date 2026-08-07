@@ -24,7 +24,7 @@ class DepositApprovedNotification extends Notification
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line("Вашият депозит от {$this->amount} € (ref: {$this->referenceCode}) е одобрен.")
             ->line('Средствата са налични в акаунта ви.')
-            ->action('Виж баланс', config('app.url') . '/dashboard')
+            ->action('Виж баланс', config('app.url').'/dashboard')
             ->salutation('Поздрави, екипът на Vamaasset');
     }
 

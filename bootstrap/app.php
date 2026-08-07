@@ -60,12 +60,14 @@ return Application::configure(basePath: dirname(__DIR__))
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/loans-process-payouts.log'));
 
-        // Telegram daily digest — INFO tier, silent (no push). Sends a brief
-        // morning summary to the admin: new registrations, KYC pending,
-        // deposits awaiting confirmation, withdrawals awaiting processing,
-        // buyback queue size, late loan count.
+        // Daily morning digest — Telegram summary (INFO tier, silent) of
+        // platform state: new registrations, KYC pending, deposits awaiting
+        // confirmation, withdrawals awaiting processing, buyback queue size,
+        // late loan count. Additionally EMAILS admin accounts when at least
+        // one actionable item is pending (no email on all-clear mornings).
         // Runs at 09:00 in app timezone (Europe/Sofia per .env). If
-        // TELEGRAM_BOT_TOKEN is not configured, the command is a no-op.
+        // TELEGRAM_BOT_TOKEN is not configured only the Telegram part is
+        // skipped — the admin email still goes out.
         $schedule->command('telegram:digest')
             ->dailyAt('09:00')
             ->withoutOverlapping(15)

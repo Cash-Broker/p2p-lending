@@ -44,9 +44,10 @@ use UnitEnum;
  * Row actions:
  *   - Execute: confirmation modal shows FRESH calculated amount (not
  *     cached at-detection), calls BuybackExecutionService::execute().
- *     Error states surface as danger toast.
- *     (TODO Step 6: dispatch LoanBoughtBackNotification per investor —
- *      currently only the Filament admin toast fires.)
+ *     Error states surface as danger toast. After the transaction
+ *     commits, dispatches LoanBoughtBackNotification to each investor
+ *     (queued, mail+database; per-send try/catch — a failed send logs
+ *     a warning and never rolls back the money movement).
  *   - Dismiss: form with required reason (≥5 chars), stamps timestamp +
  *     admin id + reason on the loan.
  *   - Reactivate: clears dismissed_at/by/reason; loan goes back into
@@ -56,10 +57,14 @@ class BuybackQueue extends Page implements Tables\Contracts\HasTable
 {
     use Tables\Concerns\InteractsWithTable;
 
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-banknotes';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-banknotes';
+
     protected static ?string $navigationLabel = 'Buyback Queue';
-    protected static string | UnitEnum | null $navigationGroup = 'Финанси';
+
+    protected static string|UnitEnum|null $navigationGroup = 'Финанси';
+
     protected static ?int $navigationSort = 5;
+
     protected static ?string $title = 'Buyback Queue';
 
     protected string $view = 'filament.pages.buyback-queue';
@@ -136,10 +141,11 @@ class BuybackQueue extends Page implements Tables\Contracts\HasTable
                             ->where('event_type', LoanEvent::TYPE_BUYBACK_TRIGGERED)
                             ->latest('id')
                             ->first();
+
                         return $event?->metadata['calculated_buyback_amount_at_detection'] ?? null;
                     })
                     ->formatStateUsing(fn (?string $state) => $state
-                        ? number_format((float) $state, 2, ',', ' ') . ' €'
+                        ? number_format((float) $state, 2, ',', ' ').' €'
                         : '—'),
 
                 Tables\Columns\TextColumn::make('state')
@@ -179,13 +185,14 @@ class BuybackQueue extends Page implements Tables\Contracts\HasTable
                     ->modalDescription(function (Loan $record) {
                         try {
                             $calc = app(BuybackCalculationService::class)->calculateTotal($record);
+
                             return sprintf(
                                 'Ще разпределени %s € (главница: %s €, лихва: %s €; покритие: %s) към инвеститорите на кредит #%d. Действието е необратимо.',
                                 $calc->total, $calc->principal, $calc->interest,
                                 $calc->coverageType, $record->id,
                             );
                         } catch (\Throwable $e) {
-                            return 'Не може да изчисли buyback сумата: ' . $e->getMessage();
+                            return 'Не може да изчисли buyback сумата: '.$e->getMessage();
                         }
                     })
                     ->modalSubmitActionLabel('Изпълни buyback')
@@ -312,6 +319,7 @@ class BuybackQueue extends Page implements Tables\Contracts\HasTable
             ->whereNull('buyback_dismissed_at')
             ->whereNull('bought_back_at')
             ->count();
+
         return $count > 0 ? (string) $count : null;
     }
 

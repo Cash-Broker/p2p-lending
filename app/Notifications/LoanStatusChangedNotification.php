@@ -31,7 +31,7 @@ class LoanStatusChangedNotification extends Notification
             ->subject("Кредит #{$this->loanId} — статус: {$label} — Vamaasset")
             ->greeting("Здравейте, {$notifiable->name}!")
             ->line("Статусът на кредит #{$this->loanId}, в който имате инвестиция, е променен на \"{$label}\".")
-            ->action('Виж портфолио', config('app.url') . '/portfolio')
+            ->action('Виж портфолио', config('app.url').'/portfolio')
             ->salutation('Поздрави, екипът на Vamaasset');
     }
 

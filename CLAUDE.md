@@ -281,7 +281,7 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 | 03:30                                                                                                 | `loans:process-late`              | F1: late detection + recovery + auto-repay; flags `--dry-run --loan= --detail --force`; kill switch `late_check_enabled` |
 | 03:45                                                                                                 | `loans:detect-buyback-eligible`   | F2; same flags; kill switch `buyback_check_enabled`; must run after F1                                                   |
 | 04:00                                                                                                 | `loans:process-payouts`           | offer payout engine, automatic loans only                                                                                |
-| 09:00                                                                                                 | `telegram:digest`                 | BG morning digest (INFO tier, silent)                                                                                    |
+| 09:00                                                                                                 | `telegram:digest`                 | BG morning digest (INFO tier, silent) + admin ACTION-ITEMS EMAIL (`AdminActionItemsNotification`, queued, only when KYC/deposits/withdrawals/buyback > 0, only to role=admin; independent of Telegram config) |
 
 - Health: `GET /api/health/scheduler` (public, 60/min) — F1 flat fields + nested `buyback`;
   worst-of excluding disabled; 503 iff critical (>48h). **Does NOT monitor the payouts cron.**

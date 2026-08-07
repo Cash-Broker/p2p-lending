@@ -38,9 +38,19 @@ use Illuminate\Notifications\Notification;
  *   match-and-skip rule applies. There is no separate calendar 24-hour
  *   cooldown — by-late-period is the cleaner contract.
  *
- * The check runs inside via() so even when the queue worker picks up
- * the job we re-evaluate just before delivery (in case a duplicate was
- * queued before the first one landed in the inbox).
+ * Honesty note (2026-08-07 correction — the original wording claimed
+ * via() re-evaluates at worker pickup, which is false): for a
+ * ShouldQueue notification Laravel resolves via() ONCE at dispatch time
+ * and bakes the channel list into per-channel queue jobs — via() is
+ * never re-consulted on the worker. The check therefore suppresses a
+ * REPEATED DISPATCH whose earlier row already landed (e.g. a --force
+ * cron re-run within the same late period), which is the guarantee the
+ * spec needs. It CANNOT catch two dispatches racing before the first
+ * database row lands, nor a retried MAIL job re-sending after SMTP
+ * handoff (accepted: at-least-once). Within a SINGLE dispatch duplicate
+ * database rows cannot occur — the row id is the notification UUID
+ * fixed at dispatch, so a retried insert hits the primary key. Racing
+ * dispatches mint distinct UUIDs and could each land a row.
  *
  * Constructor parameters:
  *   $loan                       — the loan that went late
@@ -81,6 +91,7 @@ class LoanWentLateNotification extends Notification implements ShouldQueue
         if ($this->wasRecentlyNotified($notifiable)) {
             return [];
         }
+
         return ['mail', 'database'];
     }
 
@@ -130,7 +141,7 @@ class LoanWentLateNotification extends Notification implements ShouldQueue
                 'investmentAmount' => $this->investorTotalAmount,
                 'daysOverdue' => $this->daysLateAtTransition,
                 'outstandingPrincipal' => $this->investorOutstandingPrincipal,
-                'portfolioUrl' => config('app.url') . '/portfolio',
+                'portfolioUrl' => config('app.url').'/portfolio',
                 'becameLateAt' => $this->becameLateAt,
             ]);
     }

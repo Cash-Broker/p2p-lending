@@ -45,11 +45,11 @@ class EarlyRepaymentReceivedNotification extends Notification implements ShouldQ
     use Queueable;
 
     /**
-     * @param  Loan                 $loan                  the loan that was early-repaid
-     * @param  CarbonInterface      $executedAt            loan.early_repaid_at snapshot
-     * @param  string               $investorPrincipal     this investor's share of principal (bcmath scale 2)
-     * @param  string               $investorInterest      this investor's share of interest (bcmath scale 2)
-     * @param  string               $totalReceived         principal + interest (bcmath scale 2)
+     * @param  Loan  $loan  the loan that was early-repaid
+     * @param  CarbonInterface  $executedAt  loan.early_repaid_at snapshot
+     * @param  string  $investorPrincipal  this investor's share of principal (bcmath scale 2)
+     * @param  string  $investorInterest  this investor's share of interest (bcmath scale 2)
+     * @param  string  $totalReceived  principal + interest (bcmath scale 2)
      */
     public function __construct(
         public Loan $loan,
@@ -62,12 +62,20 @@ class EarlyRepaymentReceivedNotification extends Notification implements ShouldQ
     /**
      * Channels: skip entirely if already notified for THIS (user, loan,
      * early_repaid_at). Returning [] is Laravel's documented opt-out.
+     *
+     * Runs at DISPATCH time only (ShouldQueue: Laravel bakes the channel
+     * list into per-channel jobs; via() is never re-consulted on the
+     * worker). Guards repeated dispatches whose earlier row landed — NOT
+     * worker retries of the mail job (accepted: at-least-once; a retried
+     * insert of the SAME dispatch is blocked by the UUID primary key,
+     * though racing dispatches mint distinct UUIDs).
      */
     public function via(object $notifiable): array
     {
         if ($this->wasRecentlyNotified($notifiable)) {
             return [];
         }
+
         return ['mail', 'database'];
     }
 
@@ -104,14 +112,14 @@ class EarlyRepaymentReceivedNotification extends Notification implements ShouldQ
         return (new MailMessage)
             ->subject("Инвестиция #{$this->loan->id} е предсрочно погасена — Vamaasset")
             ->markdown('emails.early-repayment-received', [
-                'name'              => $notifiable->name,
-                'loanId'            => $this->loan->id,
-                'originatorName'    => $this->loan->originator?->name ?? '—',
-                'principal'         => $this->investorPrincipal,
-                'interest'          => $this->investorInterest,
-                'total'             => $this->totalReceived,
-                'executedAt'        => $this->executedAt,
-                'portfolioUrl'      => config('app.url') . '/portfolio',
+                'name' => $notifiable->name,
+                'loanId' => $this->loan->id,
+                'originatorName' => $this->loan->originator?->name ?? '—',
+                'principal' => $this->investorPrincipal,
+                'interest' => $this->investorInterest,
+                'total' => $this->totalReceived,
+                'executedAt' => $this->executedAt,
+                'portfolioUrl' => config('app.url').'/portfolio',
             ]);
     }
 

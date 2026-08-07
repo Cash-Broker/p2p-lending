@@ -32,7 +32,7 @@ class RepaymentReceivedNotification extends Notification
             ->line("Главница: {$this->principalAmount} €")
             ->line("Лихва: {$this->interestAmount} €")
             ->line("Общо: {$total} €")
-            ->action('Виж портфолио', config('app.url') . '/portfolio')
+            ->action('Виж портфолио', config('app.url').'/portfolio')
             ->salutation('Поздрави, екипът на Vamaasset');
     }
 
