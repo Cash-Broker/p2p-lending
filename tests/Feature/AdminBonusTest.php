@@ -2,12 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Filament\Resources\DepositRequestResource\Pages\ListDepositRequests;
 use App\Filament\Resources\UserResource\Pages\ViewUser;
+use App\Models\DepositRequest;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Notifications\BonusCreditedNotification;
 use App\Notifications\BonusGrantedAdminNotification;
 use App\Services\WalletService;
+use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -171,6 +174,84 @@ class AdminBonusTest extends TestCase
 
         // Default-deny reconciliation: an unmapped type would exit non-zero.
         $this->assertSame(0, Artisan::call('ledger:reconcile'));
+    }
+
+    public function test_bonus_granted_from_deposits_page_by_user_code(): void
+    {
+        Notification::fake();
+        $this->actingAsAdmin();
+        $user = $this->investor('10.00');
+        $deposit = DepositRequest::factory()->create([
+            'user_id' => $user->id,
+            'amount' => null,
+            'status' => 'pending',
+        ]);
+
+        Livewire::test(ListDepositRequests::class)
+            ->callAction(TestAction::make('grant_bonus')->table(), data: [
+                'reference_code' => $deposit->reference_code,
+                'amount' => '200',
+                'reason' => 'Доведен клиент',
+            ])
+            ->assertHasNoActionErrors();
+
+        $this->assertSame('210.00', $user->wallet->fresh()->available);
+        $this->assertDatabaseHas('transactions', [
+            'user_id' => $user->id,
+            'type' => Transaction::TYPE_BONUS,
+            'amount' => '200.00',
+            'description' => 'Бонус: Доведен клиент',
+        ]);
+
+        // The DEP code identifies the user, nothing more — the deposit
+        // request must be untouched (retired only by approve/reject,
+        // client decision 2026-07-17).
+        $deposit->refresh();
+        $this->assertSame('pending', $deposit->status);
+        $this->assertNull($deposit->amount);
+
+        Notification::assertSentTo($user, BonusCreditedNotification::class);
+    }
+
+    public function test_deposits_page_bonus_works_with_a_historical_code_too(): void
+    {
+        Notification::fake();
+        $this->actingAsAdmin();
+        $user = $this->investor();
+        // Already-approved code — no longer creditable as a deposit, but
+        // still unambiguously identifies its owner for a bonus.
+        $deposit = DepositRequest::factory()->create([
+            'user_id' => $user->id,
+            'amount' => '500.00',
+            'status' => 'approved',
+        ]);
+
+        Livewire::test(ListDepositRequests::class)
+            ->callAction(TestAction::make('grant_bonus')->table(), data: [
+                'reference_code' => $deposit->reference_code,
+                'amount' => '100',
+                'reason' => 'Кампания',
+            ])
+            ->assertHasNoActionErrors();
+
+        $this->assertSame('100.00', $user->wallet->fresh()->available);
+    }
+
+    public function test_deposits_page_bonus_rejects_unknown_code(): void
+    {
+        $this->actingAsAdmin();
+        $user = $this->investor();
+
+        Livewire::test(ListDepositRequests::class)
+            ->callAction(TestAction::make('grant_bonus')->table(), data: [
+                'reference_code' => 'DEP-NOSUCH01',
+                'amount' => '100',
+                'reason' => 'Тест',
+            ])
+            ->assertHasNoActionErrors();
+
+        $this->assertSame('0.00', $user->wallet->fresh()->available);
+        $this->assertSame(0, Transaction::count());
     }
 
     public function test_investor_sees_bonus_in_transactions_and_can_filter_it(): void

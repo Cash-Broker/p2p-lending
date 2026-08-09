@@ -121,9 +121,13 @@ Decision rationale now lives in git history + `docs/BIZNES-DOKUMENTACIA.md`.
 - **14 transaction types** (`Transaction::TYPES`): deposit, withdrawal, investment,
   repayment_principal/interest, buyback_principal/interest, early_repayment_principal/interest,
   interest_accrued, interest_released, interest_accrual_reversed, fee, **bonus** (2026-08-09:
-  admin promo credit «Начисли бонус» on ViewUser header, `WalletService::bonus()` → available+;
-  NO bank wire behind it — bank-statement reconciliation must EXCLUDE `SUM(type='bonus')`,
-  mirror of the fee note; investor sees «Бонус» + mail/bell notification).
+  admin promo credit «Начисли бонус» — primary entry: Депозити header action next to «Захрани
+  сметка», user identified by ANY of their DEP codes (identification only, code NOT consumed);
+  secondary: ViewUser header (no code needed). Shared guts `UserResource::grantBonus()` →
+  `WalletService::bonus()` → available+; 2-min identical-grant replay guard; unique ref
+  `bonus:admin:{id}:{uuid}`; reason ≤248 chars (255 − «Бонус: » prefix); NO bank wire behind
+  it — bank-statement reconciliation must EXCLUDE `SUM(type='bonus')`, mirror of the fee note;
+  investor gets «Бонус» tx + mail/bell; OTHER admins get a queued email per grant).
   `transactions`, `loan_events`, `audit_logs` are **immutable at the DB level** (MySQL triggers
   `SIGNAL SQLSTATE '45000'`); LoanEvent additionally throws from app-level `update()`/`delete()`
   (Transaction/AuditLog just set `UPDATED_AT = null` — the triggers are the guard).

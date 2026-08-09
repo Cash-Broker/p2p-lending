@@ -168,90 +168,99 @@ class UserResource extends Resource
                     ->maxLength(248),
             ])
             ->requiresConfirmation()
-            ->action(function (User $record, array $data) {
-                try {
-                    $amount = Money::normalizePositive($data['amount']);
-                    $reason = trim($data['reason']);
+            ->action(fn (User $record, array $data) => static::grantBonus($record, $data['amount'], $data['reason']));
+    }
 
-                    if ($record->wallet === null) {
-                        Notification::make()->title('Потребителят няма портфейл')->danger()->send();
+    /**
+     * The shared bonus-grant guts — called from the ViewUser header action
+     * AND from the «Депозити» header action (where the user is identified
+     * by their DEP code). Validation, replay guard, the wallet move,
+     * investor + other-admin notifications, and BG toasts for every outcome.
+     */
+    public static function grantBonus(User $record, string $rawAmount, string $rawReason): void
+    {
+        try {
+            $amount = Money::normalizePositive($rawAmount);
+            $reason = trim($rawReason);
 
-                        return;
-                    }
+            if ($record->wallet === null) {
+                Notification::make()->title('Потребителят няма портфейл')->danger()->send();
 
-                    // Replay guard: a lost Livewire response tempts the admin
-                    // to resubmit, and nothing else distinguishes an accidental
-                    // second grant from an intended one (bonuses have no
-                    // backing entity to anchor idempotency on). An identical
-                    // (user, amount) bonus in the last 2 minutes is treated as
-                    // a duplicate; a deliberate repeat just waits them out.
-                    $recentDuplicate = Transaction::where('user_id', $record->id)
-                        ->where('type', Transaction::TYPE_BONUS)
-                        ->where('amount', $amount)
-                        ->where('created_at', '>=', now()->subMinutes(2))
-                        ->exists();
-                    if ($recentDuplicate) {
-                        Notification::make()
-                            ->title('Идентичен бонус вече е начислен')
-                            ->body("Бонус от {$amount} € за {$record->name} е записан преди по-малко от 2 минути. Ако второто начисляване е нарочно, опитайте отново след 2 минути.")
-                            ->warning()
-                            ->send();
+                return;
+            }
 
-                        return;
-                    }
+            // Replay guard: a lost Livewire response tempts the admin
+            // to resubmit, and nothing else distinguishes an accidental
+            // second grant from an intended one (bonuses have no
+            // backing entity to anchor idempotency on). An identical
+            // (user, amount) bonus in the last 2 minutes is treated as
+            // a duplicate; a deliberate repeat just waits them out.
+            $recentDuplicate = Transaction::where('user_id', $record->id)
+                ->where('type', Transaction::TYPE_BONUS)
+                ->where('amount', $amount)
+                ->where('created_at', '>=', now()->subMinutes(2))
+                ->exists();
+            if ($recentDuplicate) {
+                Notification::make()
+                    ->title('Идентичен бонус вече е начислен')
+                    ->body("Бонус от {$amount} € за {$record->name} е записан преди по-малко от 2 минути. Ако второто начисляване е нарочно, опитайте отново след 2 минути.")
+                    ->warning()
+                    ->send();
 
-                    app(WalletService::class)->bonus(
-                        $record->id,
-                        $amount,
-                        'Бонус: '.$reason,
-                        // Per-grant unique reference — a duplicated row must be
-                        // distinguishable from two intended grants afterwards.
-                        'bonus:admin:'.auth()->id().':'.Str::uuid(),
-                    );
+                return;
+            }
 
-                    // Money first, notifications after — failure logs, never rolls back.
+            app(WalletService::class)->bonus(
+                $record->id,
+                $amount,
+                'Бонус: '.$reason,
+                // Per-grant unique reference — a duplicated row must be
+                // distinguishable from two intended grants afterwards.
+                'bonus:admin:'.auth()->id().':'.Str::uuid(),
+            );
+
+            // Money first, notifications after — failure logs, never rolls back.
+            try {
+                $record->notify(new BonusCreditedNotification($amount, $reason));
+            } catch (\Throwable $e) {
+                Log::warning('Failed to send bonus notification', [
+                    'user_id' => $record->id, 'error' => $e->getMessage(),
+                ]);
+            }
+
+            // Internal control: announce the grant to the OTHER admins
+            // (bonus is the only money-in a single admin can mint alone).
+            $grantedAt = now()->format('d.m.Y H:i');
+            User::where('role', 'admin')->where('id', '!=', auth()->id())->get()
+                ->each(function (User $admin) use ($record, $amount, $reason, $grantedAt) {
                     try {
-                        $record->notify(new BonusCreditedNotification($amount, $reason));
+                        $admin->notify(new BonusGrantedAdminNotification(
+                            grantedByName: auth()->user()->name,
+                            investorName: $record->name,
+                            amount: $amount,
+                            reason: $reason,
+                            grantedAt: $grantedAt,
+                        ));
                     } catch (\Throwable $e) {
-                        Log::warning('Failed to send bonus notification', [
-                            'user_id' => $record->id, 'error' => $e->getMessage(),
+                        Log::warning('Failed to send bonus admin alert', [
+                            'admin_id' => $admin->id, 'error' => $e->getMessage(),
                         ]);
                     }
+                });
 
-                    // Internal control: announce the grant to the OTHER admins
-                    // (bonus is the only money-in a single admin can mint alone).
-                    $grantedAt = now()->format('d.m.Y H:i');
-                    User::where('role', 'admin')->where('id', '!=', auth()->id())->get()
-                        ->each(function (User $admin) use ($record, $amount, $reason, $grantedAt) {
-                            try {
-                                $admin->notify(new BonusGrantedAdminNotification(
-                                    grantedByName: auth()->user()->name,
-                                    investorName: $record->name,
-                                    amount: $amount,
-                                    reason: $reason,
-                                    grantedAt: $grantedAt,
-                                ));
-                            } catch (\Throwable $e) {
-                                Log::warning('Failed to send bonus admin alert', [
-                                    'admin_id' => $admin->id, 'error' => $e->getMessage(),
-                                ]);
-                            }
-                        });
-
-                    Notification::make()
-                        ->title("Бонус {$amount} € е начислен")
-                        ->body("Потребителят {$record->name} получи бонуса в свободния си баланс.")
-                        ->success()
-                        ->send();
-                } catch (\InvalidArgumentException $e) {
-                    Notification::make()->title('Невалидна сума')->body($e->getMessage())->danger()->send();
-                } catch (\Throwable $e) {
-                    Log::error('Bonus grant failed', [
-                        'user_id' => $record->id, 'error' => $e->getMessage(),
-                    ]);
-                    Notification::make()->title('Грешка при начисляване на бонуса')->danger()->send();
-                }
-            });
+            Notification::make()
+                ->title("Бонус {$amount} € е начислен")
+                ->body("Потребителят {$record->name} получи бонуса в свободния си баланс.")
+                ->success()
+                ->send();
+        } catch (\InvalidArgumentException $e) {
+            Notification::make()->title('Невалидна сума')->body($e->getMessage())->danger()->send();
+        } catch (\Throwable $e) {
+            Log::error('Bonus grant failed', [
+                'user_id' => $record->id, 'error' => $e->getMessage(),
+            ]);
+            Notification::make()->title('Грешка при начисляване на бонуса')->danger()->send();
+        }
     }
 
     protected static function transitionKycStatus(

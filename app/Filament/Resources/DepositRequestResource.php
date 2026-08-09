@@ -210,6 +210,90 @@ class DepositRequestResource extends Resource
                                 ->danger()->send();
                         }
                     }),
+                // «Начисли бонус» — same working rhythm as «Захрани сметка»
+                // (boss 2026-08-09: «както е при баш депозита, но с бонус»):
+                // the admin pastes the user's DEP code, the system resolves
+                // the person, then amount + reason. The code is used ONLY to
+                // identify the user — it is NOT consumed (deposit codes are
+                // retired exclusively by approve/reject, client decision
+                // 2026-07-17), and the money lands as a TYPE_BONUS ledger
+                // row, never as a deposit (no wire behind it). Any code the
+                // user ever had works — historical codes still identify
+                // their owner unambiguously (unique per request).
+                Action::make('grant_bonus')
+                    ->label('Начисли бонус')
+                    ->icon('heroicon-o-gift')
+                    ->color('warning')
+                    ->modalHeading('Начисли бонус')
+                    ->modalDescription('Въведи кода на потребителя (от неговата страница „Депозиране“). Кодът служи само за намиране на човека — остава си активен за депозити. Сумата се записва като „Бонус“, не като депозит.')
+                    ->form([
+                        Forms\Components\TextInput::make('reference_code')
+                            ->label('Код на потребителя')
+                            ->placeholder('DEP-AB12CD34')
+                            ->required()
+                            ->live(debounce: 400)
+                            ->rules(['regex:/^DEP-[A-Z0-9]{8}$/i'])
+                            ->validationMessages(['regex' => 'Кодът трябва да е във формат DEP-XXXXXXXX (8 знака букви/цифри).'])
+                            ->dehydrateStateUsing(fn ($state) => strtoupper(trim($state ?? ''))),
+                        Forms\Components\Placeholder::make('resolved_user')
+                            ->label('Засечен потребител')
+                            ->content(function (callable $get) {
+                                $code = strtoupper(trim((string) $get('reference_code')));
+                                if ($code === '' || ! preg_match('/^DEP-[A-Z0-9]{8}$/', $code)) {
+                                    return '—';
+                                }
+                                $user = DepositRequest::where('reference_code', $code)
+                                    ->with('user')
+                                    ->first()?->user;
+                                if (! $user) {
+                                    return '⚠️ Няма потребител с този код.';
+                                }
+                                if (! $user->wallet) {
+                                    return "⚠️ Акаунтът на {$user->name} е закрит — не може да получи бонус.";
+                                }
+
+                                return "✓ {$user->name} ({$user->email})";
+                            }),
+                        Forms\Components\TextInput::make('amount')
+                            ->label('Сума (€)')
+                            ->required()
+                            ->numeric()
+                            ->minValue(0.01)
+                            // Fat-finger guard, not business policy.
+                            ->maxValue(10000)
+                            ->rules(['decimal:0,2']),
+                        Forms\Components\Textarea::make('reason')
+                            ->label('Основание')
+                            ->placeholder('напр. Бонус за препоръчан клиент')
+                            ->required()
+                            // 255-char description column minus the «Бонус: » prefix.
+                            ->maxLength(248),
+                    ])
+                    ->requiresConfirmation()
+                    ->action(function (array $data) {
+                        $code = strtoupper(trim($data['reference_code']));
+
+                        $user = DepositRequest::where('reference_code', $code)
+                            ->with('user')
+                            ->first()?->user;
+
+                        if ($user === null) {
+                            Notification::make()->title('Невалиден код')
+                                ->body("Няма потребител с код {$code}.")
+                                ->danger()->send();
+
+                            return;
+                        }
+
+                        if (! $user->isInvestor()) {
+                            Notification::make()->title('Само инвеститори могат да получават бонус')
+                                ->danger()->send();
+
+                            return;
+                        }
+
+                        UserResource::grantBonus($user, $data['amount'], $data['reason']);
+                    }),
             ])
             ->actions([
                 Action::make('approve')->label('Одобри')->icon('heroicon-o-check-circle')->color('success')
