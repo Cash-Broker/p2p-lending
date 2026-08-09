@@ -127,7 +127,8 @@ Decision rationale now lives in git history + `docs/BIZNES-DOKUMENTACIA.md`.
   `WalletService::bonus()` → available+; 2-min identical-grant replay guard; unique ref
   `bonus:admin:{id}:{uuid}`; reason ≤248 chars (255 − «Бонус: » prefix); NO bank wire behind
   it — bank-statement reconciliation must EXCLUDE `SUM(type='bonus')`, mirror of the fee note;
-  investor gets «Бонус» tx + mail/bell; OTHER admins get a queued email per grant).
+  investor gets «Бонус» tx + mail/bell; OTHER admins get a queued email per grant + a 🟡
+  silent Telegram record in the shared channel).
   `transactions`, `loan_events`, `audit_logs` are **immutable at the DB level** (MySQL triggers
   `SIGNAL SQLSTATE '45000'`); LoanEvent additionally throws from app-level `update()`/`delete()`
   (Transaction/AuditLog just set `UPDATED_AT = null` — the triggers are the guard).
