@@ -68,6 +68,11 @@ class ReconcileLedger extends Command
         // does not cover interest, so the accrued promise is reversed, not
         // paid out). No cash move, no earned income.
         Transaction::TYPE_INTEREST_ACCRUAL_REVERSED => ['cash' => 0, 'invested' => 0, 'earned' => 0, 'accrued' => -1],
+        // Admin-granted promotional credit — spendable cash like a deposit,
+        // but with NO bank wire behind it. Wallet-vs-ledger reconciliation
+        // treats it as cash-in; the BANK-statement side must exclude it
+        // (SUM(type='bonus') = platform marketing spend, not client money).
+        Transaction::TYPE_BONUS => ['cash' => 1, 'invested' => 0, 'earned' => 0, 'accrued' => 0],
     ];
 
     public function handle(): int

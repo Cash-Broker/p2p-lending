@@ -18,6 +18,13 @@ class InvestmentResource extends JsonResource
             'interest_rate' => $this->interest_rate,
             'payout_type' => $this->payout_type?->value,
             'payout_label' => $this->payout_type?->label(),
+            // Present only when the query added withExists('contract') —
+            // gates the «Договор» PDF link (contracts exist from the
+            // feature's introduction onward, older investments have none).
+            'has_contract' => $this->when(
+                array_key_exists('contract_exists', $this->resource->getAttributes()),
+                fn () => (bool) $this->contract_exists,
+            ),
             'loan' => new LoanResource($this->whenLoaded('loan')),
             // Per-installment breakdown the investor must always be able to see:
             // each row's principal / interest / total per their plan (boss req).

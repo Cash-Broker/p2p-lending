@@ -25,6 +25,9 @@ const investLoading = ref(false)
 const investError = ref(null)
 const investSuccess = ref(false)
 const showConfirmModal = ref(false)
+// Id of the just-created investment — the success panel links its
+// concluded contract PDF.
+const lastInvestmentId = ref(null)
 
 // 3-offer feature — per-offer profit projection for the entered amount, so the
 // client compares what they'd earn under each structure and picks one. The
@@ -35,6 +38,9 @@ const selectedOfferId = ref(null)
 const quotesLoading = ref(false)
 const showProjection = ref(false)
 let quoteTimer = null
+// Monotonic token — a late out-of-order response must never overwrite the
+// projections of a newer amount.
+let quoteSeq = 0
 
 async function fetchQuotes() {
   if (!loan.value) return
@@ -42,18 +48,20 @@ async function fetchQuotes() {
   const amount = parseFloat(investAmount.value) >= 50
     ? investAmount.value
     : (loan.value.investable_amount ?? loan.value.amount)
+  const seq = ++quoteSeq
   quotesLoading.value = true
   try {
     const { data } = await api.get(`/loans/${loan.value.id}/offer-quotes`, { params: { amount } })
+    if (seq !== quoteSeq) return
     offerQuotes.value = data.data
     // Keep the current selection if still valid, else default to the first offer.
     if (!offerQuotes.value.some(q => q.loan_offer_id === selectedOfferId.value)) {
       selectedOfferId.value = offerQuotes.value[0]?.loan_offer_id ?? null
     }
   } catch {
-    offerQuotes.value = []
+    if (seq === quoteSeq) offerQuotes.value = []
   } finally {
-    quotesLoading.value = false
+    if (seq === quoteSeq) quotesLoading.value = false
   }
 }
 
@@ -172,6 +180,15 @@ function openConfirm() {
     investError.value = 'Моля изберете оферта.'
     return
   }
+  // The click-wrap contract must be concluded at terms the investor SAW.
+  // Without a loaded quote there is no displayed rate — and no
+  // expected_interest_rate for the backend's quote-vs-commit guard —
+  // so investing is blocked until the quotes load.
+  if (!selectedQuote.value) {
+    investError.value = 'Условията не можаха да се заредят. Опитайте отново.'
+    fetchQuotes()
+    return
+  }
   if (!investAmount.value || parseFloat(investAmount.value) < 50) {
     investError.value = 'Минималната инвестиция е 50.00 €.'
     return
@@ -187,14 +204,28 @@ function openConfirm() {
   showConfirmModal.value = true
 }
 
+// Draft contract («ПРОЕКТ») for the currently selected offer + amount —
+// opened in a new tab so the investor can read the document the invest
+// click will conclude. Cookie session authenticates the request.
+const contractPreviewUrl = computed(() => {
+  if (!loan.value || !selectedOfferId.value) return null
+  const amount = encodeURIComponent(investAmount.value || '50')
+  return `/api/loans/${loan.value.id}/contract-preview?amount=${amount}&loan_offer_id=${selectedOfferId.value}`
+})
+
 async function confirmInvest() {
   investLoading.value = true
   investError.value = null
   try {
-    await api.post(`/loans/${loan.value.id}/invest`, {
+    const { data: investData } = await api.post(`/loans/${loan.value.id}/invest`, {
       amount: investAmount.value,
       loan_offer_id: selectedOfferId.value,
+      // Quote-vs-commit guard: the backend rejects the commit if the offer
+      // rate changed after this quote was displayed — the concluded
+      // contract must carry exactly the terms the investor saw and agreed to.
+      expected_interest_rate: selectedQuote.value?.interest_rate ?? null,
     })
+    lastInvestmentId.value = investData.investment?.id ?? null
     investSuccess.value = true
     showConfirmModal.value = false
     // Refresh loan data and user wallet
@@ -206,6 +237,11 @@ async function confirmInvest() {
     if (e.response?.status === 422) {
       const errors = e.response.data.errors || {}
       investError.value = Object.values(errors).flat()[0] || 'Грешка при инвестиране.'
+      // Rate drifted between quote and commit — refresh the cards so the
+      // re-confirmation happens against the CURRENT terms, not the stale ones.
+      if (errors.expected_interest_rate) {
+        fetchQuotes()
+      }
     } else if (e.response?.status === 403) {
       investError.value = e.response.data.requires_kyc
         ? 'Необходима е KYC верификация за инвестиране.'
@@ -484,6 +520,12 @@ async function confirmInvest() {
               </div>
               <p class="text-sm font-semibold text-navy-700 mb-1">Успешна инвестиция!</p>
               <p class="text-xs text-gray-500 mb-4">Инвестирахте {{ formatAmount(investAmount) }} € в кредит #{{ loan.id }}</p>
+              <a v-if="lastInvestmentId" :href="`/api/investments/${lastInvestmentId}/contract`" target="_blank" rel="noopener"
+                 class="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-navy-700 underline hover:text-navy-900">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                Договор за заем (PDF)
+              </a>
+              <br>
               <button @click="investSuccess = false; investAmount = ''" class="text-sm text-accent-500 font-medium">Инвестирай отново</button>
             </div>
 
@@ -607,6 +649,15 @@ async function confirmInvest() {
             в кредит <strong class="text-navy-700">#{{ loan.id }}</strong>
             <span v-if="selectedQuote">по оферта <strong class="text-navy-700">{{ selectedQuote.label }}</strong> ({{ selectedQuote.interest_rate }}%)</span>?
           </p>
+          <div class="mb-5 rounded-xl bg-gray-50 p-3 text-xs text-gray-500 leading-relaxed">
+            С натискането на „Потвърди“ сключвате <strong class="text-navy-700">Договор за целеви паричен заем</strong>
+            при избраните условия. Кликването се записва като Вашето електронно съгласие с договора —
+            подписи не се полагат.
+            <a v-if="contractPreviewUrl" :href="contractPreviewUrl" target="_blank" rel="noopener"
+               class="mt-1.5 block font-medium text-accent-500 underline hover:text-accent-600">
+              Преглед на договора (проект, PDF)
+            </a>
+          </div>
           <div class="flex gap-3">
             <button @click="showConfirmModal = false" class="flex-1 py-2.5 border border-gray-200 text-sm font-medium text-gray-600 rounded-xl">Отказ</button>
             <button @click="confirmInvest" :disabled="investLoading" class="flex-1 py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">

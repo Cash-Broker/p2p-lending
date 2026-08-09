@@ -12,7 +12,10 @@ use Illuminate\Validation\ValidationException;
 
 class InvestmentService
 {
-    public function __construct(private WalletService $walletService) {}
+    public function __construct(
+        private WalletService $walletService,
+        private InvestmentContractService $contractService,
+    ) {}
 
     /**
      * Process an investment in a loan.
@@ -107,6 +110,15 @@ class InvestmentService
                 }
                 if ($loan->isFullyFunded() && $loan->status === Loan::STATUS_FUNDING) {
                     $loan->transitionTo(Loan::STATUS_FUNDED);
+                }
+
+                // Conclude the loan agreement — frozen contract snapshot +
+                // click-wrap acceptance evidence, atomic with the money move.
+                // An offer-based investment without its contract must not
+                // exist (the invest click IS the recorded consent). Legacy
+                // no-offer investments (test/console only) have no contract.
+                if ($offer !== null) {
+                    $this->contractService->createForInvestment($investment, $user, $loan, $offer);
                 }
 
                 return $investment;

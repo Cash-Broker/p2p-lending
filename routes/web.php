@@ -68,5 +68,23 @@ Route::get('/admin/kyc-document/{path}', function (string $path) {
     return response()->file($resolvedPath);
 })->where('path', '.*')->middleware(['web', 'auth'])->name('admin.kyc-document');
 
+// Serve a concluded investment contract PDF to the admin (Filament link).
+// Rendered on demand from the frozen snapshot — nothing on disk, so no
+// path handling at all (route-model binding by id only).
+Route::get('/admin/investment-contract/{investment}', function (App\Models\Investment $investment, App\Services\InvestmentContractService $service) {
+    if (! auth()->user()?->isAdmin()) {
+        abort(403);
+    }
+
+    $contract = $investment->contract;
+    abort_if($contract === null, 404);
+
+    return response($service->renderPdf($contract), 200, [
+        'Content-Type' => 'application/pdf',
+        'Content-Disposition' => "inline; filename=\"dogovor-zaem-inv-{$investment->id}.pdf\"",
+        'Cache-Control' => 'no-store, private',
+    ]);
+})->middleware(['web', 'auth'])->name('admin.investment-contract');
+
 // Vue SPA catch-all (excludes /admin which is handled by Filament)
 Route::get('/{any}', fn () => view('app'))->where('any', '^(?!admin).*$');

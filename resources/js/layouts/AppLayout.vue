@@ -201,7 +201,7 @@ async function logout() {
                 <div v-if="!notifications.length" class="px-4 py-8 text-center text-sm text-gray-400">Няма известия</div>
                 <div v-for="n in notifications.slice(0, 10)" :key="n.id" class="flex items-start gap-2 px-4 py-3 hover:bg-gray-50 transition-colors" :class="!n.read_at ? 'bg-accent-50/30' : ''">
                   <button @click="markAsRead(n.id)" class="flex-1 text-left">
-                    <p class="text-sm text-navy-700">{{ { deposit_approved: 'Депозит одобрен', deposit_rejected: 'Депозит отхвърлен', withdrawal_approved: 'Теглене одобрено', withdrawal_rejected: 'Теглене отхвърлено', kyc_approved: 'KYC одобрен', kyc_rejected: 'KYC отхвърлен', loan_status_changed: 'Промяна на кредит' }[n.data?.type] || 'Известие' }}</p>
+                    <p class="text-sm text-navy-700">{{ { deposit_approved: 'Депозит одобрен', deposit_rejected: 'Депозит отхвърлен', withdrawal_approved: 'Теглене одобрено', withdrawal_rejected: 'Теглене отхвърлено', kyc_approved: 'KYC одобрен', kyc_rejected: 'KYC отхвърлен', loan_status_changed: 'Промяна на кредит', bonus_credited: 'Получен бонус' }[n.data?.type] || 'Известие' }}</p>
                     <p v-if="n.data?.amount" class="text-xs text-accent-500 font-medium">{{ n.data.amount }} €</p>
                     <p class="text-xs text-gray-500 mt-0.5">{{ new Date(n.created_at).toLocaleString('bg-BG', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</p>
                   </button>

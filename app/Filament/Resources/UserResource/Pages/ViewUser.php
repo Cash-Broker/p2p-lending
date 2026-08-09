@@ -11,10 +11,14 @@ class ViewUser extends ViewRecord
 
     /**
      * The reviewer approves/rejects WHILE looking at the documents — the
-     * same actions as the table rows, pinned to the page header.
+     * same actions as the table rows, pinned to the page header. The
+     * bonus grant lives here too (needs the full profile in view).
      */
     protected function getHeaderActions(): array
     {
-        return UserResource::kycStatusActions();
+        return [
+            ...UserResource::kycStatusActions(),
+            UserResource::bonusAction(),
+        ];
     }
 }

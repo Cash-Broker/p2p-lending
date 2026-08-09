@@ -14,6 +14,7 @@ const filters = reactive({
 
 const txTypes = [
   { value: 'deposit', label: 'Депозит' },
+  { value: 'bonus', label: 'Бонус' },
   { value: 'withdrawal', label: 'Теглене' },
   { value: 'investment', label: 'Инвестиция' },
   { value: 'repayment_principal', label: 'Главница' },
@@ -23,23 +24,43 @@ const txTypes = [
 
 const txTypeLabels = {
   deposit: 'Депозит',
+  bonus: 'Бонус',
   withdrawal: 'Теглене',
   investment: 'Инвестиция',
   repayment_principal: 'Главница',
   repayment_interest: 'Лихва',
+  buyback_principal: 'Обратно изкупуване — главница',
+  buyback_interest: 'Обратно изкупуване — лихва',
+  early_repayment_principal: 'Предсрочно погасяване — главница',
+  early_repayment_interest: 'Предсрочно погасяване — лихва',
+  interest_accrued: 'Начислена лихва',
+  interest_released: 'Изплатена лихва',
+  interest_accrual_reversed: 'Сторнирана начислена лихва',
   fee: 'Такса',
 }
 
 const txTypeClasses = {
   deposit: 'bg-green-50 text-green-600',
+  bonus: 'bg-amber-50 text-amber-600',
   withdrawal: 'bg-red-50 text-red-600',
   investment: 'bg-blue-50 text-blue-600',
   repayment_principal: 'bg-green-50 text-green-600',
   repayment_interest: 'bg-emerald-50 text-emerald-600',
+  buyback_principal: 'bg-green-50 text-green-600',
+  buyback_interest: 'bg-emerald-50 text-emerald-600',
+  early_repayment_principal: 'bg-green-50 text-green-600',
+  early_repayment_interest: 'bg-emerald-50 text-emerald-600',
+  interest_accrued: 'bg-sky-50 text-sky-600',
+  interest_released: 'bg-emerald-50 text-emerald-600',
+  interest_accrual_reversed: 'bg-gray-100 text-gray-500',
   fee: 'bg-gray-100 text-gray-500',
 }
 
-const incomingTypes = ['deposit', 'repayment_principal', 'repayment_interest']
+// Cash-in rows show +green, cash-out rows -red. Types in NEITHER list
+// (accrual bookkeeping, or a type this bundle predates) render neutral —
+// an unknown credit must never look like money taken.
+const incomingTypes = ['deposit', 'bonus', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
+const outgoingTypes = ['withdrawal', 'investment', 'fee']
 
 async function load(page = 1) {
   loading.value = true
@@ -146,8 +167,8 @@ onMounted(() => load())
                 {{ txTypeLabels[tx.type] || tx.type }}
               </span>
             </td>
-            <td class="px-6 py-3 font-semibold" :class="incomingTypes.includes(tx.type) ? 'text-green-600' : 'text-red-600'">
-              {{ incomingTypes.includes(tx.type) ? '+' : '-' }}{{ formatAmount(tx.amount) }} €
+            <td class="px-6 py-3 font-semibold" :class="incomingTypes.includes(tx.type) ? 'text-green-600' : (outgoingTypes.includes(tx.type) ? 'text-red-600' : 'text-gray-600')">
+              {{ incomingTypes.includes(tx.type) ? '+' : (outgoingTypes.includes(tx.type) ? '-' : '') }}{{ formatAmount(tx.amount) }} €
             </td>
             <td class="px-6 py-3 text-gray-400 text-xs hidden sm:table-cell">{{ tx.description || '—' }}</td>
           </tr>

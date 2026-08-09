@@ -87,6 +87,17 @@ class WalletService
     }
 
     /**
+     * Admin-granted promotional bonus («код БОНУС», boss 2026-08-09).
+     * Spendable cash credit like a deposit, but with no bank wire behind
+     * it — the ledger row (TYPE_BONUS) keeps it separate from real
+     * deposits so bank-statement reconciliation can exclude it.
+     */
+    public function bonus(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        return $this->credit($userId, $amount, Transaction::TYPE_BONUS, $description, $reference);
+    }
+
+    /**
      * Reserve funds for a pending withdrawal.
      * Moves amount from available → reserved. No transaction record —
      * a reservation is a hold, not a ledger event.

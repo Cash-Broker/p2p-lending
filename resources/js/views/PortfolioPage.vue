@@ -236,7 +236,11 @@ onMounted(() => load())
                   </span>
                 </td>
                 <td class="px-6 py-3">
-                  <router-link :to="`/invest/${inv.loan?.id}`" class="text-xs text-accent-500 font-medium">Детайли</router-link>
+                  <div class="flex items-center gap-3">
+                    <router-link :to="`/invest/${inv.loan?.id}`" class="text-xs text-accent-500 font-medium">Детайли</router-link>
+                    <a v-if="inv.has_contract" :href="`/api/investments/${inv.id}/contract`" target="_blank" rel="noopener"
+                       class="text-xs font-medium text-navy-700 underline hover:text-navy-900">Договор</a>
+                  </div>
                 </td>
               </tr>
             </tbody>

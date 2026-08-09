@@ -60,6 +60,13 @@ class Transaction extends Model
     //                       move, no earned income.
     const TYPE_INTEREST_ACCRUAL_REVERSED = 'interest_accrual_reversed';
 
+    // Admin-granted promotional credit (boss 2026-08-09: «код БОНУС» —
+    // e.g. 100-200 € for bringing in a client). Cash-in WITHOUT a bank
+    // wire behind it: unlike TYPE_DEPOSIT it must NOT reconcile against
+    // the bank statement — SUM(type='bonus') is platform marketing spend
+    // the company owes the virtual ledger (mirror of the TYPE_FEE note).
+    const TYPE_BONUS = 'bonus';
+
     const TYPES = [
         self::TYPE_DEPOSIT,
         self::TYPE_WITHDRAWAL,
@@ -74,6 +81,7 @@ class Transaction extends Model
         self::TYPE_INTEREST_RELEASED,
         self::TYPE_INTEREST_ACCRUAL_REVERSED,
         self::TYPE_FEE,
+        self::TYPE_BONUS,
     ];
 
     protected $fillable = [

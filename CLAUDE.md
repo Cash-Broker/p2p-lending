@@ -41,6 +41,7 @@ Virtual P2P / marketplace lending (Mintos/Bondora model), brand **Vamaasset** (�
   tailwind.config.js) + Pinia 3 + vue-router 4 + chart.js
 - Pure **PHPUnit 12** (no Pest, no Dusk, no paratest), Vitest 4 for JS units
 - spatie/laravel-csp (Report-Only), self-hosted Inter fonts (CSP `font-src 'self'`)
+- barryvdh/laravel-dompdf ^3.1 (contract PDFs; bundled DejaVu Sans covers Cyrillic)
 
 ## Commands
 
@@ -69,7 +70,8 @@ vendor/bin/pint                                # lint (default preset)
 
 ```
 app/
-  Models/              24 models; core: Loan, LoanOffer, Investment, InvestmentSchedule,
+  Models/              25 models; core: Loan, LoanOffer, Investment, InvestmentSchedule,
+                       InvestmentContract (frozen agreement + click-wrap evidence),
                        AmortizationSchedule, Wallet, Transaction, LoanEvent, LoanGrant,
                        DepositRequest, WithdrawalRequest, Borrower(+AnonymizedProfile),
                        LegalEntityProfile, BeneficialOwner, ConsentRecord, SavedIban,
@@ -77,6 +79,7 @@ app/
   Services/            ALL business logic. Money engine: WalletService (sole wallet gateway),
                        RepaymentService, ScheduledPayoutService, PayoutAccrualService,
                        OfferProjectionService, InvestmentScheduleGenerator, InvestmentService,
+                       InvestmentContractService (dogovor snapshots + dompdf render),
                        AmortizationService, DepositService, WithdrawalService, FeeService,
                        APRCalculatorService, TelegramService, KycImageNormalizer,
                        AccountDeletionService
@@ -84,8 +87,8 @@ app/
                        EarlyRepayment{Calculation,Execution}Service, LateDetectionService,
                        LoanStatusUpdaterService
   Enums/PayoutType.php amortizing | interest_only | capitalized
-  Support/             Money.php (string-decimal normalizer), CspPolicy.php,
-                       Loans/ScheduleBalanceValidator
+  Support/             Money.php (string-decimal normalizer), BulgarianNumberWords.php
+                       (сума/процент словом), CspPolicy.php, Loans/ScheduleBalanceValidator
   Filament/            Resources + Pages (BuybackQueue, FeesPage, ProcessRepayment) + Widgets
   Console/Commands/    ReconcileLedger; Loans/{ProcessLateLoans,DetectBuybackEligible,
                        ProcessScheduledPayouts,ReportPayoutExposure}; Ops/{TelegramDigest,TelegramTest}
@@ -115,9 +118,12 @@ Decision rationale now lives in git history + `docs/BIZNES-DOKUMENTACIA.md`.
   ≥ 0. `currentBalance() = invested + accrued` ("Текущо салдо", derived).
   `reserve()`/`releaseReservation()` move buckets **without** a ledger row (hold, not event) —
   hence reconciliation compares `available+reserved` as one cash bucket.
-- **13 transaction types** (`Transaction::TYPES`): deposit, withdrawal, investment,
+- **14 transaction types** (`Transaction::TYPES`): deposit, withdrawal, investment,
   repayment_principal/interest, buyback_principal/interest, early_repayment_principal/interest,
-  interest_accrued, interest_released, interest_accrual_reversed, fee.
+  interest_accrued, interest_released, interest_accrual_reversed, fee, **bonus** (2026-08-09:
+  admin promo credit «Начисли бонус» on ViewUser header, `WalletService::bonus()` → available+;
+  NO bank wire behind it — bank-statement reconciliation must EXCLUDE `SUM(type='bonus')`,
+  mirror of the fee note; investor sees «Бонус» + mail/bell notification).
   `transactions`, `loan_events`, `audit_logs` are **immutable at the DB level** (MySQL triggers
   `SIGNAL SQLSTATE '45000'`); LoanEvent additionally throws from app-level `update()`/`delete()`
   (Transaction/AuditLog just set `UPDATED_AT = null` — the triggers are the guard).
@@ -135,7 +141,8 @@ Decision rationale now lives in git history + `docs/BIZNES-DOKUMENTACIA.md`.
   `loan:{id}:investment:{iid}:schedule:{sid}`, `loan:{id}:investment:{iid}:capitalized`,
   `loan:{id}:investment:{iid}:buyback`, `loan:{id}:buyback:user:{uid}`,
   `loan:{id}:early_repayment:user:{uid}`, `investment:{id}`, `deposit_request:{id}`,
-  `withdrawal_request:{id}` (+`:fee`).
+  `withdrawal_request:{id}` (+`:fee`), `bonus:admin:{admin_id}:{uuid}` (uuid = per-grant
+  uniqueness; bonus has no backing entity row).
 - **Idempotency:** invest = `idempotency_key` column (SPA auto-sends `X-Idempotency-Key`,
   backend 422s without it); repayment/payouts = `status='paid'` guard under row lock;
   buyback/early-repay = terminal-status check + dedicated exception; crons = `Cache::lock` 600s.
@@ -247,6 +254,38 @@ generated lazily by the «Линк за инвеститор» action). Opening 
 truth `Loan::isAccessibleBy()`, used by `LoanPolicy::view`): admin OR public OR has investment
 OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{loan}`.
 
+## Investment contracts («Договор за целеви паричен заем», 2026-08-09)
+
+- Every OFFER-BASED invest concludes a loan agreement: `InvestmentContract` row created
+  **inside** `InvestmentService::invest()`'s transaction (atomic — offer investment without
+  contract must not exist; legacy null-offer path creates none). Investor = ЗАЕМОДАТЕЛ,
+  platform company = ЗАЕМАТЕЛ (заемът е целеви → финансира „НАЗАЕМ.БГ“ ООД).
+- **Click-wrap, NO signatures** (Reni 2026-08-09): the invest click IS the consent, recorded
+  as `accepted_at`/`ip_address`/`user_agent` on the contract row + printed in the PDF as
+  «Запис за електронно приемане». Individuals are identified by name + email only —
+  **ЕГН/адрес deliberately not collected/printed** («засега без»); legal entities get ЕИК +
+  seat + representative from `LegalEntityProfile` (decrypted at build).
+- **Frozen snapshots, PDF on demand** (nothing on disk): `party_snapshot` (`encrypted:array`,
+  PII) + `terms_snapshot` (plain JSON: amount/rate + «словом» via `App\Support\BulgarianNumberWords`,
+  term, payout clause, projected schedule rows, company requisites from `contract_*`
+  platform settings). `template_version` pins `resources/views/contracts/investment-v1.blade.php`
+  — wording changes ⇒ NEW v2 template file, never edit v1. Schedule annex dates are
+  indicative (real `investment_schedules` are generated at activation; the annex says so).
+- Rendering: `InvestmentContractService` via barryvdh/laravel-dompdf (^3.1, DejaVu Sans =
+  Cyrillic), `isRemoteEnabled/isPhpEnabled` false. Endpoints: investor
+  `GET /api/investments/{id}/contract` (404 — not 403 — on foreign ids: no existence oracle)
+  + `GET /api/loans/{loan}/contract-preview` («ПРОЕКТ» watermark, FUNDABLE_STATUSES only);
+  admin `GET /admin/investment-contract/{investment}` (web route, isAdmin) + LoanResource
+  InvestmentsRelationManager («Съгласие с договора» column + «Договор» action).
+- Immutability: app-level only (`performUpdate`/`performDeleteOnModel` throw — covers
+  save/saveQuietly/forceFill; query-builder/raw SQL NOT covered — DB trigger deferred
+  pending sign-off). FKs are RESTRICT, not cascade (evidence must not silently vanish).
+  Rows survive GDPR anonymization (Art. 17(3)(e) rationale in model docblock).
+- SPA: consent wording + preview link in the confirm modal; `expected_interest_rate` now
+  SENT on invest (quote-vs-commit guard armed; invest blocked until quotes load).
+  Contracts exist only from the feature's ship date — **no backfill** (consent evidence
+  can't be fabricated retroactively); `has_contract` gates the portfolio «Договор» link.
+
 ## KYC & compliance
 
 - `users.kyc_status`: pending → submitted → in_review → approved/rejected (string column;
@@ -343,6 +382,9 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 Pending with the client (Reni): default write-off policy, refund/reversal flow,
 investor-APR semantics, offer-edit window, auto/manual-payout follow-ups (5 open questions),
 and the fact that late/default loans in automatic mode keep paying investors on schedule.
+Contracts: retention clock for `investment_contracts` PII after account anonymization
+(currently indefinite, Art. 17(3)(e) basis); ЕГН/адрес collection for individuals was
+declined 2026-08-09 («засега без») — revisit only if Reni asks.
 Also platform-level: ConnectPay EMI integration (offer 2026-06-30) would change the fund flow.
 If a task brushes against these, surface the question — do not encode an assumption.
 

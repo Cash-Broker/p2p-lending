@@ -95,12 +95,25 @@ function formatAmount(val) {
 
 const txTypeLabels = {
   deposit: 'Депозит',
+  bonus: 'Бонус',
   withdrawal: 'Теглене',
   investment: 'Инвестиция',
   repayment_principal: 'Главница',
   repayment_interest: 'Лихва',
+  buyback_principal: 'Обратно изкупуване — главница',
+  buyback_interest: 'Обратно изкупуване — лихва',
+  early_repayment_principal: 'Предсрочно погасяване — главница',
+  early_repayment_interest: 'Предсрочно погасяване — лихва',
+  interest_accrued: 'Начислена лихва',
+  interest_released: 'Изплатена лихва',
+  interest_accrual_reversed: 'Сторнирана начислена лихва',
   fee: 'Такса',
 }
+
+// Same convention as TransactionsPage: cash-in +, cash-out -, everything
+// else (accrual bookkeeping / unknown newer types) neutral without a sign.
+const incomingTypes = ['deposit', 'bonus', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
+const outgoingTypes = ['withdrawal', 'investment', 'fee']
 </script>
 
 <template>
@@ -258,9 +271,9 @@ const txTypeLabels = {
               </div>
               <span
                 class="text-sm font-semibold"
-                :class="['deposit', 'repayment_principal', 'repayment_interest'].includes(tx.type) ? 'text-accent-500' : 'text-navy-700'"
+                :class="incomingTypes.includes(tx.type) ? 'text-accent-500' : 'text-navy-700'"
               >
-                {{ ['deposit', 'repayment_principal', 'repayment_interest'].includes(tx.type) ? '+' : '-' }}{{ formatAmount(tx.amount) }} €
+                {{ incomingTypes.includes(tx.type) ? '+' : (outgoingTypes.includes(tx.type) ? '-' : '') }}{{ formatAmount(tx.amount) }} €
               </span>
             </div>
           </div>

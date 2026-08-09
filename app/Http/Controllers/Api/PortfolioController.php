@@ -30,6 +30,10 @@ class PortfolioController extends Controller
             // Per-installment breakdown for the investor (offer positions).
             'schedules' => fn ($q) => $q->orderBy('due_date'),
         ])
+            // Single EXISTS sub-select per row — the UI shows a «Договор»
+            // download link only where a concluded contract exists
+            // (investments predating the contract feature have none).
+            ->withExists('contract')
             ->where('user_id', $request->user()->id)
             ->latest('invested_at')
             ->paginate(15);

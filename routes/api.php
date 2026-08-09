@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\ConsentController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DepositController;
 use App\Http\Controllers\Api\FeeController;
+use App\Http\Controllers\Api\InvestmentContractController;
 use App\Http\Controllers\Api\LoanController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PortfolioController;
@@ -60,6 +61,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/loans/{loan}', [LoanController::class, 'show']);
         // Per-offer profit projection for a chosen amount (3-offer feature).
         Route::get('/loans/{loan}/offer-quotes', [LoanController::class, 'offerQuotes']);
+        // Draft contract («ПРОЕКТ» watermark) for the chosen offer+amount —
+        // the investor must be able to read the document BEFORE the invest
+        // click concludes it. Throttled: dompdf rendering is CPU-heavy.
+        Route::get('/loans/{loan}/contract-preview', [InvestmentContractController::class, 'preview'])
+            ->middleware('throttle:20,1');
+        // Concluded contract PDF of an own investment (owner or admin).
+        Route::get('/investments/{investment}/contract', [InvestmentContractController::class, 'download'])
+            ->middleware('throttle:30,1');
         // Lifecycle event timeline — gated by LoanPolicy::viewEvents
         // (investor must hold a position in the loan).
         Route::get('/loans/{loan}/events', [LoanController::class, 'events']);

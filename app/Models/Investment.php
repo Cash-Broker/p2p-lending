@@ -8,11 +8,12 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Investment extends Model
 {
     /** @use HasFactory<InvestmentFactory> */
-    use HasFactory, \App\Traits\Auditable;
+    use \App\Traits\Auditable, HasFactory;
 
     protected $fillable = [
         'user_id',
@@ -56,6 +57,16 @@ class Investment extends Model
     public function schedules(): HasMany
     {
         return $this->hasMany(InvestmentSchedule::class);
+    }
+
+    /**
+     * The concluded loan agreement snapshot + click-wrap acceptance
+     * evidence. Present for every offer-based investment created after the
+     * contract feature shipped; null for older/legacy investments.
+     */
+    public function contract(): HasOne
+    {
+        return $this->hasOne(InvestmentContract::class);
     }
 
     /** Whether this investment was made under a 3-offer payout structure. */
