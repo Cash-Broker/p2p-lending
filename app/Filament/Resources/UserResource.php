@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Notifications\BonusCreditedNotification;
 use App\Notifications\BonusGrantedAdminNotification;
 use App\Notifications\KycStatusNotification;
+use App\Services\TelegramService;
 use App\Services\WalletService;
 use App\Support\Money;
 use BackedEnum;
@@ -247,6 +248,16 @@ class UserResource extends Resource
                         ]);
                     }
                 });
+
+            // Telegram record (🟡 info, silent) — the bonus is money minted
+            // by a single admin, so it must land in the shared channel too,
+            // not only in the other admins' inboxes. TelegramService is a
+            // no-op when unconfigured and never throws.
+            app(TelegramService::class)->info(
+                'Начислен бонус',
+                auth()->user()->name." начисли бонус {$amount} € на {$record->name}.",
+                ['Основание' => $reason],
+            );
 
             Notification::make()
                 ->title("Бонус {$amount} € е начислен")
