@@ -9,6 +9,7 @@ use App\Models\Transaction;
 use App\Models\User;
 use App\Notifications\BonusCreditedNotification;
 use App\Notifications\BonusGrantedAdminNotification;
+use App\Services\TelegramService;
 use App\Services\WalletService;
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
@@ -174,6 +175,24 @@ class AdminBonusTest extends TestCase
 
         // Default-deny reconciliation: an unmapped type would exit non-zero.
         $this->assertSame(0, Artisan::call('ledger:reconcile'));
+    }
+
+    public function test_bonus_grant_posts_a_telegram_record(): void
+    {
+        Notification::fake();
+        $this->actingAsAdmin();
+        $user = $this->investor();
+
+        $this->mock(TelegramService::class)
+            ->shouldReceive('info')
+            ->once()
+            ->withArgs(fn (string $title, string $body) => $title === 'Начислен бонус'
+                && str_contains($body, '100.00 €'))
+            ->andReturn(true);
+
+        Livewire::test(ViewUser::class, ['record' => $user->id])
+            ->callAction('grant_bonus', data: ['amount' => '100', 'reason' => 'Реферал'])
+            ->assertHasNoActionErrors();
     }
 
     public function test_bonus_granted_from_deposits_page_by_user_code(): void
