@@ -89,7 +89,9 @@ app/
   Enums/PayoutType.php amortizing | interest_only | capitalized
   Support/             Money.php (string-decimal normalizer), BulgarianNumberWords.php
                        (сума/процент словом), CspPolicy.php, Loans/ScheduleBalanceValidator
-  Filament/            Resources + Pages (BuybackQueue, FeesPage, ProcessRepayment) + Widgets
+  Filament/            Resources (incl. the global read-only «Инвестиции» register with
+                       live Sum summarizer — NOT the API InvestmentResource namespace!)
+                       + Pages (BuybackQueue, FeesPage, ProcessRepayment) + Widgets
   Console/Commands/    ReconcileLedger; Loans/{ProcessLateLoans,DetectBuybackEligible,
                        ProcessScheduledPayouts,ReportPayoutExposure}; Ops/{TelegramDigest,TelegramTest}
   Http/                thin Api controllers → services; Form Requests; API Resources
