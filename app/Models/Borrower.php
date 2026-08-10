@@ -12,7 +12,19 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class Borrower extends Model
 {
     /** @use HasFactory<BorrowerFactory> */
-    use HasFactory, Auditable;
+    use Auditable, HasFactory;
+
+    /**
+     * «Кредитен рейтинг» letter scale (client decision 2026-08-10:
+     * «A — топ, B — много добър, C — добър; ние нямаме слаб»). Stored in
+     * the legacy-named credit_score column (string since the 2026-08-10
+     * migration). Value ⇒ label map for admin Selects.
+     */
+    public const CREDIT_RATINGS = [
+        'A' => 'A — топ',
+        'B' => 'B — много добър',
+        'C' => 'C — добър',
+    ];
 
     protected $fillable = [
         'full_name',

@@ -18,7 +18,7 @@ class BorrowerFactory extends Factory
             'address' => fake()->address(),
             'phone' => fake()->phoneNumber(),
             'income' => fake()->randomFloat(2, 800, 8000),
-            'credit_score' => fake()->optional(0.7)->numberBetween(300, 850),
+            'credit_score' => fake()->optional(0.7)->randomElement(['A', 'B', 'C']),
             'notes' => fake()->optional(0.3)->sentence(),
         ];
     }

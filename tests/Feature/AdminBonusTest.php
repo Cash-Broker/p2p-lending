@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Filament\Resources\DepositRequestResource\Pages\ListDepositRequests;
 use App\Filament\Resources\UserResource\Pages\ViewUser;
-use App\Models\DepositRequest;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Notifications\BonusCreditedNotification;
@@ -195,20 +194,15 @@ class AdminBonusTest extends TestCase
             ->assertHasNoActionErrors();
     }
 
-    public function test_bonus_granted_from_deposits_page_by_user_code(): void
+    public function test_bonus_granted_from_deposits_page_via_user_picker(): void
     {
         Notification::fake();
         $this->actingAsAdmin();
         $user = $this->investor('10.00');
-        $deposit = DepositRequest::factory()->create([
-            'user_id' => $user->id,
-            'amount' => null,
-            'status' => 'pending',
-        ]);
 
         Livewire::test(ListDepositRequests::class)
             ->callAction(TestAction::make('grant_bonus')->table(), data: [
-                'reference_code' => $deposit->reference_code,
+                'user_id' => $user->id,
                 'amount' => '200',
                 'reason' => 'Доведен клиент',
             ])
@@ -222,48 +216,27 @@ class AdminBonusTest extends TestCase
             'description' => 'Бонус: Доведен клиент',
         ]);
 
-        // The DEP code identifies the user, nothing more — the deposit
-        // request must be untouched (retired only by approve/reject,
-        // client decision 2026-07-17).
-        $deposit->refresh();
-        $this->assertSame('pending', $deposit->status);
-        $this->assertNull($deposit->amount);
-
         Notification::assertSentTo($user, BonusCreditedNotification::class);
     }
 
-    public function test_deposits_page_bonus_works_with_a_historical_code_too(): void
+    public function test_deposits_page_bonus_requires_a_user_and_rejects_non_investors(): void
     {
-        Notification::fake();
-        $this->actingAsAdmin();
+        $admin = $this->actingAsAdmin();
         $user = $this->investor();
-        // Already-approved code — no longer creditable as a deposit, but
-        // still unambiguously identifies its owner for a bonus.
-        $deposit = DepositRequest::factory()->create([
-            'user_id' => $user->id,
-            'amount' => '500.00',
-            'status' => 'approved',
-        ]);
 
+        // Missing user — form validation.
         Livewire::test(ListDepositRequests::class)
             ->callAction(TestAction::make('grant_bonus')->table(), data: [
-                'reference_code' => $deposit->reference_code,
+                'user_id' => null,
                 'amount' => '100',
-                'reason' => 'Кампания',
+                'reason' => 'Тест',
             ])
-            ->assertHasNoActionErrors();
+            ->assertHasActionErrors(['user_id']);
 
-        $this->assertSame('100.00', $user->wallet->fresh()->available);
-    }
-
-    public function test_deposits_page_bonus_rejects_unknown_code(): void
-    {
-        $this->actingAsAdmin();
-        $user = $this->investor();
-
+        // An admin account is not a valid bonus target.
         Livewire::test(ListDepositRequests::class)
             ->callAction(TestAction::make('grant_bonus')->table(), data: [
-                'reference_code' => 'DEP-NOSUCH01',
+                'user_id' => $admin->id,
                 'amount' => '100',
                 'reason' => 'Тест',
             ])

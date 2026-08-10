@@ -5,8 +5,10 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\BorrowerResource\Pages;
 use App\Models\Borrower;
 use BackedEnum;
+use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -14,23 +16,31 @@ use Filament\Tables\Table;
 class BorrowerResource extends Resource
 {
     protected static ?string $model = Borrower::class;
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-user-group';
+
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-user-group';
+
     protected static ?string $navigationLabel = 'Кредитополучатели';
+
     protected static ?string $pluralModelLabel = 'Кредитополучатели';
+
     protected static ?string $modelLabel = 'Кредитополучател';
+
     protected static ?int $navigationSort = 6;
 
     public static function form(Schema $form): Schema
     {
         return $form->schema([
-            \Filament\Schemas\Components\Section::make('Лични данни')->schema([
+            Section::make('Лични данни')->schema([
                 Forms\Components\TextInput::make('full_name')->label('Пълно име')->required(),
                 Forms\Components\TextInput::make('address')->label('Адрес')->required(),
                 Forms\Components\TextInput::make('phone')->label('Телефон')->required(),
             ])->columns(2),
-            \Filament\Schemas\Components\Section::make('Финансови данни')->schema([
+            Section::make('Финансови данни')->schema([
                 Forms\Components\TextInput::make('income')->label('Доход (€)')->numeric()->required(),
-                Forms\Components\TextInput::make('credit_score')->label('Кредитен рейтинг')->numeric()->nullable(),
+                Forms\Components\Select::make('credit_score')->label('Кредитен рейтинг')
+                    ->options(Borrower::CREDIT_RATINGS)
+                    ->placeholder('— без рейтинг —')
+                    ->nullable(),
                 Forms\Components\Textarea::make('notes')->label('Бележки')->nullable(),
             ])->columns(2),
         ]);
@@ -43,11 +53,11 @@ class BorrowerResource extends Resource
                 Tables\Columns\TextColumn::make('full_name')->label('Име')->searchable(),
                 Tables\Columns\TextColumn::make('personal_id')->label('ЕГН')
                     ->placeholder('—')
-                    ->formatStateUsing(fn (?string $state) => $state ? '****' . substr($state, -4) : '—'),
+                    ->formatStateUsing(fn (?string $state) => $state ? '****'.substr($state, -4) : '—'),
                 Tables\Columns\TextColumn::make('loans_count')->label('Кредити')->counts('loans'),
                 Tables\Columns\TextColumn::make('created_at')->label('Създаден')->date('d.m.Y'),
             ])
-            ->actions([\Filament\Actions\EditAction::make()]);
+            ->actions([EditAction::make()]);
     }
 
     public static function getRelations(): array

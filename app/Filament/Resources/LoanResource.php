@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\LoanResource\Pages;
 use App\Models\Borrower;
+use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\Originator;
 use App\Models\User;
@@ -15,6 +16,8 @@ use App\Services\ScheduledPayoutService;
 use BackedEnum;
 use Closure;
 use Filament\Actions\Action;
+use Filament\Actions\BulkAction;
+use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Forms\Components\Component;
@@ -25,6 +28,7 @@ use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
@@ -57,7 +61,10 @@ class LoanResource extends Resource
             Forms\Components\TextInput::make('phone')->label('Телефон')->required(),
             Forms\Components\TextInput::make('address')->label('Адрес')->required(),
             Forms\Components\TextInput::make('income')->label('Доход (€)')->numeric()->required(),
-            Forms\Components\TextInput::make('credit_score')->label('Кредитен рейтинг')->numeric()->nullable(),
+            Forms\Components\Select::make('credit_score')->label('Кредитен рейтинг')
+                ->options(Borrower::CREDIT_RATINGS)
+                ->placeholder('— без рейтинг —')
+                ->nullable(),
             Forms\Components\Textarea::make('notes')->label('Бележки')->nullable()->columnSpanFull(),
         ];
     }
@@ -543,7 +550,78 @@ class LoanResource extends Resource
                                 ->send();
                         }
                     }),
+
+                // Deletion straight from the list (boss 2026-08-10). Same
+                // guards as the EditLoan header delete: ONLY drafts with zero
+                // funding and no investments — a loan investors have money in
+                // is a financial record, not a row to clean up (removing it
+                // needs the refund/reversal flow — open product decision).
+                DeleteAction::make()
+                    ->label('Изтрий')
+                    ->visible(fn (Loan $r) => self::isDeletableLoan($r))
+                    ->before(function (Loan $record, DeleteAction $action) {
+                        if (! self::isDeletableLoan($record)) {
+                            Notification::make()->title('Кредитът не може да бъде изтрит')
+                                ->body('Само чернови без финансиране и без инвестиции могат да се трият.')
+                                ->danger()->send();
+                            $action->cancel();
+                        }
+                    }),
+            ])
+            ->bulkActions([
+                // Bulk cleanup with the SAME eligibility rule per record:
+                // eligible rows are deleted, the rest are skipped and counted —
+                // never a silent partial wipe.
+                BulkAction::make('delete_drafts')
+                    ->label('Изтрий избраните (само чернови)')
+                    ->icon('heroicon-o-trash')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->modalHeading('Изтриване на кредити')
+                    ->modalDescription('Ще бъдат изтрити САМО кредити в чернова, без финансиране и без инвестиции. Всички останали избрани ще бъдат пропуснати.')
+                    ->deselectRecordsAfterCompletion()
+                    ->action(function (Collection $records) {
+                        $deleted = 0;
+                        $skipped = 0;
+
+                        foreach ($records as $loan) {
+                            if (! self::isDeletableLoan($loan)) {
+                                $skipped++;
+
+                                continue;
+                            }
+
+                            try {
+                                $loan->delete();
+                                $deleted++;
+                            } catch (\Throwable $e) {
+                                Log::warning('Bulk loan delete skipped a row', [
+                                    'loan_id' => $loan->id, 'error' => $e->getMessage(),
+                                ]);
+                                $skipped++;
+                            }
+                        }
+
+                        Notification::make()
+                            ->title("Изтрити: {$deleted} · Пропуснати: {$skipped}")
+                            ->body($skipped > 0
+                                ? 'Пропуснатите не са чернови, имат финансиране или инвестиции.'
+                                : 'Всички избрани кредити бяха изтрити.')
+                            ->{$deleted > 0 ? 'success' : 'warning'}()
+                            ->send();
+                    }),
             ]);
+    }
+
+    /**
+     * The single deletion rule for loans: draft + zero funded + zero
+     * investments. Everything past that point is a financial record.
+     */
+    protected static function isDeletableLoan(Loan $loan): bool
+    {
+        return $loan->status === Loan::STATUS_DRAFT
+            && bccomp((string) $loan->funded_amount, '0', 2) <= 0
+            && ! Investment::where('loan_id', $loan->id)->exists();
     }
 
     public static function getRelations(): array

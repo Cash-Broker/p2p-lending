@@ -122,8 +122,8 @@ Decision rationale now lives in git history + `docs/BIZNES-DOKUMENTACIA.md`.
   repayment_principal/interest, buyback_principal/interest, early_repayment_principal/interest,
   interest_accrued, interest_released, interest_accrual_reversed, fee, **bonus** (2026-08-09:
   admin promo credit «Начисли бонус» — primary entry: Депозити header action next to «Захрани
-  сметка», user identified by ANY of their DEP codes (identification only, code NOT consumed);
-  secondary: ViewUser header (no code needed). Shared guts `UserResource::grantBonus()` →
+  сметка», searchable investor picker (newest 50 preloaded, name/email SQL search — NO codes,
+  boss 2026-08-10); secondary: ViewUser header. Shared guts `UserResource::grantBonus()` →
   `WalletService::bonus()` → available+; 2-min identical-grant replay guard; unique ref
   `bonus:admin:{id}:{uuid}`; reason ≤248 chars (255 − «Бонус: » prefix); NO bank wire behind
   it — bank-statement reconciliation must EXCLUDE `SUM(type='bonus')`, mirror of the fee note;
