@@ -84,7 +84,20 @@ class UserResource extends Resource
                         'pending' => 'Очакващ', 'submitted' => 'Изпратен', 'in_review' => 'В преглед', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен', default => $state
                     })
                     ->colors(['warning' => 'pending', 'info' => 'submitted', 'primary' => 'in_review', 'success' => 'approved', 'danger' => 'rejected']),
-                Tables\Columns\TextColumn::make('wallet.available')->label('Баланс')->money('EUR'),
+                // «Кой с какви пари е в платформата» (boss 2026-08-10): the
+                // invested bucket = principal currently deployed into loans.
+                // Clicking through opens the global «Инвестиции» register
+                // pre-filtered to this user — the per-loan breakdown.
+                Tables\Columns\TextColumn::make('wallet.invested')->label('Инвестирано')
+                    ->money('EUR')
+                    ->placeholder('—')
+                    ->tooltip('Кликни за разбивка по кредити')
+                    ->url(fn (User $record): ?string => $record->wallet !== null && bccomp((string) $record->wallet->invested, '0', 2) > 0
+                        ? InvestmentResource::getUrl().'?tableFilters[user_id][value]='.$record->id
+                        : null)
+                    ->color('info')
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('wallet.available')->label('Свободни')->money('EUR'),
                 Tables\Columns\TextColumn::make('created_at')->label('Регистрация')->date('d.m.Y'),
             ])
             ->filters([
