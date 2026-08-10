@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AmortizationSchedule;
+use App\Models\Borrower;
 use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\Originator;
@@ -11,10 +12,14 @@ use App\Models\User;
 use App\Models\Wallet;
 use App\Services\DepositService;
 use App\Services\RepaymentService;
+use App\Services\WalletService;
 use App\Services\WithdrawalService;
+use Database\Factories\BorrowerAnonymizedProfileFactory;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class AuditFixesTest extends TestCase
@@ -39,8 +44,8 @@ class AuditFixesTest extends TestCase
     private function createActiveLoanWithInvestors(int $investorCount = 3, string $loanAmount = '900.00'): array
     {
         $originator = Originator::factory()->create();
-        $borrower = \App\Models\Borrower::factory()->create();
-        $borrower->anonymizedProfile()->create(\Database\Factories\BorrowerAnonymizedProfileFactory::new()->definition());
+        $borrower = Borrower::factory()->create();
+        $borrower->anonymizedProfile()->create(BorrowerAnonymizedProfileFactory::new()->definition());
 
         $investmentAmount = bcdiv($loanAmount, (string) $investorCount, 2);
 
@@ -161,7 +166,7 @@ class AuditFixesTest extends TestCase
         app(WithdrawalService::class)->createRequest($investor->id, '800.00', 'BG80BNBG96611020345678');
 
         // Second withdrawal of 500 should fail — only 200 available
-        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $this->expectException(ValidationException::class);
 
         app(WithdrawalService::class)->createRequest($investor->id, '500.00', 'BG80BNBG96611020345678');
     }
@@ -172,8 +177,8 @@ class AuditFixesTest extends TestCase
     {
         $investor = $this->createVerifiedInvestor(['available' => '5000.00']);
         $originator = Originator::factory()->create();
-        $borrower = \App\Models\Borrower::factory()->create();
-        $borrower->anonymizedProfile()->create(\Database\Factories\BorrowerAnonymizedProfileFactory::new()->definition());
+        $borrower = Borrower::factory()->create();
+        $borrower->anonymizedProfile()->create(BorrowerAnonymizedProfileFactory::new()->definition());
 
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
@@ -210,7 +215,7 @@ class AuditFixesTest extends TestCase
     public function test_loan_status_cannot_go_active_to_draft(): void
     {
         $originator = Originator::factory()->create();
-        $borrower = \App\Models\Borrower::factory()->create();
+        $borrower = Borrower::factory()->create();
 
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
@@ -229,13 +234,17 @@ class AuditFixesTest extends TestCase
     public function test_loan_immutability_cannot_edit_amount_on_published(): void
     {
         $originator = Originator::factory()->create();
-        $borrower = \App\Models\Borrower::factory()->create();
+        $borrower = Borrower::factory()->create();
 
+        // Since 2026-08-10 the freeze binds at the first INVESTED lev (an
+        // uninvested published loan is fully editable) — so the frozen case
+        // needs money in the loan.
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
             'borrower_id' => $borrower->id,
             'status' => Loan::STATUS_PUBLISHED,
             'amount' => '10000.00',
+            'funded_amount' => '100.00',
         ]);
 
         $this->expectException(\LogicException::class);
@@ -250,8 +259,8 @@ class AuditFixesTest extends TestCase
     {
         $investor = $this->createVerifiedInvestor();
         $originator = Originator::factory()->create();
-        $borrower = \App\Models\Borrower::factory()->create();
-        $borrower->anonymizedProfile()->create(\Database\Factories\BorrowerAnonymizedProfileFactory::new()->definition());
+        $borrower = Borrower::factory()->create();
+        $borrower->anonymizedProfile()->create(BorrowerAnonymizedProfileFactory::new()->definition());
 
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
@@ -268,7 +277,7 @@ class AuditFixesTest extends TestCase
     public function test_repayment_on_non_active_loan_rejected(): void
     {
         $originator = Originator::factory()->create();
-        $borrower = \App\Models\Borrower::factory()->create();
+        $borrower = Borrower::factory()->create();
 
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
@@ -331,7 +340,7 @@ class AuditFixesTest extends TestCase
 
         $this->expectException(\InvalidArgumentException::class);
 
-        app(\App\Services\WalletService::class)->debit(
+        app(WalletService::class)->debit(
             $investor->id,
             '200.00',
             Transaction::TYPE_WITHDRAWAL,
@@ -403,7 +412,7 @@ class AuditFixesTest extends TestCase
         $auditId = \DB::table('audit_logs')->latest('id')->value('id');
         $this->assertNotNull($auditId, 'Auditable trait must have written a row');
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessage('Audit logs are immutable and cannot be updated');
 
         // Bypass model events entirely — this is the attack scenario:
@@ -423,7 +432,7 @@ class AuditFixesTest extends TestCase
         $auditId = \DB::table('audit_logs')->latest('id')->value('id');
         $this->assertNotNull($auditId);
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
         $this->expectExceptionMessage('Audit logs are immutable and cannot be deleted');
 
         \DB::table('audit_logs')->where('id', $auditId)->delete();

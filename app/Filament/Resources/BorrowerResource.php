@@ -43,6 +43,25 @@ class BorrowerResource extends Resource
                     ->nullable(),
                 Forms\Components\Textarea::make('notes')->label('Бележки')->nullable(),
             ])->columns(2),
+            // Investor-facing anonymized profile, collected AT creation so
+            // «Неопределен» placeholders never reach the site (boss
+            // 2026-08-10). On EDIT the profile is managed by its relation
+            // manager below — these fields are create-only.
+            Section::make('Профил за инвеститора (анонимен, вижда се на сайта)')->schema([
+                Forms\Components\Select::make('profile_risk_class')->label('Рисков клас')
+                    ->options(['A' => 'A — Нисък', 'B' => 'B — Умерен', 'C' => 'C — Среден', 'D' => 'D — Повишен', 'E' => 'E — Висок'])
+                    ->default('C')
+                    ->required()
+                    ->dehydrated(false),
+                Forms\Components\TextInput::make('profile_region')->label('Регион')
+                    ->placeholder('напр. Кюстендил')->required()->dehydrated(false),
+                Forms\Components\TextInput::make('profile_loan_purpose')->label('Цел на кредита')
+                    ->placeholder('напр. Потребителски нужди')->required()->dehydrated(false),
+                Forms\Components\TextInput::make('profile_collateral_type')->label('Обезпечение')
+                    ->nullable()->dehydrated(false),
+                Forms\Components\TextInput::make('profile_age_group')->label('Възрастова група')
+                    ->placeholder('напр. 26-35')->nullable()->dehydrated(false),
+            ])->columns(2)->hiddenOn('edit'),
         ]);
     }
 

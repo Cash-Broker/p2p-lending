@@ -27,34 +27,61 @@ class BorrowerCreditRatingTest extends TestCase
         $this->actingAs(User::factory()->create(['role' => 'admin']));
     }
 
-    public function test_admin_creates_borrower_with_letter_rating(): void
+    /**
+     * Baseline valid create-form payload — profile fields included since
+     * the investor-facing section became required (2026-08-10).
+     *
+     * @return array<string, mixed>
+     */
+    private function validForm(array $overrides = []): array
+    {
+        return array_merge([
+            'full_name' => 'Тест Тестов',
+            'address' => 'гр. София',
+            'phone' => '0888123456',
+            'income' => '2500',
+            'credit_score' => 'B',
+            'profile_risk_class' => 'B',
+            'profile_region' => 'Кюстендил',
+            'profile_loan_purpose' => 'Потребителски нужди',
+            'profile_age_group' => '26-35',
+        ], $overrides);
+    }
+
+    public function test_admin_creates_borrower_with_letter_rating_and_investor_profile(): void
     {
         Livewire::test(CreateBorrower::class)
-            ->fillForm([
-                'full_name' => 'Тест Тестов',
-                'address' => 'гр. София',
-                'phone' => '0888123456',
-                'income' => '2500',
-                'credit_score' => 'B',
-            ])
+            ->fillForm($this->validForm())
             ->call('create')
             ->assertHasNoFormErrors();
 
         $borrower = Borrower::latest('id')->first();
         $this->assertSame('Тест Тестов', $borrower->full_name);
         $this->assertSame('B', $borrower->credit_score);
+
+        // The investor-facing profile carries the REAL values — never the
+        // «Неопределен» placeholders (boss complaint 2026-08-10).
+        $profile = $borrower->anonymizedProfile;
+        $this->assertSame('B', $profile->risk_class);
+        $this->assertSame('Кюстендил', $profile->region);
+        $this->assertSame('Потребителски нужди', $profile->loan_purpose);
+        $this->assertSame('26-35', $profile->age_group);
+    }
+
+    public function test_investor_profile_region_and_purpose_are_required(): void
+    {
+        Livewire::test(CreateBorrower::class)
+            ->fillForm($this->validForm(['profile_region' => null, 'profile_loan_purpose' => null]))
+            ->call('create')
+            ->assertHasFormErrors(['profile_region', 'profile_loan_purpose']);
+
+        $this->assertSame(0, Borrower::count());
     }
 
     public function test_rating_select_rejects_values_outside_the_scale(): void
     {
         Livewire::test(CreateBorrower::class)
-            ->fillForm([
-                'full_name' => 'Тест Тестов',
-                'address' => 'гр. София',
-                'phone' => '0888123456',
-                'income' => '2500',
-                'credit_score' => 'X',
-            ])
+            ->fillForm($this->validForm(['credit_score' => 'X']))
             ->call('create')
             ->assertHasFormErrors(['credit_score']);
     }
@@ -62,13 +89,7 @@ class BorrowerCreditRatingTest extends TestCase
     public function test_rating_is_optional(): void
     {
         Livewire::test(CreateBorrower::class)
-            ->fillForm([
-                'full_name' => 'Без Рейтинг',
-                'address' => 'гр. Пловдив',
-                'phone' => '0888999999',
-                'income' => '1800',
-                'credit_score' => null,
-            ])
+            ->fillForm($this->validForm(['full_name' => 'Без Рейтинг', 'credit_score' => null]))
             ->call('create')
             ->assertHasNoFormErrors();
 

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Filament\Resources\LoanResource\Pages\EditLoan;
+use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\User;
 use Filament\Facades\Filament;
@@ -32,11 +33,25 @@ class LoanEditSaveTest extends TestCase
         Filament::setCurrentPanel(Filament::getPanel('admin'));
     }
 
+    /** A live loan with an actual investor position — the frozen case. */
+    private function investedPublishedLoan(string $amount = '5000.00'): Loan
+    {
+        $loan = Loan::factory()->published()->create(['amount' => $amount]);
+        $investor = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
+        Investment::factory()->create([
+            'loan_id' => $loan->id,
+            'user_id' => $investor->id,
+            'amount' => '100.00',
+        ]);
+
+        return $loan->fresh();
+    }
+
     // ── The blocker ──
 
-    public function test_guard_blocks_a_locked_field_change_on_a_live_loan(): void
+    public function test_guard_blocks_a_locked_field_change_on_an_invested_loan(): void
     {
-        $loan = Loan::factory()->published()->create(['amount' => '5000.00']);
+        $loan = $this->investedPublishedLoan();
 
         $this->expectException(\LogicException::class);
 
@@ -45,11 +60,26 @@ class LoanEditSaveTest extends TestCase
         $loan->update(['status' => Loan::STATUS_DRAFT, 'amount' => '9999.00']);
     }
 
+    // ── 2026-08-10: terms freeze at the FIRST INVESTMENT, not at publish ──
+
+    public function test_published_loan_without_investments_is_fully_editable(): void
+    {
+        $loan = Loan::factory()->published()->create(['amount' => '5000.00']);
+
+        // The model guard lets every term change through…
+        $loan->update(['amount' => '7000.00', 'term_months' => 9, 'type' => 'business']);
+        $this->assertSame('7000.00', $loan->fresh()->amount);
+
+        // …and sanitize does NOT strip the payload either.
+        $clean = EditLoan::sanitizeSaveData($loan->fresh(), ['amount' => '8000.00', 'status' => Loan::STATUS_PUBLISHED]);
+        $this->assertSame('8000.00', $clean['amount']);
+    }
+
     // ── The fix ──
 
     public function test_sanitize_strips_locked_fields_so_status_change_saves(): void
     {
-        $loan = Loan::factory()->published()->create(['amount' => '5000.00']);
+        $loan = $this->investedPublishedLoan();
         $originalBorrower = $loan->borrower_id;
 
         // The full, coercion-mangled payload Filament would dehydrate.

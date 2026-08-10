@@ -63,15 +63,22 @@ class Borrower extends Model
      * borrower_anonymized_profiles.borrower_id is UNIQUE, and a global hook would
      * collide with factory `->has(BorrowerAnonymizedProfile::factory())` usage in
      * the test suite.
+     *
+     * $attributes lets the creation forms pass the REAL investor-facing values
+     * (risk class, region, purpose…) — the «Неопределен» placeholders are only
+     * a last-resort fallback, never something an investor should normally see
+     * (boss complaint 2026-08-10).
+     *
+     * @param  array<string, mixed>  $attributes
      */
-    public function ensureAnonymizedProfile(): void
+    public function ensureAnonymizedProfile(array $attributes = []): void
     {
         if (! $this->anonymizedProfile()->exists()) {
-            $this->anonymizedProfile()->create([
+            $this->anonymizedProfile()->create(array_merge([
                 'risk_class' => 'C',
                 'region' => 'Неопределен',
                 'loan_purpose' => 'Неопределена',
-            ]);
+            ], array_filter($attributes, fn ($value) => $value !== null && $value !== '')));
         }
     }
 

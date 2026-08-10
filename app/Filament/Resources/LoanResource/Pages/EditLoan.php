@@ -49,9 +49,22 @@ class EditLoan extends EditRecord
     {
         $newStatus = $data['status'] ?? $record->status;
 
-        if ($record->status !== Loan::STATUS_DRAFT) {
+        // Terms are strippable only once the loan actually has investor money
+        // (isTermsEditable) — before the first investment EVERYTHING is
+        // editable in any status (boss 2026-08-10), and the model guard
+        // enforces the same boundary.
+        if ($record->status !== Loan::STATUS_DRAFT && ! $record->isTermsEditable()) {
             foreach (Loan::IMMUTABLE_AFTER_DRAFT as $field) {
                 unset($data[$field]);
+            }
+        }
+
+        // Filament dehydrates empty optional inputs as '' — normalize the two
+        // nullable columns so an unlocked-loan save can't write '' into a
+        // decimal (would coerce to 0.00 → funding cap 0) or an FK.
+        foreach (['investable_amount', 'co_borrower_id'] as $nullable) {
+            if (array_key_exists($nullable, $data) && $data[$nullable] === '') {
+                $data[$nullable] = null;
             }
         }
 

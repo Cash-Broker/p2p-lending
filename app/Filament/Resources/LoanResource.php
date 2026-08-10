@@ -48,32 +48,62 @@ class LoanResource extends Resource
     protected static ?int $navigationSort = 4;
 
     /**
-     * Inline borrower/co-debtor form — "general info" only. ЕГН (personal_id)
-     * is intentionally absent; the client wants borrowers added on the spot
-     * without it.
+     * Inline borrower/co-debtor form. ЕГН (personal_id) is intentionally
+     * absent; the client wants borrowers added on the spot without it.
+     *
+     * The «Профил за инвеститора» section feeds the ANONYMIZED profile —
+     * without it the investor page showed «Неопределен» region/purpose
+     * placeholders (boss complaint 2026-08-10: «това трябва да го вижда
+     * инвеститорът»).
      *
      * @return array<int, Component>
      */
     protected static function borrowerInlineForm(): array
     {
         return [
-            Forms\Components\TextInput::make('full_name')->label('Пълно име')->required(),
-            Forms\Components\TextInput::make('phone')->label('Телефон')->required(),
-            Forms\Components\TextInput::make('address')->label('Адрес')->required(),
-            Forms\Components\TextInput::make('income')->label('Доход (€)')->numeric()->required(),
-            Forms\Components\Select::make('credit_score')->label('Кредитен рейтинг')
-                ->options(Borrower::CREDIT_RATINGS)
-                ->placeholder('— без рейтинг —')
-                ->nullable(),
-            Forms\Components\Textarea::make('notes')->label('Бележки')->nullable()->columnSpanFull(),
+            Section::make('Досие (поверително, вижда се само от админ)')->schema([
+                Forms\Components\TextInput::make('full_name')->label('Пълно име')->required(),
+                Forms\Components\TextInput::make('phone')->label('Телефон')->required(),
+                Forms\Components\TextInput::make('address')->label('Адрес')->required(),
+                Forms\Components\TextInput::make('income')->label('Доход (€)')->numeric()->required(),
+                Forms\Components\Select::make('credit_score')->label('Кредитен рейтинг')
+                    ->options(Borrower::CREDIT_RATINGS)
+                    ->placeholder('— без рейтинг —')
+                    ->nullable(),
+                Forms\Components\Textarea::make('notes')->label('Бележки')->nullable()->columnSpanFull(),
+            ])->columns(2),
+            Section::make('Профил за инвеститора (анонимен, вижда се на сайта)')->schema([
+                Forms\Components\Select::make('profile_risk_class')->label('Рисков клас')
+                    ->options(['A' => 'A — Нисък', 'B' => 'B — Умерен', 'C' => 'C — Среден', 'D' => 'D — Повишен', 'E' => 'E — Висок'])
+                    ->default('C')
+                    ->required(),
+                Forms\Components\TextInput::make('profile_region')->label('Регион')
+                    ->placeholder('напр. Кюстендил')->required(),
+                Forms\Components\TextInput::make('profile_loan_purpose')->label('Цел на кредита')
+                    ->placeholder('напр. Потребителски нужди')->required(),
+                Forms\Components\TextInput::make('profile_collateral_type')->label('Обезпечение')->nullable(),
+                Forms\Components\TextInput::make('profile_age_group')->label('Възрастова група')
+                    ->placeholder('напр. 26-35')->nullable(),
+            ])->columns(2),
         ];
     }
 
     /** Persist an inline-created borrower + its investor-facing anonymized profile. */
     protected static function createBorrowerInline(array $data): int
     {
-        $borrower = Borrower::create($data);
-        $borrower->ensureAnonymizedProfile();
+        $profile = [
+            'risk_class' => $data['profile_risk_class'] ?? null,
+            'region' => $data['profile_region'] ?? null,
+            'loan_purpose' => $data['profile_loan_purpose'] ?? null,
+            'collateral_type' => $data['profile_collateral_type'] ?? null,
+            'age_group' => $data['profile_age_group'] ?? null,
+        ];
+
+        $borrower = Borrower::create(collect($data)->except([
+            'profile_risk_class', 'profile_region', 'profile_loan_purpose',
+            'profile_collateral_type', 'profile_age_group',
+        ])->all());
+        $borrower->ensureAnonymizedProfile($profile);
 
         return $borrower->getKey();
     }
@@ -133,7 +163,7 @@ class LoanResource extends Resource
                 Forms\Components\Select::make('originator_id')->label('Оригинатор')
                     ->options(Originator::pluck('name', 'id'))
                     ->required()->searchable()
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
                 // Relationship-backed so Filament renders the "+ Създай" inline
                 // create button. full_name is encrypted → decrypt labels via
@@ -148,7 +178,7 @@ class LoanResource extends Resource
                     ->createOptionForm(self::borrowerInlineForm())
                     ->createOptionModalHeading('Нов кредитополучател')
                     ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
                 Forms\Components\Select::make('co_borrower_id')->label('Съдлъжник')
                     ->helperText('По избор. Може да се добави на момента.')
@@ -160,12 +190,12 @@ class LoanResource extends Resource
                     ->createOptionForm(self::borrowerInlineForm())
                     ->createOptionModalHeading('Нов съдлъжник')
                     ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
                 Forms\Components\Select::make('type')->label('Тип')
                     ->options(['consumer' => 'Потребителски', 'business' => 'Бизнес', 'mortgage' => 'Ипотечен', 'bridge' => 'Мостов'])
                     ->required()
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
                 Forms\Components\Select::make('status')->label('Статус')
                     ->options(function (?Loan $record) {
@@ -222,11 +252,14 @@ class LoanResource extends Resource
             ])->columns(2),
             Section::make('Финансови параметри')->schema([
                 Forms\Components\TextInput::make('amount')->label('Сума на кредита (€)')->numeric()->required()->minValue(100)
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
                 Forms\Components\TextInput::make('investable_amount')->label('Свободни за инвестиция (€)')
-                    ->helperText('Колко от кредита се предлага на инвеститорите (може да е по-малко от сумата). Погасителният план се изчислява върху тази сума.')
-                    ->numeric()->required()->minValue(50)
+                    ->helperText('Колко от кредита се предлага на инвеститорите (може да е по-малко от сумата). Празно = цялата сума. Погасителният план се изчислява върху тази сума.')
+                    // Required on CREATE; legacy loans legitimately store NULL
+                    // (= fall back to the full amount), so an edit of an
+                    // unlocked loan must not be blocked by an empty value.
+                    ->numeric()->required(fn (?Loan $record) => $record === null)->minValue(50)
                     ->rules([
                         fn (Get $get): Closure => function (string $attribute, $value, Closure $fail) use ($get) {
                             $amount = $get('amount');
@@ -235,22 +268,22 @@ class LoanResource extends Resource
                             }
                         },
                     ])
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
                 Forms\Components\TextInput::make('interest_rate')->label('Доходност (%)')
                     ->helperText('Годишната доходност, която инвеститорите получават. Използва се за изготвяне на погасителен план.')
                     ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
                     ->rules(['numeric', 'min:0.01', 'max:999.99'])
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
                 Forms\Components\TextInput::make('interest_rate_annual')->label('Лихва кредитополучател (%)')
                     ->helperText('Годишната лихва, която кредитополучателят плаща. Използва се за изчисляване на ГПР (APR). Трябва да е ≥ "Доходност" (разликата е марж на оригинатора).')
                     ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
                     ->rules(['numeric', 'min:0.01', 'max:999.99'])
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
                 Forms\Components\TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
-                    ->disabled(fn (?Loan $record) => $record?->id && $record->status !== Loan::STATUS_DRAFT)
+                    ->disabled(fn (?Loan $record) => $record?->id && ! $record->isTermsEditable())
                     ->validatedWhenNotDehydrated(false),
             ])->columns(2),
 

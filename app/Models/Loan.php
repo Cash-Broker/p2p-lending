@@ -117,7 +117,12 @@ class Loan extends Model
         self::STATUS_BOUGHT_BACK => [],
     ];
 
-    // Fields that become immutable once the loan leaves draft status
+    // Fields frozen once the FIRST investor money arrives (see
+    // isTermsEditable()). Historically frozen at publish; relaxed 2026-08-10
+    // (boss: «трябва да може да редактира абсолютно всичко») — the thing the
+    // freeze protects is investors committed at these terms (their contracts
+    // snapshot them), and before the first investment there is nobody to
+    // protect. The name is kept for grep-ability across docs/tests.
     const IMMUTABLE_AFTER_DRAFT = [
         'amount', 'investable_amount', 'interest_rate', 'interest_rate_annual',
         'term_months', 'originator_id', 'borrower_id', 'co_borrower_id', 'type',
@@ -138,14 +143,30 @@ class Loan extends Model
         self::STATUS_BOUGHT_BACK,
     ];
 
+    /**
+     * Whether the loan's financial/identity terms may still be edited:
+     * true until the FIRST investment (no funded money, no investment
+     * rows), regardless of draft/published/funding status. From the first
+     * invested lev the IMMUTABLE_AFTER_DRAFT fields are frozen — investor
+     * contracts snapshot exactly these terms.
+     */
+    public function isTermsEditable(): bool
+    {
+        return bccomp((string) ($this->getOriginal('funded_amount') ?? $this->funded_amount ?? '0'), '0', 2) <= 0
+            && ! $this->investments()->exists();
+    }
+
     protected static function booted(): void
     {
         static::updating(function (Loan $loan) {
-            // Enforce term immutability after draft
-            if ($loan->getOriginal('status') !== self::STATUS_DRAFT) {
+            // Terms freeze at the FIRST invested lev — an investor's contract
+            // snapshots these fields, so they must never shift under a
+            // committed position. Before any investment the loan is a
+            // marketing object and stays fully editable in any status.
+            if ($loan->getOriginal('status') !== self::STATUS_DRAFT && ! $loan->isTermsEditable()) {
                 foreach (self::IMMUTABLE_AFTER_DRAFT as $field) {
                     if ($loan->isDirty($field)) {
-                        throw new \LogicException("Cannot modify '{$field}' on a non-draft loan.");
+                        throw new \LogicException("Cannot modify '{$field}' on a loan with investments.");
                     }
                 }
             }
