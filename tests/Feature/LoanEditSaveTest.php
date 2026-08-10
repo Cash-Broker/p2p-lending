@@ -165,4 +165,20 @@ class LoanEditSaveTest extends TestCase
         Livewire::test(EditLoan::class, ['record' => $loan->getRouteKey()])
             ->assertOk();
     }
+
+    public function test_bottom_save_button_stays_bound_to_the_form(): void
+    {
+        // 2026-08-10 layout: the buttons render BELOW the relation managers,
+        // OUTSIDE the <form> element — the submit button works only through
+        // the HTML form-id association. If either half of the pair
+        // disappears, «Запази» becomes a dead button.
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+
+        $loan = Loan::factory()->published()->create();
+
+        Livewire::test(EditLoan::class, ['record' => $loan->getRouteKey()])
+            ->assertOk()
+            ->assertSeeHtml('id="form"')
+            ->assertSeeHtml('form="form"');
+    }
 }
