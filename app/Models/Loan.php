@@ -117,12 +117,17 @@ class Loan extends Model
         self::STATUS_BOUGHT_BACK => [],
     ];
 
-    // Fields frozen once the FIRST investor money arrives (see
-    // isTermsEditable()). Historically frozen at publish; relaxed 2026-08-10
-    // (boss: «трябва да може да редактира абсолютно всичко») — the thing the
-    // freeze protects is investors committed at these terms (their contracts
-    // snapshot them), and before the first investment there is nobody to
-    // protect. The name is kept for grep-ability across docs/tests.
+    // ⚠ NO LONGER ENFORCED as a write-guard. Client decision 2026-08-10
+    // (Reni, explicit, twice): the admin edits EVERYTHING on a loan at any
+    // time, investments or not. What still protects committed investors:
+    //   - Investment rows snapshot rate/payout at invest time — their cash
+    //     flows and InvestmentContract PDFs NEVER follow later loan edits;
+    //   - the quote-vs-commit guard rejects stale-rate commits;
+    //   - DB CHECK chk_loans_funded_amount_valid refuses amount < funded;
+    //   - status transitions + MANUAL_STATUS_BLOCKLIST still gate money-
+    //     moving state changes.
+    // The list remains for the Filament warning banner (which fields are
+    // contract-sensitive) and for tests/docs grep-ability.
     const IMMUTABLE_AFTER_DRAFT = [
         'amount', 'investable_amount', 'interest_rate', 'interest_rate_annual',
         'term_months', 'originator_id', 'borrower_id', 'co_borrower_id', 'type',
@@ -159,17 +164,10 @@ class Loan extends Model
     protected static function booted(): void
     {
         static::updating(function (Loan $loan) {
-            // Terms freeze at the FIRST invested lev — an investor's contract
-            // snapshots these fields, so they must never shift under a
-            // committed position. Before any investment the loan is a
-            // marketing object and stays fully editable in any status.
-            if ($loan->getOriginal('status') !== self::STATUS_DRAFT && ! $loan->isTermsEditable()) {
-                foreach (self::IMMUTABLE_AFTER_DRAFT as $field) {
-                    if ($loan->isDirty($field)) {
-                        throw new \LogicException("Cannot modify '{$field}' on a loan with investments.");
-                    }
-                }
-            }
+            // Term immutability guard REMOVED per explicit client decision
+            // 2026-08-10 — see the IMMUTABLE_AFTER_DRAFT docblock for what
+            // still protects committed investors (snapshots, contracts,
+            // quote guard, DB CHECKs, status machine).
 
             // Enforce valid status transitions
             if ($loan->isDirty('status')) {

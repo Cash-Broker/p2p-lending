@@ -236,9 +236,10 @@ class AuditFixesTest extends TestCase
         $originator = Originator::factory()->create();
         $borrower = Borrower::factory()->create();
 
-        // Since 2026-08-10 the freeze binds at the first INVESTED lev (an
-        // uninvested published loan is fully editable) — so the frozen case
-        // needs money in the loan.
+        // Finding 4.2 REVERSED by explicit client decision 2026-08-10: loan
+        // terms are editable in every status, investments or not. What must
+        // still hold is the MONEY backstop: the DB CHECK refuses shrinking
+        // the amount below what investors already funded.
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
             'borrower_id' => $borrower->id,
@@ -247,10 +248,13 @@ class AuditFixesTest extends TestCase
             'funded_amount' => '100.00',
         ]);
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage("Cannot modify 'amount'");
-
+        // Editing up is allowed…
         $loan->update(['amount' => '99999.00']);
+        $this->assertSame('99999.00', $loan->fresh()->amount);
+
+        // …but below the already-funded total the database refuses.
+        $this->expectException(QueryException::class);
+        $loan->update(['amount' => '50.00']);
     }
 
     // ── Finding 3.1 + 3.2: Draft loan not visible to investor ──

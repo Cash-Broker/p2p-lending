@@ -50,11 +50,18 @@ class OffersRelationManagerTest extends TestCase
         $this->assertSame('14.50', (string) $offer->fresh()->interest_rate);
     }
 
-    public function test_edit_action_hidden_once_loan_active(): void
+    public function test_edit_action_stays_visible_on_active_loans(): void
     {
+        // Client decision 2026-08-10: offers are editable in EVERY status —
+        // committed investors keep their snapshotted terms regardless.
         $loan = Loan::factory()->active()->create();
         $offer = $loan->offers()->first();
 
-        $this->relationManager($loan)->assertTableActionHidden('edit', $offer);
+        $this->relationManager($loan)
+            ->assertTableActionVisible('edit', $offer)
+            ->callTableAction('edit', $offer, data: ['interest_rate' => '17.25', 'is_enabled' => true])
+            ->assertHasNoTableActionErrors();
+
+        $this->assertSame('17.25', (string) $offer->fresh()->interest_rate);
     }
 }

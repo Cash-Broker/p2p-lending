@@ -8,7 +8,6 @@ use Database\Factories\LoanOfferFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use LogicException;
 
 /**
  * One of the (up to three) investor offers on a loan: a payout structure +
@@ -23,9 +22,11 @@ class LoanOffer extends Model
     use Auditable, HasFactory;
 
     /**
-     * Loan statuses in which an offer may still be edited. Mirrors the spirit
-     * of Loan::IMMUTABLE_AFTER_DRAFT — but offers stay editable through
-     * `published`/`funding` (the whole point of the feature), then lock.
+     * ⚠ NO LONGER ENFORCED — client decision 2026-08-10 (Reni): the admin
+     * edits everything at any time. Committed investors are protected by
+     * the rate/payout SNAPSHOT on their Investment row + the quote-vs-commit
+     * guard; a live-offer edit only affects what future investors see (and
+     * past funding there are no future investors anyway). Kept for docs.
      */
     const EDITABLE_STATUSES = [
         Loan::STATUS_DRAFT,
@@ -49,28 +50,6 @@ class LoanOffer extends Model
             'is_enabled' => 'boolean',
             'position' => 'integer',
         ];
-    }
-
-    protected static function booted(): void
-    {
-        static::updating(function (LoanOffer $offer) {
-            // Only the investor-facing terms are locked; touching timestamps etc.
-            // is fine. Snapshots on existing investments already protect history;
-            // this guard stops the LIVE offer drifting under new investors once
-            // the loan is past funding (and protects API/console paths, not just
-            // the status-gated Filament UI).
-            if (! $offer->isDirty(['interest_rate', 'is_enabled', 'payout_type'])) {
-                return;
-            }
-
-            $status = $offer->loan?->status;
-            if ($status !== null && ! in_array($status, self::EDITABLE_STATUSES, true)) {
-                throw new LogicException(
-                    "Cannot modify offer #{$offer->id} on loan #{$offer->loan_id}: "
-                    . "loan status '{$status}' no longer allows offer edits."
-                );
-            }
-        });
     }
 
     public function loan(): BelongsTo

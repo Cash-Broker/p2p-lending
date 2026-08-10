@@ -47,12 +47,15 @@ class LoanOfferAdminTest extends TestCase
         $this->assertFalse($offer->fresh()->is_enabled);
     }
 
-    public function test_offer_locks_once_loan_is_active(): void
+    public function test_offer_stays_editable_on_active_loans(): void
     {
+        // Reversed 2026-08-10 (client, explicit): offers edit in EVERY
+        // status. Committed investors keep their snapshotted rate.
         $loan = Loan::factory()->active()->create();
         $offer = $loan->offers()->where('payout_type', PayoutType::Amortizing)->first();
 
-        $this->expectException(\LogicException::class);
         $offer->update(['interest_rate' => '13.00']);
+
+        $this->assertSame('13.00', (string) $offer->fresh()->interest_rate);
     }
 }

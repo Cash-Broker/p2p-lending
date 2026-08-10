@@ -47,67 +47,66 @@ class LoanEditSaveTest extends TestCase
         return $loan->fresh();
     }
 
-    // ── The blocker ──
+    // ── 2026-08-10 (client, explicit): EVERYTHING editable, always ──
 
-    public function test_guard_blocks_a_locked_field_change_on_an_invested_loan(): void
+    public function test_invested_loan_terms_are_fully_editable(): void
     {
         $loan = $this->investedPublishedLoan();
 
-        $this->expectException(\LogicException::class);
+        $loan->update(['amount' => '9999.00', 'term_months' => 9, 'interest_rate' => '15.00']);
 
-        // This is what the full-payload form save was effectively doing — and
-        // why "Запази" blew up.
-        $loan->update(['status' => Loan::STATUS_DRAFT, 'amount' => '9999.00']);
+        $fresh = $loan->fresh();
+        $this->assertSame('9999.00', $fresh->amount);
+        $this->assertSame(9, (int) $fresh->term_months);
     }
 
-    // ── 2026-08-10: terms freeze at the FIRST INVESTMENT, not at publish ──
+    public function test_committed_investor_snapshot_survives_loan_term_edits(): void
+    {
+        $loan = $this->investedPublishedLoan();
+        $investment = Investment::where('loan_id', $loan->id)->first();
+        $snapshotRate = (string) $investment->interest_rate;
+
+        // The loan-level edit must never touch the investor's contracted terms.
+        $loan->update(['interest_rate' => '55.55', 'term_months' => 48]);
+
+        $this->assertSame($snapshotRate, (string) $investment->fresh()->interest_rate);
+    }
 
     public function test_published_loan_without_investments_is_fully_editable(): void
     {
         $loan = Loan::factory()->published()->create(['amount' => '5000.00']);
 
-        // The model guard lets every term change through…
         $loan->update(['amount' => '7000.00', 'term_months' => 9, 'type' => 'business']);
         $this->assertSame('7000.00', $loan->fresh()->amount);
 
-        // …and sanitize does NOT strip the payload either.
         $clean = EditLoan::sanitizeSaveData($loan->fresh(), ['amount' => '8000.00', 'status' => Loan::STATUS_PUBLISHED]);
         $this->assertSame('8000.00', $clean['amount']);
     }
 
-    // ── The fix ──
+    // ── sanitize: no stripping, only coercion clean-up + published_at ──
 
-    public function test_sanitize_strips_locked_fields_so_status_change_saves(): void
+    public function test_sanitize_keeps_all_fields_and_normalizes_coerced_empties(): void
     {
         $loan = $this->investedPublishedLoan();
-        $originalBorrower = $loan->borrower_id;
 
         // The full, coercion-mangled payload Filament would dehydrate.
         $payload = [
-            'status' => Loan::STATUS_DRAFT,
-            'amount' => '9999.00',       // tampered
-            'investable_amount' => '',   // coerced empty
-            'co_borrower_id' => '',       // coerced empty (stored null)
-            'interest_rate' => '99.99',
-            'borrower_id' => 0,           // coerced
-            'type' => 'business',
+            'status' => Loan::STATUS_PUBLISHED,
+            'amount' => '9999.00',
+            'investable_amount' => '',   // coerced empty → must become null
+            'co_borrower_id' => '',       // coerced empty → must become null
+            'interest_rate' => '19.99',
         ];
 
         $clean = EditLoan::sanitizeSaveData($loan, $payload);
 
-        foreach (Loan::IMMUTABLE_AFTER_DRAFT as $field) {
-            $this->assertArrayNotHasKey($field, $clean, "{$field} must be stripped on a live loan");
-        }
-        $this->assertSame(Loan::STATUS_DRAFT, $clean['status']);
-        $this->assertNull($clean['published_at']);
+        $this->assertSame('9999.00', $clean['amount']);
+        $this->assertSame('19.99', $clean['interest_rate']);
+        $this->assertNull($clean['investable_amount']);
+        $this->assertNull($clean['co_borrower_id']);
 
-        // The update now succeeds and ONLY the status changed.
         $loan->update($clean);
-
-        $fresh = $loan->fresh();
-        $this->assertEquals(Loan::STATUS_DRAFT, $fresh->status);
-        $this->assertEquals('5000.00', $fresh->amount);
-        $this->assertEquals($originalBorrower, $fresh->borrower_id);
+        $this->assertEquals('9999.00', $loan->fresh()->amount);
     }
 
     public function test_sanitize_stamps_published_at_when_publishing_a_draft(): void

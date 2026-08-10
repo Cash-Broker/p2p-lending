@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\LoanResource\RelationManagers;
 
 use App\Models\LoanOffer;
+use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
@@ -30,7 +31,10 @@ class OffersRelationManager extends RelationManager
 
     protected function offersEditable(): bool
     {
-        return in_array($this->getOwnerRecord()->status, LoanOffer::EDITABLE_STATUSES, true);
+        // Client decision 2026-08-10: offers (like every loan field) stay
+        // editable in EVERY status. Committed investors keep their
+        // snapshotted rate/payout regardless of live-offer edits.
+        return true;
     }
 
     public function form(Schema $form): Schema
@@ -40,7 +44,7 @@ class OffersRelationManager extends RelationManager
             Forms\Components\Placeholder::make('payout_type_label')
                 ->label('Тип изплащане')
                 ->content(fn (?LoanOffer $record) => $record
-                    ? $record->label() . ' — ' . $record->payout_type->description()
+                    ? $record->label().' — '.$record->payout_type->description()
                     : '—'),
             Forms\Components\TextInput::make('interest_rate')
                 ->label('Годишна доходност (%)')
@@ -71,7 +75,7 @@ class OffersRelationManager extends RelationManager
             ])
             ->defaultSort('position')
             ->actions([
-                \Filament\Actions\EditAction::make()->label('Редактирай')
+                EditAction::make()->label('Редактирай')
                     ->visible(fn () => $this->offersEditable()),
             ]);
     }
