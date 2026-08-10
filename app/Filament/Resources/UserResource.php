@@ -86,14 +86,15 @@ class UserResource extends Resource
                     ->colors(['warning' => 'pending', 'info' => 'submitted', 'primary' => 'in_review', 'success' => 'approved', 'danger' => 'rejected']),
                 // «Кой с какви пари е в платформата» (boss 2026-08-10): the
                 // invested bucket = principal currently deployed into loans.
-                // Clicking through opens the global «Инвестиции» register
-                // pre-filtered to this user — the per-loan breakdown.
+                // Clicking through opens the USER'S OWN profile → «Инвестиции»
+                // tab (only their rows + a total) — boss rejected the global
+                // register as the destination («излизат и други хора»).
                 Tables\Columns\TextColumn::make('wallet.invested')->label('Инвестирано')
                     ->money('EUR')
                     ->placeholder('—')
                     ->tooltip('Кликни за разбивка по кредити')
                     ->url(fn (User $record): ?string => $record->wallet !== null && bccomp((string) $record->wallet->invested, '0', 2) > 0
-                        ? InvestmentResource::getUrl().'?tableFilters[user_id][value]='.$record->id
+                        ? static::getUrl('view', ['record' => $record])
                         : null)
                     ->color('info')
                     ->sortable(),

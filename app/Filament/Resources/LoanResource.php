@@ -303,8 +303,8 @@ class LoanResource extends Resource
                 // Live funding math, in the boss's exact vocabulary
                 // (2026-08-10): «Сума на кредита 13 000 · Инвестирани 5 000 ·
                 // Свободни за инвестиране 6 200 — с всяка инвестиция тези
-                // числа се променят». Computed from the DB on every page
-                // load/refresh, never typed by hand.
+                // числа се променят». Three stat cards (blade partial) —
+                // recomputed from the DB on every page load, never typed.
                 Forms\Components\Placeholder::make('funding_progress')
                     ->label('Текущо състояние')
                     ->content(function (?Loan $record): HtmlString|string {
@@ -317,11 +317,11 @@ class LoanResource extends Resource
                         }
                         $format = fn (string $v) => number_format((float) $v, 2, ',', ' ');
 
-                        return new HtmlString(
-                            'Сума на кредита: <strong>'.$format((string) $record->amount).' €</strong><br>'
-                            .'Инвестирани: <strong>'.$format((string) $record->funded_amount).' €</strong><br>'
-                            .'Свободни за инвестиране: <strong>'.$format($remaining).' €</strong>'
-                        );
+                        return new HtmlString(view('filament.components.loan-funding-stats', [
+                            'amount' => $format((string) $record->amount),
+                            'invested' => $format((string) $record->funded_amount),
+                            'remaining' => $format($remaining),
+                        ])->render());
                     })
                     ->visible(fn (?Loan $record): bool => (bool) $record?->id)
                     ->columnSpanFull(),

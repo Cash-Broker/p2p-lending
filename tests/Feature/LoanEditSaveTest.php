@@ -180,11 +180,11 @@ class LoanEditSaveTest extends TestCase
 
         Livewire::test(EditLoan::class, ['record' => $loan->getRouteKey()])
             ->assertOk()
-            ->assertSee('Сума на кредита:')
+            ->assertSee('Сума на кредита')
             ->assertSee('13 000,00')
-            ->assertSee('Инвестирани:')
+            ->assertSee('Инвестирани')
             ->assertSee('5 000,00')
-            ->assertSee('Свободни за инвестиране:')
+            ->assertSee('Свободни за инвестиране')
             ->assertSee('6 200,00');
     }
 
