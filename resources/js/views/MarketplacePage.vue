@@ -239,7 +239,6 @@ onMounted(() => {
             <th class="px-5 py-3 font-medium">Риск</th>
             <th class="px-5 py-3 font-medium">Оригинатор</th>
             <th class="px-5 py-3 font-medium">Доходност</th>
-            <th class="px-5 py-3 font-medium" title="ГПР — Годишен Процент на Разходите за кредитополучателя">ГПР</th>
             <th class="px-5 py-3 font-medium">Срок</th>
             <th class="px-5 py-3 font-medium">Сума</th>
             <th class="px-5 py-3 font-medium">Прогрес</th>
@@ -255,10 +254,6 @@ onMounted(() => {
             </td>
             <td class="px-5 py-3 text-gray-500">{{ loan.originator?.name }}</td>
             <td class="px-5 py-3 font-semibold text-accent-500">{{ rateDisplay(loan) }}</td>
-            <td class="px-5 py-3 text-navy-700">
-              <span v-if="loan.apr">{{ loan.apr }}%</span>
-              <span v-else class="text-gray-500">—</span>
-            </td>
             <td class="px-5 py-3 text-gray-500">{{ loan.term_months }} мес.</td>
             <td class="px-5 py-3 text-navy-700">{{ formatAmount(loan.amount) }} €</td>
             <td class="px-5 py-3">
@@ -295,7 +290,6 @@ onMounted(() => {
           </div>
           <div class="text-right">
             <p class="text-lg font-bold text-accent-500 leading-tight">{{ rateDisplay(loan) }}</p>
-            <p v-if="loan.apr" class="text-xs text-gray-500 leading-tight">ГПР {{ loan.apr }}%</p>
           </div>
         </div>
         <div class="grid grid-cols-3 gap-3 text-center py-3 border-y border-gray-100 mb-3">

@@ -254,6 +254,10 @@ class DepositRequestResource extends Resource
                             ->label('Потребител')
                             ->required()
                             ->searchable()
+                            // preload() fills the INITIAL list from options();
+                            // getSearchResultsUsing alone leaves the dropdown
+                            // empty until the admin types (the 2026-08-10 bug).
+                            ->options(fn (): array => self::searchInvestorsForBonus(''))
                             ->preload()
                             ->getSearchResultsUsing(fn (string $search): array => self::searchInvestorsForBonus($search))
                             ->getOptionLabelUsing(function ($value): ?string {

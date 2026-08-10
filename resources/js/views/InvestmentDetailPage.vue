@@ -36,7 +36,6 @@ const lastInvestmentId = ref(null)
 const offerQuotes = ref([])
 const selectedOfferId = ref(null)
 const quotesLoading = ref(false)
-const showProjection = ref(false)
 let quoteTimer = null
 // Monotonic token — a late out-of-order response must never overwrite the
 // projections of a newer amount.
@@ -306,7 +305,9 @@ async function confirmInvest() {
               </span>
             </div>
 
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 py-4 border-y border-gray-100">
+            <!-- ГПР deliberately NOT shown — it is the borrower's cost of
+                 credit, not investor information (Reni 2026-08-10). -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 border-y border-gray-100">
               <div>
                 <p class="text-xs text-gray-400 mb-1">Сума</p>
                 <p class="text-lg font-bold text-navy-700">{{ formatAmount(loan.amount) }} €</p>
@@ -314,13 +315,6 @@ async function confirmInvest() {
               <div title="Вашата годишна доходност от инвестицията в този кредит.">
                 <p class="text-xs text-gray-400 mb-1">Доходност</p>
                 <p class="text-lg font-bold text-accent-500">{{ loan.interest_rate }}%</p>
-              </div>
-              <div title="ГПР — Годишен Процент на Разходите. Общата цена на кредита за кредитополучателя (регулаторна ставка).">
-                <p class="text-xs text-gray-400 mb-1">ГПР</p>
-                <p class="text-lg font-bold text-navy-700">
-                  <span v-if="loan.apr">{{ loan.apr }}%</span>
-                  <span v-else class="text-gray-500">—</span>
-                </p>
               </div>
               <div>
                 <p class="text-xs text-gray-400 mb-1">Срок</p>
@@ -333,7 +327,6 @@ async function confirmInvest() {
             </div>
             <p class="text-xs text-gray-400 mt-2 leading-relaxed">
               <strong class="text-accent-500">Доходност</strong> — какво печелите вие от тази инвестиция.
-              <strong class="text-navy-700 ml-1">ГПР</strong> — какво плаща кредитополучателят (включва лихва и такси).
             </p>
 
             <!-- Funding progress -->
@@ -554,66 +547,18 @@ async function confirmInvest() {
                 </div>
               </div>
 
-              <!-- 3-offer selection + profit comparison (изрично от шефката) -->
-              <div class="mb-4">
-                <div class="flex items-center justify-between mb-1">
-                  <label class="block text-sm font-medium text-navy-700">Изберете оферта</label>
-                  <span v-if="quotesLoading" class="text-xs text-gray-400">изчисляване…</span>
-                </div>
-                <p class="text-xs text-gray-400 mb-2">Печалбата е за въведената сума. Капацитетът е общ за кредита.</p>
-                <div class="space-y-2">
-                  <button
-                    v-for="q in offerQuotes" :key="q.loan_offer_id" type="button"
-                    @click="selectedOfferId = q.loan_offer_id"
-                    class="w-full text-left rounded-xl border p-3 transition-colors"
-                    :class="selectedOfferId === q.loan_offer_id ? 'border-accent-400 bg-accent-50 ring-1 ring-accent-400' : 'border-gray-200 hover:border-accent-300'"
-                  >
-                    <div class="flex items-center justify-between">
-                      <span class="text-sm font-semibold text-navy-700">{{ q.label }}</span>
-                      <span class="text-sm font-bold text-accent-500">{{ q.interest_rate }}%</span>
-                    </div>
-                    <p class="text-xs text-gray-500 mt-0.5 leading-snug">{{ q.description }}</p>
-                    <div class="mt-2 flex items-center justify-between text-xs">
-                      <span class="text-gray-400">Печалба</span>
-                      <span class="font-bold text-green-600">+{{ formatAmount(q.total_interest) }} €</span>
-                    </div>
-                    <div class="flex items-center justify-between text-xs">
-                      <span class="text-gray-400">Получавате общо</span>
-                      <span class="font-semibold text-navy-700">{{ formatAmount(q.total_repaid) }} €</span>
-                    </div>
-                    <p class="text-[11px] text-gray-400 mt-1">
-                      <span v-if="q.monthly_payment">≈ {{ formatAmount(q.monthly_payment) }} € / месец</span>
-                      <span v-else>Изплащане наведнъж на падежа</span>
-                    </p>
-                  </button>
-                </div>
-
-                <!-- Projected schedule for the selected offer -->
-                <button
-                  v-if="selectedQuote" type="button"
-                  @click="showProjection = !showProjection"
-                  class="mt-2 text-xs text-accent-500 font-medium"
-                >{{ showProjection ? 'Скрий погасителния план' : 'Виж погасителния план' }}</button>
-                <div v-if="showProjection && selectedQuote" class="mt-2 max-h-56 overflow-y-auto rounded-xl border border-gray-100">
-                  <table class="w-full text-xs">
-                    <thead>
-                      <tr class="text-left text-gray-400 border-b border-gray-100">
-                        <th class="px-2 py-1 font-medium">Дата</th>
-                        <th class="px-2 py-1 font-medium">Главница</th>
-                        <th class="px-2 py-1 font-medium">Лихва</th>
-                        <th class="px-2 py-1 font-medium">Общо</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="(row, i) in selectedQuote.schedule" :key="i" class="border-t border-gray-50">
-                        <td class="px-2 py-1 text-gray-600">{{ new Date(row.due_date).toLocaleDateString('bg-BG') }}</td>
-                        <td class="px-2 py-1 text-navy-700">{{ formatAmount(row.principal) }}</td>
-                        <td class="px-2 py-1 text-accent-500">{{ formatAmount(row.interest) }}</td>
-                        <td class="px-2 py-1 font-semibold text-navy-700">{{ formatAmount(row.total) }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+              <!-- The chosen offer (the cards live full-width below the loan
+                   info — Reni 2026-08-10: «трите отдолу, едно до друго») -->
+              <div class="mb-4 rounded-xl border p-3 text-sm"
+                   :class="selectedQuote ? 'border-accent-400 bg-accent-50' : 'border-gray-200 bg-gray-50'">
+                <template v-if="selectedQuote">
+                  <div class="flex items-center justify-between">
+                    <span class="font-semibold text-navy-700">{{ selectedQuote.label }}</span>
+                    <span class="font-bold text-accent-500">{{ selectedQuote.interest_rate }}%</span>
+                  </div>
+                  <p class="mt-1 text-xs text-gray-500">Печалба +{{ formatAmount(selectedQuote.total_interest) }} € · Общо {{ formatAmount(selectedQuote.total_repaid) }} €</p>
+                </template>
+                <p v-else class="text-xs text-gray-500">Изберете оферта от плановете по-долу.</p>
               </div>
 
               <button
@@ -631,6 +576,76 @@ async function confirmInvest() {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-7"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
               </div>
               <p class="text-sm font-semibold text-gray-500">Напълно финансиран</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3-те оферти — на цял ред, една до друга, с погасителния план под
+           всяка (Рени 2026-08-10: «по-ясни, отдолу хоризонтално, под всеки
+           да се зарежда погасителният план»). -->
+      <div v-if="loan.funded_percentage < 100 && !investSuccess && offerQuotes.length" class="mt-10">
+        <div class="flex items-baseline justify-between mb-1">
+          <h2 class="text-xl font-bold text-navy-700">Изберете оферта</h2>
+          <span v-if="quotesLoading" class="text-sm text-gray-400">изчисляване…</span>
+        </div>
+        <p class="text-sm text-gray-500 mb-5">Печалбата е изчислена за въведената сума. Капацитетът на кредита е общ за трите оферти.</p>
+
+        <div class="grid md:grid-cols-3 gap-5 items-start">
+          <div
+            v-for="q in offerQuotes" :key="q.loan_offer_id"
+            class="rounded-2xl border bg-white transition-colors"
+            :class="selectedOfferId === q.loan_offer_id ? 'border-accent-400 ring-2 ring-accent-400' : 'border-gray-200 hover:border-accent-300'"
+          >
+            <button type="button" class="w-full text-left p-5" @click="selectedOfferId = q.loan_offer_id">
+              <div class="flex items-center justify-between">
+                <span class="text-lg font-bold text-navy-700">{{ q.label }}</span>
+                <span class="text-xl font-bold text-accent-500">{{ q.interest_rate }}%</span>
+              </div>
+              <p class="text-sm text-gray-500 mt-1 leading-snug">{{ q.description }}</p>
+              <div class="mt-4 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm text-gray-500">Печалба</span>
+                  <span class="text-lg font-bold text-green-600">+{{ formatAmount(q.total_interest) }} €</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm text-gray-500">Получавате общо</span>
+                  <span class="text-lg font-semibold text-navy-700">{{ formatAmount(q.total_repaid) }} €</span>
+                </div>
+                <p class="text-sm text-gray-500">
+                  <span v-if="q.monthly_payment">≈ {{ formatAmount(q.monthly_payment) }} € / месец</span>
+                  <span v-else>Изплащане наведнъж на падежа</span>
+                </p>
+              </div>
+              <div class="mt-4 rounded-xl py-2 text-center text-sm font-semibold"
+                   :class="selectedOfferId === q.loan_offer_id ? 'bg-accent-400 text-white' : 'bg-gray-100 text-gray-500'">
+                {{ selectedOfferId === q.loan_offer_id ? '✓ Избрана оферта' : 'Избери' }}
+              </div>
+            </button>
+
+            <!-- Погасителен план на тази оферта -->
+            <div class="border-t border-gray-100 px-5 py-4">
+              <p class="text-sm font-semibold text-navy-700 mb-2">Погасителен план</p>
+              <div class="max-h-72 overflow-y-auto rounded-xl border border-gray-100">
+                <table class="w-full text-sm">
+                  <thead class="sticky top-0 bg-gray-50">
+                    <tr class="text-left text-gray-400">
+                      <th class="px-3 py-2 font-medium">Дата</th>
+                      <th class="px-3 py-2 font-medium text-right">Главница</th>
+                      <th class="px-3 py-2 font-medium text-right">Лихва</th>
+                      <th class="px-3 py-2 font-medium text-right">Общо</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, i) in q.schedule" :key="i" class="border-t border-gray-50">
+                      <td class="px-3 py-2 text-gray-600 whitespace-nowrap">{{ new Date(row.due_date).toLocaleDateString('bg-BG') }}</td>
+                      <td class="px-3 py-2 text-right text-navy-700">{{ formatAmount(row.principal) }}</td>
+                      <td class="px-3 py-2 text-right text-accent-500">{{ formatAmount(row.interest) }}</td>
+                      <td class="px-3 py-2 text-right font-semibold text-navy-700">{{ formatAmount(row.total) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
