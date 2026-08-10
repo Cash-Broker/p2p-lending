@@ -55,6 +55,18 @@ class EditLoan extends EditRecord
     }
 
     /**
+     * Name-based action resolver for «share_link». Form actions are not
+     * auto-cached as page actions in this Filament version (they resolve
+     * through the content schema only), so mountAction('share_link') and
+     * the test helpers need this {name}Action() hook. The snake_case name
+     * is dictated by Filament's lookup: "{$action['name']}Action".
+     */
+    public function share_linkAction(): Actions\Action
+    {
+        return LoanResource::shareLinkAction();
+    }
+
+    /**
      * Let the admin change a non-draft loan's status (e.g. revert a published
      * loan to draft to hide it from investors) without the model's immutability
      * guard rejecting the save. On a non-draft loan only the status — never the
