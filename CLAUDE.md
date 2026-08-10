@@ -185,7 +185,17 @@ active|late|default → repaid;  late|default → bought_back;  repaid/bought_ba
   why manual funded→active is excluded from the admin status Select
   (`MANUAL_STATUS_BLOCKLIST` also blocks repaid/bought_back).
 - `IMMUTABLE_AFTER_DRAFT`: amount, investable_amount, rates, term, originator, borrower(s), type
-  — model throws `LogicException`; `EditLoan::sanitizeSaveData()` strips them from Filament saves.
+  — since 2026-08-10 (boss) frozen at the FIRST INVESTMENT, not at publish:
+  `Loan::isTermsEditable()` (funded==0 && no investments ⇒ fully editable in ANY status);
+  once invested the model throws `LogicException` and `EditLoan::sanitizeSaveData()` strips
+  them from Filament saves. The list name is kept for grep-ability.
+- Loan deletion (2026-08-10): list row + bulk actions, ONLY draft + funded==0 + no
+  investments (`LoanResource::isDeletableLoan`); bulk skips ineligible rows with a count.
+- Borrower creation (2026-08-10): «Кредитен рейтинг» is the letter scale A/B/C
+  (`Borrower::CREDIT_RATINGS`, credit_score column is a string now); both creation forms
+  (BorrowerResource + inline from the loan form) collect the ANONYMIZED investor profile
+  (risk class/region/purpose required) so «Неопределен» placeholders never reach investors;
+  `ensureAnonymizedProfile(array $attributes)` merges real values over the fallbacks.
 - **Orthogonal axes** (editable post-draft): `visibility` public/private (+ `share_token`,
   `loan_grants` — see Private links) and `payout_mode` manual/automatic.
 - `fundingCap()` = outstanding principal when a schedule exists, else `investable_amount`
