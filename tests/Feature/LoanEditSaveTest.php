@@ -166,6 +166,28 @@ class LoanEditSaveTest extends TestCase
             ->assertOk();
     }
 
+    public function test_edit_form_shows_live_funding_math(): void
+    {
+        // The static «Свободни за инвестиция» cap confused reading (boss
+        // 2026-08-10) — the form must show the computed remaining figure.
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+
+        $loan = Loan::factory()->funding()->create([
+            'amount' => '13000.00',
+            'investable_amount' => '11200.00',
+            'funded_amount' => '5000.00',
+        ]);
+
+        Livewire::test(EditLoan::class, ['record' => $loan->getRouteKey()])
+            ->assertOk()
+            ->assertSee('Сума на кредита:')
+            ->assertSee('13 000,00')
+            ->assertSee('Инвестирани:')
+            ->assertSee('5 000,00')
+            ->assertSee('Свободни за инвестиране:')
+            ->assertSee('6 200,00');
+    }
+
     public function test_bottom_save_button_stays_bound_to_the_form(): void
     {
         // 2026-08-10 layout: the buttons render BELOW the relation managers,

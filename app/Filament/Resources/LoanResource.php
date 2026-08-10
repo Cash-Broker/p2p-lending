@@ -32,6 +32,7 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\HtmlString;
 use InvalidArgumentException;
 
 class LoanResource extends Resource
@@ -275,8 +276,11 @@ class LoanResource extends Resource
             Section::make('Финансови параметри')->schema([
                 Forms\Components\TextInput::make('amount')->label('Сума на кредита (€)')->numeric()->required()->minValue(100)
                     ->validatedWhenNotDehydrated(false),
-                Forms\Components\TextInput::make('investable_amount')->label('Свободни за инвестиция (€)')
-                    ->helperText('Колко от кредита се предлага на инвеститорите (може да е по-малко от сумата). Празно = цялата сума. Погасителният план се изчислява върху тази сума.')
+                // Renamed from «Свободни за инвестиция» (boss 2026-08-10):
+                // that name now belongs to the LIVE remaining figure below —
+                // this input is the total offered to investors, a set-once cap.
+                Forms\Components\TextInput::make('investable_amount')->label('Предлагани на инвеститорите (€)')
+                    ->helperText('Общо колко от кредита се предлага на инвеститорите (може да е по-малко от сумата). Празно = цялата сума. Оставащото се смята само — вижте „Текущо състояние“.')
                     // Required on CREATE; legacy loans legitimately store NULL
                     // (= fall back to the full amount), so an edit of an
                     // unlocked loan must not be blocked by an empty value.
@@ -296,6 +300,31 @@ class LoanResource extends Resource
                 // loans; the admin-only ГПР/Марж preview went with them.
                 Forms\Components\TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
                     ->validatedWhenNotDehydrated(false),
+                // Live funding math, in the boss's exact vocabulary
+                // (2026-08-10): «Сума на кредита 13 000 · Инвестирани 5 000 ·
+                // Свободни за инвестиране 6 200 — с всяка инвестиция тези
+                // числа се променят». Computed from the DB on every page
+                // load/refresh, never typed by hand.
+                Forms\Components\Placeholder::make('funding_progress')
+                    ->label('Текущо състояние')
+                    ->content(function (?Loan $record): HtmlString|string {
+                        if (! $record?->id) {
+                            return '—';
+                        }
+                        $remaining = bcsub($record->fundingCap(), (string) $record->funded_amount, 2);
+                        if (bccomp($remaining, '0', 2) < 0) {
+                            $remaining = '0.00';
+                        }
+                        $format = fn (string $v) => number_format((float) $v, 2, ',', ' ');
+
+                        return new HtmlString(
+                            'Сума на кредита: <strong>'.$format((string) $record->amount).' €</strong><br>'
+                            .'Инвестирани: <strong>'.$format((string) $record->funded_amount).' €</strong><br>'
+                            .'Свободни за инвестиране: <strong>'.$format($remaining).' €</strong>'
+                        );
+                    })
+                    ->visible(fn (?Loan $record): bool => (bool) $record?->id)
+                    ->columnSpanFull(),
             ])->columns(2),
         ]);
     }

@@ -380,6 +380,7 @@ class UserResource extends Resource
     public static function getRelations(): array
     {
         return [
+            UserResource\RelationManagers\InvestmentsRelationManager::class,
             UserResource\RelationManagers\ConsentRecordsRelationManager::class,
         ];
     }
