@@ -184,11 +184,16 @@ active|late|default → repaid;  late|default → bought_back;  repaid/bought_ba
   (`InvestmentScheduleGenerator` for offer loans / `AmortizationService` for legacy) — that's
   why manual funded→active is excluded from the admin status Select
   (`MANUAL_STATUS_BLOCKLIST` also blocks repaid/bought_back).
-- `IMMUTABLE_AFTER_DRAFT`: amount, investable_amount, rates, term, originator, borrower(s), type
-  — since 2026-08-10 (boss) frozen at the FIRST INVESTMENT, not at publish:
-  `Loan::isTermsEditable()` (funded==0 && no investments ⇒ fully editable in ANY status);
-  once invested the model throws `LogicException` and `EditLoan::sanitizeSaveData()` strips
-  them from Filament saves. The list name is kept for grep-ability.
+- `IMMUTABLE_AFTER_DRAFT`: **NO LONGER ENFORCED** — reversed by EXPLICIT client decision
+  2026-08-10 (Reni, twice, incl. invested loans): every loan field + the offers edit in EVERY
+  status. Committed investors stay protected by Investment snapshots + frozen contracts +
+  quote-vs-commit guard + `chk_loans_funded_amount_valid` (amount can't drop below funded) +
+  the status machine / `MANUAL_STATUS_BLOCKLIST` (money-moving transitions still gated).
+  A Filament warning banner shows on invested loans (`Loan::isTermsEditable()` = has no
+  investor money; also gates DELETION eligibility). `EditLoan::sanitizeSaveData()` now only
+  normalizes coerced empties ('' → null) + keeps published_at consistent. ⚠ Known accepted
+  risk: term_months edits on a FUNDING loan change schedules generated at activation while
+  contract annexes show the old term.
 - Loan deletion (2026-08-10): list row + bulk actions, ONLY draft + funded==0 + no
   investments (`LoanResource::isDeletableLoan`); bulk skips ineligible rows with a count.
 - Borrower creation (2026-08-10): «Кредитен рейтинг» is the letter scale A/B/C
