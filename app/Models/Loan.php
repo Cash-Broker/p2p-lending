@@ -289,6 +289,8 @@ class Loan extends Model
         'originator_id',
         'borrower_id',
         'co_borrower_id',
+        // Real credit-contract number, hand-entered by the admin (2026-08-10).
+        'contract_number',
         'amount',
         'investable_amount',
         'funded_amount',

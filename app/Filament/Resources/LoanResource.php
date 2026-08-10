@@ -199,6 +199,15 @@ class LoanResource extends Resource
                     ->createOptionModalHeading('Нов съдлъжник')
                     ->createOptionUsing(fn (array $data): int => self::createBorrowerInline($data))
                     ->validatedWhenNotDehydrated(false),
+                // Hand-entered by the admin — matches the REAL credit-contract
+                // paperwork number (boss 2026-08-10), never auto-generated.
+                Forms\Components\TextInput::make('contract_number')->label('Номер на договор')
+                    ->placeholder('напр. 1042/2026')
+                    ->maxLength(64)
+                    ->nullable()
+                    ->unique(ignoreRecord: true)
+                    ->validationMessages(['unique' => 'Вече има кредит с този номер на договор.'])
+                    ->helperText('Реалният номер на договора за кредита. Празно = показва се само системният #.'),
                 Forms\Components\Select::make('type')->label('Тип')
                     ->options(['consumer' => 'Потребителски', 'business' => 'Бизнес', 'mortgage' => 'Ипотечен', 'bridge' => 'Мостов'])
                     ->required()
@@ -330,6 +339,9 @@ class LoanResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('id')->label('ID')->sortable(),
+                Tables\Columns\TextColumn::make('contract_number')->label('Договор №')
+                    ->placeholder('—')
+                    ->searchable(),
                 Tables\Columns\TextColumn::make('originator.name')->label('Оригинатор'),
                 Tables\Columns\TextColumn::make('type')->label('Тип'),
                 Tables\Columns\TextColumn::make('amount')->label('Сума')->money('EUR')->sortable(),

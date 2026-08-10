@@ -9,10 +9,16 @@ use App\Http\Resources\InvestmentResource;
 use App\Http\Resources\LoanEventResource;
 use App\Http\Resources\LoanResource;
 use App\Models\Favorite;
+use App\Models\Investment;
 use App\Models\Loan;
+use App\Models\User;
+use App\Notifications\InvestmentMadeAdminNotification;
 use App\Services\InvestmentService;
 use App\Services\OfferProjectionService;
+use App\Services\TelegramService;
 use App\Support\Money;
+use Filament\Actions\Action as FilamentAction;
+use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -212,10 +218,76 @@ class LoanController extends Controller
                 : null,
         );
 
+        // Admin event alerts (boss 2026-08-10) — bell + queued email + a
+        // silent Telegram record for every NEW investment. Money first: the
+        // service's transaction has committed by now; every send is
+        // best-effort and isolated. wasRecentlyCreated guards the
+        // idempotent-replay paths (same key → existing row → no re-alert).
+        if ($investment->wasRecentlyCreated) {
+            $this->alertAdminsOfInvestment($request->user(), $investment, $loan);
+        }
+
         return response()->json([
             'message' => 'Investment successful.',
             'investment' => new InvestmentResource($investment->load('loan')),
         ], 201);
+    }
+
+    private function alertAdminsOfInvestment(User $investor, Investment $investment, Loan $loan): void
+    {
+        $planLabel = $investment->payout_type?->label() ?? 'Легаси';
+        $rate = $investment->interest_rate !== null
+            ? rtrim(rtrim((string) $investment->interest_rate, '0'), '.')
+            : '—';
+        $amount = (string) $investment->amount;
+
+        $safeNotify = function (User $admin, $notification, bool $now = false): void {
+            try {
+                $now ? $admin->notifyNow($notification) : $admin->notify($notification);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        };
+
+        try {
+            $admins = User::where('role', 'admin')->get();
+        } catch (\Throwable $e) {
+            report($e);
+            $admins = collect();
+        }
+
+        foreach ($admins as $admin) {
+            // notifyNow: the panel bell must not depend on a queue worker
+            // (same deliberate choice as the KYC/withdrawal bells). The name
+            // is e()-escaped — Filament renders bell bodies as sanitized
+            // HTML, not escaped text.
+            $safeNotify($admin, FilamentNotification::make()
+                ->title('Нова инвестиция')
+                ->body(e($investor->name)." инвестира {$amount} € в кредит #{$loan->id} ({$planLabel}, {$rate}%).")
+                ->icon('heroicon-o-chart-pie')
+                ->success()
+                ->actions([
+                    FilamentAction::make('view')->label('Преглед')->url(url('/admin/investments'))->markAsRead(),
+                ])
+                ->toDatabase(), now: true);
+
+            $safeNotify($admin, new InvestmentMadeAdminNotification(
+                investmentId: $investment->id,
+                investorName: $investor->name,
+                amount: $amount,
+                loanId: $loan->id,
+                planLabel: $planLabel,
+                interestRate: $rate,
+            ));
+        }
+
+        // Shared-channel record (🟡 silent) — TelegramService is a no-op
+        // when unconfigured and never throws.
+        app(TelegramService::class)->info(
+            'Нова инвестиция',
+            "{$investor->name} инвестира {$amount} € в кредит #{$loan->id}.",
+            ['План' => "{$planLabel} ({$rate}%)", 'Инвестиция' => "№{$investment->id}"],
+        );
     }
 
     public function toggleFavorite(Request $request, Loan $loan): JsonResponse

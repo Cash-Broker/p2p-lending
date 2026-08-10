@@ -62,6 +62,9 @@ class InvestmentResource extends Resource
                     ->description(fn (Investment $record): ?string => $record->user?->email),
                 Tables\Columns\TextColumn::make('loan_id')->label('Кредит')
                     ->formatStateUsing(fn ($state) => "#{$state}")
+                    // The admin thinks in REAL contract numbers — show it
+                    // under the system id when present.
+                    ->description(fn (Investment $record): ?string => $record->loan?->contract_number)
                     ->url(fn (Investment $record): ?string => $record->loan_id
                         ? LoanResource::getUrl('edit', ['record' => $record->loan_id])
                         : null)
