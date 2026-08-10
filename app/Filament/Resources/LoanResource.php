@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\LoanResource\Pages;
 use App\Models\Borrower;
+use App\Models\BorrowerAnonymizedProfile;
 use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\Originator;
@@ -79,11 +80,17 @@ class LoanResource extends Resource
                     ->required(),
                 Forms\Components\TextInput::make('profile_region')->label('Регион')
                     ->placeholder('напр. Кюстендил')->required(),
-                Forms\Components\TextInput::make('profile_loan_purpose')->label('Цел на кредита')
-                    ->placeholder('напр. Потребителски нужди')->required(),
-                Forms\Components\TextInput::make('profile_collateral_type')->label('Обезпечение')->nullable(),
-                Forms\Components\TextInput::make('profile_age_group')->label('Възрастова група')
-                    ->placeholder('напр. 26-35')->nullable(),
+                Forms\Components\Select::make('profile_loan_purpose')->label('Цел на кредита')
+                    ->options(BorrowerAnonymizedProfile::LOAN_PURPOSES)
+                    ->required(),
+                Forms\Components\Select::make('profile_collateral_type')->label('Обезпечение')
+                    ->options(BorrowerAnonymizedProfile::COLLATERAL_TYPES)
+                    ->placeholder('—')
+                    ->nullable(),
+                Forms\Components\Select::make('profile_age_group')->label('Възрастова група')
+                    ->options(BorrowerAnonymizedProfile::AGE_GROUPS)
+                    ->placeholder('—')
+                    ->nullable(),
             ])->columns(2),
         ];
     }
@@ -283,54 +290,13 @@ class LoanResource extends Resource
                         },
                     ])
                     ->validatedWhenNotDehydrated(false),
-                Forms\Components\TextInput::make('interest_rate')->label('Доходност (%)')
-                    ->helperText('Годишната доходност, която инвеститорите получават. Използва се за изготвяне на погасителен план.')
-                    ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
-                    ->rules(['numeric', 'min:0.01', 'max:999.99'])
-                    ->validatedWhenNotDehydrated(false),
-                Forms\Components\TextInput::make('interest_rate_annual')->label('Лихва кредитополучател (%)')
-                    ->helperText('Годишната лихва, която кредитополучателят плаща. Използва се за изчисляване на ГПР (APR). Трябва да е ≥ "Доходност" (разликата е марж на оригинатора).')
-                    ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
-                    ->rules(['numeric', 'min:0.01', 'max:999.99'])
-                    ->validatedWhenNotDehydrated(false),
+                // «Доходност (%)» and «Лихва кредитополучател (%)» removed
+                // from the form (boss 2026-08-10: «ненужни са — трите оферти
+                // долу са достатъчни»). The columns stay nullable for legacy
+                // loans; the admin-only ГПР/Марж preview went with them.
                 Forms\Components\TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
                     ->validatedWhenNotDehydrated(false),
             ])->columns(2),
-
-            // F5 — Rates summary. Read-only, edit-page only (no record on create).
-            // Shows both investor + borrower rates + admin-only marge for pricing
-            // visibility. Derived values — NOT form fields — so nothing is stored.
-            Section::make('Ставки')
-                ->description('Преглед на текущите лихвени нива за този кредит.')
-                ->schema([
-                    Forms\Components\Placeholder::make('rate_investor')
-                        ->label('Доходност (за инвеститор)')
-                        ->content(fn (?Loan $record) => $record?->interest_rate !== null
-                            ? number_format((float) $record->interest_rate, 2).' %'
-                            : '—'),
-                    Forms\Components\Placeholder::make('rate_apr')
-                        ->label('ГПР / APR (за кредитополучател)')
-                        ->content(fn (?Loan $record) => $record?->apr() !== null
-                            ? $record->apr().' %'
-                            : '—'),
-                    Forms\Components\Placeholder::make('rate_marge')
-                        ->label('Марж')
-                        ->helperText('Разликата между ГПР и Доходност — оригинаторският спред. Само за вътрешен преглед, не се показва на инвеститорите.')
-                        ->content(function (?Loan $record) {
-                            if ($record?->interest_rate === null || $record?->interest_rate_annual === null) {
-                                return '—';
-                            }
-                            $marge = bcsub(
-                                (string) $record->interest_rate_annual,
-                                (string) $record->interest_rate,
-                                2,
-                            );
-
-                            return $marge.' %';
-                        }),
-                ])
-                ->columns(3)
-                ->visible(fn (?Loan $record): bool => $record !== null),
         ]);
     }
 
@@ -346,7 +312,7 @@ class LoanResource extends Resource
                 Tables\Columns\TextColumn::make('type')->label('Тип'),
                 Tables\Columns\TextColumn::make('amount')->label('Сума')->money('EUR')->sortable(),
                 Tables\Columns\TextColumn::make('funded_amount')->label('Финансирано')->money('EUR'),
-                Tables\Columns\TextColumn::make('interest_rate')->label('Доходност')->suffix('%')->sortable(),
+                Tables\Columns\TextColumn::make('interest_rate')->label('Доходност')->suffix('%')->placeholder('—')->sortable(),
                 // F5 — ГПР (APR) column. Sortable on the underlying
                 // interest_rate_annual column. Falls back to "—" for any
                 // null / non-positive value (F1-L6 activation defense).

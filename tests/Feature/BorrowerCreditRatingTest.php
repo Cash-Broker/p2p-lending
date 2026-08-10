@@ -43,8 +43,8 @@ class BorrowerCreditRatingTest extends TestCase
             'credit_score' => 'B',
             'profile_risk_class' => 'B',
             'profile_region' => 'Кюстендил',
-            'profile_loan_purpose' => 'Потребителски нужди',
-            'profile_age_group' => '26-35',
+            'profile_loan_purpose' => 'Потребителски кредит',
+            'profile_age_group' => '30-40',
         ], $overrides);
     }
 
@@ -64,8 +64,8 @@ class BorrowerCreditRatingTest extends TestCase
         $profile = $borrower->anonymizedProfile;
         $this->assertSame('B', $profile->risk_class);
         $this->assertSame('Кюстендил', $profile->region);
-        $this->assertSame('Потребителски нужди', $profile->loan_purpose);
-        $this->assertSame('26-35', $profile->age_group);
+        $this->assertSame('Потребителски кредит', $profile->loan_purpose);
+        $this->assertSame('30-40', $profile->age_group);
     }
 
     public function test_investor_profile_region_and_purpose_are_required(): void

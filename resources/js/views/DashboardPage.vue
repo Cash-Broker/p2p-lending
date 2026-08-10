@@ -110,6 +110,16 @@ const txTypeLabels = {
   fee: 'Такса',
 }
 
+// Offers' range is the real pricing; the loan-level rate is nullable
+// since 2026-08-10 (legacy loans only).
+function rateDisplay(loan) {
+  const r = loan.offer_rate_range
+  if (r && r.length === 2) {
+    return r[0] === r[1] ? `${parseFloat(r[0])}%` : `${parseFloat(r[0])}–${parseFloat(r[1])}%`
+  }
+  return loan.interest_rate ? `${loan.interest_rate}%` : '—'
+}
+
 // Same convention as TransactionsPage: cash-in +, cash-out -, everything
 // else (accrual bookkeeping / unknown newer types) neutral without a sign.
 const incomingTypes = ['deposit', 'bonus', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
@@ -241,7 +251,7 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
               <tr v-for="loan in dashboard.latest_loans" :key="loan.id" class="border-t border-gray-50 hover:bg-gray-50/50">
                 <td class="px-6 py-3 font-medium text-navy-700">{{ typeLabels[loan.type] || loan.type }}</td>
                 <td class="px-6 py-3 text-gray-500 hidden sm:table-cell">{{ loan.originator?.name }}</td>
-                <td class="px-6 py-3 font-semibold text-accent-500">{{ loan.interest_rate }}%</td>
+                <td class="px-6 py-3 font-semibold text-accent-500">{{ rateDisplay(loan) }}</td>
                 <td class="px-6 py-3 text-gray-500 hidden md:table-cell">{{ loan.term_months }} мес.</td>
                 <td class="px-6 py-3 text-navy-700">{{ formatAmount(loan.amount) }} €</td>
                 <td class="px-6 py-3">

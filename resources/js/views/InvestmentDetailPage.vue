@@ -74,6 +74,16 @@ const selectedQuote = computed(
   () => offerQuotes.value.find(q => q.loan_offer_id === selectedOfferId.value) || null,
 )
 
+// Header «Доходност»: the offers' range is the real pricing; the loan-level
+// rate is nullable since 2026-08-10 and only backs legacy loans.
+const headerRateDisplay = computed(() => {
+  const r = loan.value?.offer_rate_range
+  if (r && r.length === 2) {
+    return r[0] === r[1] ? `${parseFloat(r[0])}%` : `${parseFloat(r[0])}–${parseFloat(r[1])}%`
+  }
+  return loan.value?.interest_rate ? `${loan.value.interest_rate}%` : '—'
+})
+
 const typeLabels = { consumer: 'Потребителски', business: 'Бизнес', mortgage: 'Ипотечен', bridge: 'Мостов' }
 const scheduleStatusLabels = { pending: 'Предстои', paid: 'Платено', late: 'Закъснение', default: 'Просрочено' }
 
@@ -314,7 +324,7 @@ async function confirmInvest() {
               </div>
               <div title="Вашата годишна доходност от инвестицията в този кредит.">
                 <p class="text-xs text-gray-400 mb-1">Доходност</p>
-                <p class="text-lg font-bold text-accent-500">{{ loan.interest_rate }}%</p>
+                <p class="text-lg font-bold text-accent-500">{{ headerRateDisplay }}</p>
               </div>
               <div>
                 <p class="text-xs text-gray-400 mb-1">Срок</p>

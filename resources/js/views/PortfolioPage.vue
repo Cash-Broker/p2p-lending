@@ -218,7 +218,9 @@ onMounted(() => load())
                 </td>
                 <td class="px-6 py-3 text-gray-500 hidden sm:table-cell">{{ inv.loan?.originator?.name }}</td>
                 <td class="px-6 py-3 font-semibold text-navy-700">{{ formatAmount(inv.amount) }} €</td>
-                <td class="px-6 py-3 text-accent-500 font-medium hidden md:table-cell">{{ inv.loan?.interest_rate }}%</td>
+                <!-- The investment's own snapshotted rate is the truth for the
+                     investor; the loan-level rate is a legacy fallback. -->
+                <td class="px-6 py-3 text-accent-500 font-medium hidden md:table-cell">{{ inv.interest_rate ? `${inv.interest_rate}%` : (inv.loan?.interest_rate ? `${inv.loan.interest_rate}%` : '—') }}</td>
                 <td class="px-6 py-3 text-gray-500 hidden md:table-cell">{{ inv.loan?.term_months }} мес.</td>
                 <td class="px-6 py-3">
                   <span class="px-2.5 py-1 rounded-full text-xs font-medium" :class="statusClasses[inv.loan?.status]">

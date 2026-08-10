@@ -29,8 +29,8 @@ class LoanInlineBorrowerTest extends TestCase
                 // site never shows «Неопределен» placeholders.
                 'profile_risk_class' => 'B',
                 'profile_region' => 'Кюстендил',
-                'profile_loan_purpose' => 'Потребителски нужди',
-                'profile_age_group' => '26-35',
+                'profile_loan_purpose' => 'Потребителски кредит',
+                'profile_age_group' => '30-40',
             ])
             ->assertHasNoFormComponentActionErrors();
 
@@ -45,7 +45,7 @@ class LoanInlineBorrowerTest extends TestCase
         $this->assertNotNull($profile, 'Inline borrower must get an anonymized profile');
         $this->assertSame('B', $profile->risk_class);
         $this->assertSame('Кюстендил', $profile->region);
-        $this->assertSame('Потребителски нужди', $profile->loan_purpose);
+        $this->assertSame('Потребителски кредит', $profile->loan_purpose);
     }
 
     public function test_inline_creation_requires_the_investor_profile_fields(): void

@@ -122,7 +122,8 @@ function rateDisplay(loan) {
   if (r && r.length === 2) {
     return r[0] === r[1] ? `${parseFloat(r[0])}%` : `${parseFloat(r[0])}–${parseFloat(r[1])}%`
   }
-  return `${loan.interest_rate}%`
+  // Loan-level rate is nullable since 2026-08-10 (offers are the pricing).
+  return loan.interest_rate ? `${loan.interest_rate}%` : '—'
 }
 
 watch(activeTab, () => loadLoans())

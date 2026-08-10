@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\BorrowerResource\Pages;
 use App\Models\Borrower;
+use App\Models\BorrowerAnonymizedProfile;
 use BackedEnum;
 use Filament\Actions\EditAction;
 use Filament\Forms;
@@ -55,12 +56,17 @@ class BorrowerResource extends Resource
                     ->dehydrated(false),
                 Forms\Components\TextInput::make('profile_region')->label('Регион')
                     ->placeholder('напр. Кюстендил')->required()->dehydrated(false),
-                Forms\Components\TextInput::make('profile_loan_purpose')->label('Цел на кредита')
-                    ->placeholder('напр. Потребителски нужди')->required()->dehydrated(false),
-                Forms\Components\TextInput::make('profile_collateral_type')->label('Обезпечение')
+                Forms\Components\Select::make('profile_loan_purpose')->label('Цел на кредита')
+                    ->options(BorrowerAnonymizedProfile::LOAN_PURPOSES)
+                    ->required()->dehydrated(false),
+                Forms\Components\Select::make('profile_collateral_type')->label('Обезпечение')
+                    ->options(BorrowerAnonymizedProfile::COLLATERAL_TYPES)
+                    ->placeholder('—')
                     ->nullable()->dehydrated(false),
-                Forms\Components\TextInput::make('profile_age_group')->label('Възрастова група')
-                    ->placeholder('напр. 26-35')->nullable()->dehydrated(false),
+                Forms\Components\Select::make('profile_age_group')->label('Възрастова група')
+                    ->options(BorrowerAnonymizedProfile::AGE_GROUPS)
+                    ->placeholder('—')
+                    ->nullable()->dehydrated(false),
             ])->columns(2)->hiddenOn('edit'),
         ]);
     }

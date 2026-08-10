@@ -8,6 +8,10 @@ use App\Services\AmortizationService;
 use App\Support\Loans\ScheduleBalanceValidator;
 use Carbon\Carbon;
 use Closure;
+use Filament\Actions\Action;
+use Filament\Actions\CreateAction;
+use Filament\Actions\DeleteAction;
+use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -20,6 +24,7 @@ use Illuminate\Support\Facades\DB;
 class AmortizationSchedulesRelationManager extends RelationManager
 {
     protected static string $relationship = 'amortizationSchedules';
+
     protected static ?string $title = 'Погасителен план';
 
     public function form(Schema $form): Schema
@@ -97,7 +102,7 @@ class AmortizationSchedulesRelationManager extends RelationManager
             ->headerActions([
                 // Calculator: generate the annuity schedule over the investable
                 // amount for the chosen first-due date. Replaces any existing rows.
-                \Filament\Actions\Action::make('generate_schedule')
+                Action::make('generate_schedule')
                     ->label('Изчисли погасителен план')
                     ->icon('heroicon-o-calculator')
                     ->color('primary')
@@ -112,20 +117,33 @@ class AmortizationSchedulesRelationManager extends RelationManager
                     ])
                     ->action(function (array $data) {
                         $loan = $this->getOwnerRecord();
+
+                        // The legacy annuity calculator runs off the LOAN-level
+                        // rate; since 2026-08-10 the form no longer collects it
+                        // (offer loans price via the three offers instead).
+                        if ($loan->interest_rate === null) {
+                            Notification::make()
+                                ->title('Кредитът няма зададена доходност')
+                                ->body('Легаси планът се смята от лихвата на кредита, а тя не е попълнена. Офертните кредити получават графиците си автоматично при активиране.')
+                                ->danger()->send();
+
+                            return;
+                        }
+
                         DB::transaction(function () use ($loan, $data) {
                             $loan->amortizationSchedules()->delete();
                             app(AmortizationService::class)->generateSchedule($loan, Carbon::parse($data['first_due_date']));
                         });
                         Notification::make()->title('Погасителният план е генериран')->success()->send();
                     }),
-                \Filament\Actions\CreateAction::make()->label('Добави вноска')
+                CreateAction::make()->label('Добави вноска')
                     ->visible(fn () => in_array($this->getOwnerRecord()->status, [Loan::STATUS_DRAFT, Loan::STATUS_PUBLISHED])),
             ])
             ->actions([
-                \Filament\Actions\EditAction::make()->label('Редактирай')
+                EditAction::make()->label('Редактирай')
                     ->visible(fn ($record) => $record->status !== 'paid'
                         && in_array($this->getOwnerRecord()->status, [Loan::STATUS_DRAFT, Loan::STATUS_PUBLISHED])),
-                \Filament\Actions\DeleteAction::make()->label('Изтрий')
+                DeleteAction::make()->label('Изтрий')
                     ->visible(fn ($record) => $record->status === 'pending'
                         && in_array($this->getOwnerRecord()->status, [Loan::STATUS_DRAFT, Loan::STATUS_PUBLISHED])),
             ]);

@@ -12,6 +12,7 @@ use App\Models\Transaction;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 
 class DashboardController extends Controller
 {
@@ -31,7 +32,13 @@ class DashboardController extends Controller
             ->limit(5)
             ->get();
 
-        $latestLoans = Loan::with(['originator', 'anonymizedProfile'])
+        $latestLoans = Loan::with([
+            'originator',
+            'anonymizedProfile',
+            // Offers feed offer_rate_range — the loan-level rate is nullable
+            // since 2026-08-10, so the range is the primary display.
+            'offers' => fn ($q) => $q->where('is_enabled', true)->orderBy('position'),
+        ])
             ->whereIn('status', Loan::FUNDABLE_STATUSES)
             // Like the marketplace board, the dashboard discovery feed never
             // shows private (link-only) loans — those are reachable only via
@@ -53,7 +60,7 @@ class DashboardController extends Controller
     }
 
     // Aggregate principal + interest income by month for chart data.
-    private function getMonthlyEarnings(int $userId): \Illuminate\Support\Collection
+    private function getMonthlyEarnings(int $userId): Collection
     {
         $sixMonthsAgo = Carbon::now()->subMonths(6)->startOfMonth();
 
