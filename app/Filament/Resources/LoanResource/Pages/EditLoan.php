@@ -7,10 +7,52 @@ use App\Models\Investment;
 use App\Models\Loan;
 use Filament\Actions;
 use Filament\Resources\Pages\EditRecord;
+use Filament\Schemas\Components\EmbeddedSchema;
+use Filament\Schemas\Components\Form;
+use Filament\Schemas\Schema;
 
 class EditLoan extends EditRecord
 {
     protected static string $resource = LoanResource::class;
+
+    /**
+     * Page layout (boss 2026-08-10): the action buttons — Запази / Линк за
+     * инвеститор / Отказ — must sit BELOW «Оферти към инвеститорите», not
+     * between the form and the tabs. Order: form → relation managers
+     * (offers first) → buttons.
+     */
+    public function content(Schema $schema): Schema
+    {
+        return $schema->components([
+            Form::make([EmbeddedSchema::make('form')])
+                ->id('form')
+                ->livewireSubmitHandler($this->getSubmitFormLivewireMethodName()),
+            $this->getRelationManagersContentComponent(),
+            $this->getFormActionsContentComponent(),
+        ]);
+    }
+
+    /**
+     * The buttons render OUTSIDE the <form> element now, so the submit
+     * button needs the explicit HTML form-id association to keep working.
+     */
+    protected function getSaveFormAction(): Actions\Action
+    {
+        return parent::getSaveFormAction()->formId('form');
+    }
+
+    /**
+     * «Линк за инвеститор» joins the bottom button cluster (it used to be
+     * a header action) — visible only for private loans, as before.
+     */
+    protected function getFormActions(): array
+    {
+        return [
+            $this->getSaveFormAction(),
+            LoanResource::shareLinkAction(),
+            $this->getCancelFormAction(),
+        ];
+    }
 
     /**
      * Let the admin change a non-draft loan's status (e.g. revert a published
@@ -77,9 +119,8 @@ class EditLoan extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
-            // Same „Линк за инвеститор" action as the table — shown prominently
-            // in the edit page header (visible only for private loans).
-            LoanResource::shareLinkAction(),
+            // «Линк за инвеститор» moved to the bottom button cluster
+            // (getFormActions) per boss request 2026-08-10.
             Actions\DeleteAction::make()
                 ->visible(fn (Loan $record) => $record->status === Loan::STATUS_DRAFT
                     && bccomp($record->funded_amount, '0', 2) <= 0)
