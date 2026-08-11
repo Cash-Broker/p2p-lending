@@ -4,9 +4,11 @@ namespace Tests\Feature;
 
 use App\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Filament\Resources\UserResource\Pages\ViewUser;
+use App\Filament\Resources\UserResource\Widgets\UserMoneyOverview;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Number;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -108,6 +110,56 @@ class UserListInvestedColumnTest extends TestCase
         Livewire::test(ViewUser::class, ['record' => $company->getKey()])
             ->assertOk()
             ->assertSee('Юридическо лице');
+    }
+
+    /**
+     * The same two totals, pinned above the table so a long user list can't
+     * push them below the fold — and still tied to the table's own query.
+     */
+    public function test_header_widget_totals_follow_the_table_filter(): void
+    {
+        $this->investorWithWallet('1000.00', '250.00', ['account_type' => User::TYPE_INDIVIDUAL]);
+        $this->investorWithWallet('500.50', '99.50', ['account_type' => User::TYPE_LEGAL_ENTITY]);
+
+        Livewire::test(UserMoneyOverview::class)
+            ->assertOk()
+            ->assertSee(Number::currency(1500.50, 'EUR', 'bg'))
+            ->assertSee(Number::currency(349.50, 'EUR', 'bg'));
+
+        Livewire::test(UserMoneyOverview::class, [
+            'tableFilters' => ['account_type' => ['value' => User::TYPE_LEGAL_ENTITY]],
+        ])
+            ->assertOk()
+            ->assertSee(Number::currency(500.50, 'EUR', 'bg'))
+            ->assertSee(Number::currency(99.50, 'EUR', 'bg'))
+            ->assertDontSee(Number::currency(1500.50, 'EUR', 'bg'));
+    }
+
+    public function test_users_list_page_renders_the_totals_widget(): void
+    {
+        $this->investorWithWallet('1000.00', '250.00');
+
+        Livewire::test(ListUsers::class)
+            ->assertOk()
+            ->assertSeeLivewire(UserMoneyOverview::class);
+    }
+
+    /**
+     * A ListRecords page hands its widgets NOTHING by default, which would
+     * leave the cards showing platform totals while the table below is
+     * filtered — silently wrong, and invisible in a widget-only test.
+     */
+    public function test_page_forwards_its_filter_state_to_the_totals_widget(): void
+    {
+        $page = Livewire::test(ListUsers::class)
+            ->set('tableSearch', 'Технокапитал')
+            ->set('tableFilters', ['account_type' => ['value' => User::TYPE_LEGAL_ENTITY]]);
+
+        $data = $page->instance()->getWidgetData();
+
+        $this->assertSame('Технокапитал', $data['tableSearch']);
+        $this->assertSame(User::TYPE_LEGAL_ENTITY, $data['tableFilters']['account_type']['value']);
+        $this->assertArrayHasKey('tableColumnSearches', $data);
     }
 
     /**
