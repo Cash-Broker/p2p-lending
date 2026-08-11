@@ -22,7 +22,9 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
+use Filament\Tables\Columns\Summarizers\Sum;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -64,14 +66,18 @@ class UserResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            // «Инвестирано»/«Свободни» + their totals read the wallet — load it
+            // with the page instead of one query per row.
+            ->modifyQueryUsing(fn (Builder $query) => $query->with('wallet'))
             ->columns([
                 Tables\Columns\TextColumn::make('name')->label('Име')->searchable(),
                 Tables\Columns\TextColumn::make('email')->label('Имейл')->searchable(),
-                Tables\Columns\BadgeColumn::make('account_type')->label('Тип акаунт')
-                    ->formatStateUsing(fn (string $state) => match ($state) {
-                        'individual' => 'Физическо', 'legal_entity' => 'Юридическо', default => $state
-                    })
-                    ->colors(['gray' => 'individual', 'success' => 'legal_entity']),
+                // «Тип акаунт» (физическо/юридическо) is deliberately NOT a
+                // column (boss 2026-08-11: «махни от началния екран на
+                // потребителите физ лице / това да излиза като кликна на
+                // него») — the list has to fit one screen without stretching.
+                // It lives in the profile infolist, one click away. The FILTER
+                // below stays: slicing by type costs the table no width.
                 Tables\Columns\TextColumn::make('legalEntityProfile.legal_name')->label('Фирма')
                     ->placeholder('—')->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\BadgeColumn::make('role')->label('Роля')
@@ -97,8 +103,18 @@ class UserResource extends Resource
                         ? static::getUrl('view', ['record' => $record])
                         : null)
                     ->color('info')
-                    ->sortable(),
-                Tables\Columns\TextColumn::make('wallet.available')->label('Свободни')->money('EUR'),
+                    ->sortable()
+                    // «сумарно инвестирани и свободни, да не се налага да ги
+                    // събирам» (boss 2026-08-11): live totals under the two
+                    // money columns. They follow the current filter/search, so
+                    // the same row answers «колко има платформата общо» and
+                    // «колко има тази група» without any extra screen.
+                    ->summarize(Sum::make('total')->label('Общо')->money('EUR')),
+                Tables\Columns\TextColumn::make('wallet.available')->label('Свободни')
+                    ->money('EUR')
+                    ->placeholder('—')
+                    ->sortable()
+                    ->summarize(Sum::make('total')->label('Общо')->money('EUR')),
                 Tables\Columns\TextColumn::make('created_at')->label('Регистрация')->date('d.m.Y'),
             ])
             ->filters([
@@ -335,9 +351,12 @@ class UserResource extends Resource
                 Infolists\Components\TextEntry::make('name')->label('Име'),
                 Infolists\Components\TextEntry::make('email')->label('Имейл'),
                 Infolists\Components\TextEntry::make('phone')->label('Телефон')->default('—'),
+                // The list no longer carries this badge (boss 2026-08-11) — the
+                // profile is now the ONLY place it shows, so spell it out in
+                // full instead of the abbreviated table wording.
                 Infolists\Components\TextEntry::make('account_type')->label('Тип акаунт')->badge()
                     ->formatStateUsing(fn (string $state) => match ($state) {
-                        'individual' => 'Физическо', 'legal_entity' => 'Юридическо', default => $state
+                        'individual' => 'Физическо лице', 'legal_entity' => 'Юридическо лице', default => $state
                     })
                     ->color(fn (string $state) => match ($state) {
                         'legal_entity' => 'success', default => 'gray'
