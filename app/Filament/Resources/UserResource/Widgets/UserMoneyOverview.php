@@ -29,6 +29,11 @@ class UserMoneyOverview extends BaseWidget
         return ListUsers::class;
     }
 
+    /**
+     * Shown when there is nothing hiding outside the two figures.
+     */
+    private const SCOPE_NOTE = 'По текущия филтър и търсене';
+
     protected function getStats(): array
     {
         // reorder() drops the table's ORDER BY — it is dead weight (and in
@@ -38,19 +43,45 @@ class UserMoneyOverview extends BaseWidget
         $totals = Wallet::whereIn('user_id', $userIds)
             ->selectRaw('COALESCE(SUM(invested), 0) as total_invested')
             ->selectRaw('COALESCE(SUM(available), 0) as total_available')
+            ->selectRaw('COALESCE(SUM(reserved), 0) as total_reserved')
+            ->selectRaw('COALESCE(SUM(accrued), 0) as total_accrued')
             ->first();
 
+        // `earned` is deliberately absent from every figure here: it is a
+        // cumulative counter credited ALONGSIDE `available` (WalletService
+        // credits both on every interest payment), not a pot of money.
+        // Adding it anywhere double-counts the same euros.
         return [
+            // Each card is exactly the SUM of the column beneath it — that is
+            // the whole point («да не се налага да ги събирам»), so the value
+            // must never quietly become a different figure. The two buckets
+            // that live outside the columns are disclosed underneath instead,
+            // and only when they actually hold money.
             Stat::make('Инвестирани общо', static::money($totals?->total_invested))
-                ->description('По текущия филтър и търсене')
+                ->description(static::note($totals?->total_accrued, 'натрупана лихва'))
                 ->icon('heroicon-o-banknotes')
                 ->color('success'),
 
             Stat::make('Свободни общо', static::money($totals?->total_available))
-                ->description('По текущия филтър и търсене')
+                ->description(static::note($totals?->total_reserved, 'в процес на теглене'))
                 ->icon('heroicon-o-wallet')
                 ->color('primary'),
         ];
+    }
+
+    /**
+     * Money parked in `reserved` (a withdrawal is on its way out) or in
+     * `accrued` (interest promised but not yet released) belongs to nobody's
+     * column, so without this line the cards would read as «everything the
+     * platform holds» while quietly missing it.
+     */
+    protected static function note(mixed $amount, string $label): string
+    {
+        $amount = (string) ($amount ?? '0');
+
+        return bccomp($amount, '0', 2) > 0
+            ? '+ '.static::money($amount).' '.$label
+            : self::SCOPE_NOTE;
     }
 
     /**

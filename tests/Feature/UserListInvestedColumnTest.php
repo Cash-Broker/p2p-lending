@@ -135,6 +135,36 @@ class UserListInvestedColumnTest extends TestCase
             ->assertDontSee(Number::currency(1500.50, 'EUR', 'bg'));
     }
 
+    /**
+     * `reserved` (a withdrawal on its way out) and `accrued` (interest
+     * promised, not yet released) sit in no column, so the cards disclose
+     * them underneath instead of silently leaving the money out.
+     */
+    public function test_widget_discloses_money_parked_outside_the_two_columns(): void
+    {
+        $investor = $this->investorWithWallet('1000.00', '250.00');
+        $investor->wallet->forceFill(['reserved' => '75.00', 'accrued' => '12.34'])->save();
+
+        Livewire::test(UserMoneyOverview::class)
+            ->assertOk()
+            // The headline figures still equal the columns they sit above.
+            ->assertSee(Number::currency(1000, 'EUR', 'bg'))
+            ->assertSee(Number::currency(250, 'EUR', 'bg'))
+            ->assertSee('+ '.Number::currency(12.34, 'EUR', 'bg').' натрупана лихва')
+            ->assertSee('+ '.Number::currency(75, 'EUR', 'bg').' в процес на теглене');
+    }
+
+    public function test_widget_stays_quiet_when_nothing_is_parked(): void
+    {
+        $this->investorWithWallet('1000.00', '250.00');
+
+        Livewire::test(UserMoneyOverview::class)
+            ->assertOk()
+            ->assertDontSee('в процес на теглене')
+            ->assertDontSee('натрупана лихва')
+            ->assertSee('По текущия филтър и търсене');
+    }
+
     public function test_users_list_page_renders_the_totals_widget(): void
     {
         $this->investorWithWallet('1000.00', '250.00');
