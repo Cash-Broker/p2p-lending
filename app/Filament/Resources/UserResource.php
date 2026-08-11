@@ -361,8 +361,23 @@ class UserResource extends Resource
                     ->color(fn (string $state) => match ($state) {
                         'legal_entity' => 'success', default => 'gray'
                     }),
-                Infolists\Components\TextEntry::make('role')->label('Роля')->badge(),
-                Infolists\Components\TextEntry::make('kyc_status')->label('KYC')->badge(),
+                // Both entries used to print the raw column value («investor»,
+                // «approved») — the only English left on a screen the admin
+                // now opens for the account type. Same wording as the list.
+                Infolists\Components\TextEntry::make('role')->label('Роля')->badge()
+                    ->formatStateUsing(fn (string $state) => match ($state) {
+                        'investor' => 'Инвеститор', 'admin' => 'Админ', default => $state
+                    })
+                    ->color(fn (string $state) => match ($state) {
+                        'admin' => 'danger', default => 'primary'
+                    }),
+                Infolists\Components\TextEntry::make('kyc_status')->label('KYC')->badge()
+                    ->formatStateUsing(fn (string $state) => match ($state) {
+                        'pending' => 'Очакващ', 'submitted' => 'Изпратен', 'in_review' => 'В преглед', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен', default => $state
+                    })
+                    ->color(fn (string $state) => match ($state) {
+                        'approved' => 'success', 'submitted' => 'info', 'in_review' => 'primary', 'rejected' => 'danger', default => 'warning'
+                    }),
                 Infolists\Components\TextEntry::make('created_at')->label('Регистрация')->date('d.m.Y'),
             ])->columns(3),
 

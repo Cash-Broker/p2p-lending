@@ -109,4 +109,20 @@ class UserListInvestedColumnTest extends TestCase
             ->assertOk()
             ->assertSee('Юридическо лице');
     }
+
+    /**
+     * The profile is now where the admin goes for the account type, so the
+     * page must not print raw column values at it («investor», «approved»).
+     */
+    public function test_profile_shows_role_and_kyc_in_bulgarian(): void
+    {
+        $investor = $this->investorWithWallet('100.00', '0.00');
+
+        Livewire::test(ViewUser::class, ['record' => $investor->getKey()])
+            ->assertOk()
+            ->assertSee('Инвеститор')
+            ->assertSee('Одобрен')
+            ->assertDontSee('investor')
+            ->assertDontSee('approved');
+    }
 }

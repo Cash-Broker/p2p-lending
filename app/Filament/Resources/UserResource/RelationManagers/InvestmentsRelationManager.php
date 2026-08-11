@@ -22,6 +22,13 @@ class InvestmentsRelationManager extends RelationManager
 
     protected static ?string $title = 'Инвестиции';
 
+    // Without these Filament falls back to the model class name and prints
+    // English into generated copy («Няма investments», «... от общо N
+    // investments»).
+    protected static ?string $modelLabel = 'инвестиция';
+
+    protected static ?string $pluralModelLabel = 'инвестиции';
+
     public function isReadOnly(): bool
     {
         return true;

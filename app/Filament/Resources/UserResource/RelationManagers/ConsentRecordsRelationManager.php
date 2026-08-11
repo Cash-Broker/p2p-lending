@@ -22,6 +22,12 @@ class ConsentRecordsRelationManager extends RelationManager
     protected static string $relationship = 'consentRecords';
     protected static ?string $title = 'Съгласия с правни документи';
 
+    // Same reason as the investments tab: without these, Filament's generated
+    // copy falls back to the model class name in English.
+    protected static ?string $modelLabel = 'съгласие';
+
+    protected static ?string $pluralModelLabel = 'съгласия';
+
     public function form(Schema $form): Schema
     {
         // Required by the parent contract but unused — there is no Create
