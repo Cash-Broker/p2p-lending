@@ -81,7 +81,15 @@ class InvestorWeeklyEarningsTest extends TestCase
 
         $this->artisan('investors:weekly-earnings')->assertSuccessful();
 
-        Notification::assertSentTo($user, InvestorWeeklyEarningsNotification::class);
+        // Nothing was PAID yet — the subject must never read «спечели 0,00 €»
+        // (day-0 investors get the amount-free variant).
+        Notification::assertSentTo($user, InvestorWeeklyEarningsNotification::class,
+            function (InvestorWeeklyEarningsNotification $n) use ($user) {
+                $subject = $n->toMail($user)->subject;
+
+                return ! str_contains($subject, 'спечели')
+                    && ! str_contains($subject, '0,00');
+            });
     }
 
     public function test_investor_with_nothing_running_and_nothing_received_is_skipped(): void

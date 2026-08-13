@@ -42,10 +42,25 @@ class InvestorWeeklyEarningsNotification extends Notification implements ShouldQ
 
     public function toMail(object $notifiable): MailMessage
     {
+        $hasWeekly = bccomp($this->weeklyInterest, '0', 2) > 0;
+        $hasAccrued = bccomp($this->accruedNow, '0', 2) > 0;
+
+        // Capitalized-only investors receive payouts at maturity — «спечели
+        // 0,00 €» would read as a broken promise, so their subject leads with
+        // the growing running profit instead (and a fresh day-0 investor gets
+        // no zero amounts at all).
+        $subject = match (true) {
+            $hasWeekly => '[Vamaasset] Тази седмица спечели '.$this->formatBg($this->weeklyInterest).' €',
+            $hasAccrued => '[Vamaasset] Печалбата ти расте — текущо +'.$this->formatBg($this->accruedNow).' €',
+            default => '[Vamaasset] Инвестицията ти вече работи',
+        };
+
         return (new MailMessage)
-            ->subject('[Vamaasset] Тази седмица спечели '.$this->formatBg($this->weeklyInterest).' €')
+            ->subject($subject)
             ->markdown('emails.investor-weekly-earnings', [
                 'name' => $notifiable->name ?? 'инвеститор',
+                'hasWeekly' => $hasWeekly,
+                'hasAccrued' => $hasAccrued,
                 'weeklyInterest' => $this->formatBg($this->weeklyInterest),
                 'accruedNow' => $this->formatBg($this->accruedNow),
                 'totalPaid' => $this->formatBg($this->totalPaid),
