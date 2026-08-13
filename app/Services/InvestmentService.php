@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Investment;
 use App\Models\Loan;
+use App\Models\LoanEvent;
 use App\Models\LoanOffer;
 use App\Models\User;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -110,6 +111,39 @@ class InvestmentService
                 }
                 if ($loan->isFullyFunded() && $loan->status === Loan::STATUS_FUNDING) {
                     $loan->transitionTo(Loan::STATUS_FUNDED);
+
+                    // Client decision 2026-08-13 (Reni, explicit, after the
+                    // no-way-back consequence was put to her): a fully funded
+                    // loan starts REPAYING IMMEDIATELY, counted from the
+                    // funding date. The «Активирай» button is gone — the last
+                    // euro is the activation.
+                    //
+                    // This runs inside the investing transaction on purpose:
+                    // a funded loan without its payout schedules must never
+                    // exist, so schedule generation commits with the money or
+                    // not at all. transitionTo() generates them (funded →
+                    // active), anchored to now() — which IS the funding
+                    // moment, exactly what she asked for.
+                    $loan->transitionTo(Loan::STATUS_ACTIVE);
+
+                    // System-driven transition ⇒ it belongs in the append-only
+                    // loan_events trail (manual admin transitions rely on
+                    // audit_logs instead). Nobody pressed a button here, so
+                    // without this the activation would have no owner.
+                    LoanEvent::create([
+                        'loan_id' => $loan->id,
+                        'event_type' => LoanEvent::TYPE_STATUS_CHANGED,
+                        'from_status' => Loan::STATUS_FUNDED,
+                        'to_status' => Loan::STATUS_ACTIVE,
+                        'triggered_by' => LoanEvent::TRIGGERED_BY_SYSTEM,
+                        'triggered_by_user_id' => null,
+                        'metadata' => [
+                            'reason' => 'auto_activated_on_funding',
+                            'funded_amount' => (string) $loan->funded_amount,
+                            'closing_investment_id' => $investment->id,
+                        ],
+                        'occurred_at' => now(),
+                    ]);
                 }
 
                 // Conclude the loan agreement — frozen contract snapshot +

@@ -417,16 +417,11 @@ class LoanResource extends Resource
                         });
                         Notification::make()->title('Спрян')->warning()->send();
                     }),
-                Action::make('activate')->label('Активирай')->icon('heroicon-o-play')->color('success')
-                    ->visible(fn (Loan $r) => $r->status === Loan::STATUS_FUNDED)->requiresConfirmation()
-                    ->modalDescription('Кредитът ще стане активен и ще започнат погашения.')
-                    ->action(function (Loan $r) {
-                        DB::transaction(function () use ($r) {
-                            $loan = Loan::where('id', $r->id)->lockForUpdate()->firstOrFail();
-                            $loan->transitionTo(Loan::STATUS_ACTIVE);
-                        });
-                        Notification::make()->title('Кредитът е активиран')->success()->send();
-                    }),
+                // «Активирай» REMOVED (client decision 2026-08-13, Reni): a
+                // fully funded loan now starts repaying on its own, counted
+                // from the funding date. See InvestmentService::invest().
+                // There is deliberately no manual activation left — funding
+                // IS the activation, so `funded` is a state no loan rests in.
 
                 // 3-offer feature — pay investors the installments currently due
                 // on their per-investment schedules (each per their chosen offer).

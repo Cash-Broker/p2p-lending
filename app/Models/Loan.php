@@ -140,9 +140,10 @@ class Loan extends Model
     // Manually picking them would land the loan in a "closed" state while
     // investor principal is still sitting in `invested` — money stranded
     // forever (terminal states accept no further transitions). The activate
-    // (funded → active) transition is also excluded from the Select because it
-    // must run through the "Активирай" action so the amortization schedule is
-    // generated (see transitionTo()).
+    // (funded → active) transition is also excluded from the Select: since
+    // 2026-08-13 it happens automatically the moment the loan fills up
+    // (InvestmentService::invest), so `funded` is a state no loan rests in
+    // and there is nothing left for an admin to activate by hand.
     const MANUAL_STATUS_BLOCKLIST = [
         self::STATUS_REPAID,
         self::STATUS_BOUGHT_BACK,

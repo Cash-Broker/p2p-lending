@@ -37,7 +37,11 @@ class PortfolioBreakdownTest extends TestCase
 
         $offerId = $loan->offers()->where('payout_type', PayoutType::Amortizing)->value('id');
         app(InvestmentService::class)->invest($user, $loan->fresh(), '1000.00', (string) Str::uuid(), $offerId);
-        $loan->fresh()->transitionTo(Loan::STATUS_ACTIVE); // generates the schedule
+        // Пълното финансиране вече активира само (2026-08-13) — това остава
+        // само за случаите, в които кредитът е докаран до `funded` ръчно.
+        if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+            $loan->fresh()->transitionTo(Loan::STATUS_ACTIVE);
+        }
 
         $response = $this->actingAs($user)->getJson('/api/portfolio');
 

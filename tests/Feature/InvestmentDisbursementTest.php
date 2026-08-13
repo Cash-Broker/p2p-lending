@@ -39,11 +39,16 @@ class InvestmentDisbursementTest extends TestCase
             $service->invest($user, $loan->fresh(), '1000.00', "inv-{$type->value}", $offerId);
         }
 
-        // 3 × 1000 == investable 3000 → loan auto-transitioned to FUNDED.
+        // 3 × 1000 == investable 3000 → fully funded, which since 2026-08-13
+        // also starts the loan on the spot.
         $loan->refresh();
-        $this->assertSame(Loan::STATUS_FUNDED, $loan->status);
+        $this->assertSame(Loan::STATUS_ACTIVE, $loan->status);
 
-        $loan->transitionTo(Loan::STATUS_ACTIVE); // generates investment_schedules
+        // Пълното финансиране вече активира само (2026-08-13) — това остава
+        // само за случаите, в които кредитът е докаран до `funded` ръчно.
+        if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+            $loan->transitionTo(Loan::STATUS_ACTIVE);
+        }
 
         return [$loan->refresh(), $user];
     }

@@ -177,8 +177,12 @@ class OfferLoanAutoCloseTest extends TestCase
         $this->assertContains($loan->id, $first['auto_repaid']);
         $this->assertSame([], $second['auto_repaid'], 'second run must transition nothing');
         $this->assertSame(Loan::STATUS_REPAID, $loan->fresh()->status);
+        // Scoped to the CLOSING event: since 2026-08-13 the activation writes
+        // a status_changed row of its own, so counting the type alone would
+        // no longer be a statement about the auto-close.
         $this->assertSame(1, LoanEvent::where('loan_id', $loan->id)
             ->where('event_type', LoanEvent::TYPE_STATUS_CHANGED)
+            ->where('to_status', Loan::STATUS_REPAID)
             ->count(), 'exactly one auto-close event must exist');
     }
 
@@ -239,7 +243,11 @@ class OfferLoanAutoCloseTest extends TestCase
         $offerId = $loan->offers()->where('payout_type', $type)->value('id');
         app(InvestmentService::class)->invest($user, $loan->fresh(), '1000.00', (string) Str::uuid(), $offerId);
 
-        $loan->fresh()->transitionTo(Loan::STATUS_ACTIVE);
+        // Пълното финансиране вече активира само (2026-08-13) — това остава
+        // само за случаите, в които кредитът е докаран до `funded` ръчно.
+        if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+            $loan->fresh()->transitionTo(Loan::STATUS_ACTIVE);
+        }
 
         return $loan->fresh();
     }

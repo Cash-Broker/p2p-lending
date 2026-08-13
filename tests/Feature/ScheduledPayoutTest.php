@@ -44,7 +44,11 @@ class ScheduledPayoutTest extends TestCase
         app(InvestmentService::class)->invest($user, $loan->fresh(), '1000.00', (string) Str::uuid(), $offerId);
 
         $loan->refresh();
-        $loan->transitionTo(Loan::STATUS_ACTIVE);
+        // Пълното финансиране вече активира само (2026-08-13) — това остава
+        // само за случаите, в които кредитът е докаран до `funded` ръчно.
+        if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+            $loan->transitionTo(Loan::STATUS_ACTIVE);
+        }
 
         return [$loan->refresh(), $user];
     }

@@ -554,7 +554,11 @@ class Phase2WalletIntegrityTest extends TestCase
             $loan->transitionTo(Loan::STATUS_FUNDED);
         }
         // Generate schedule (transitionTo(active) does this via booted()).
-        $loan->transitionTo(Loan::STATUS_ACTIVE);
+        // Пълното финансиране вече активира само (2026-08-13) — това остава
+        // само за случаите, в които кредитът е докаран до `funded` ръчно.
+        if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+            $loan->transitionTo(Loan::STATUS_ACTIVE);
+        }
         return $loan->fresh();
     }
 

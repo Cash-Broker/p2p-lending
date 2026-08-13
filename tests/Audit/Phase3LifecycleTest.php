@@ -102,11 +102,19 @@ class Phase3LifecycleTest extends TestCase
         //     non-active-or-late loans)
         //   - Borrower may not even know they can start paying
         //
-        // The state machine DOES permit funded → active; there's
-        // just no automation or reminder. Not a bug per se — admin
-        // activation is a deliberate gate (verify loan agreement
-        // was signed, borrower identified, etc.). But the lack
-        // of any stale-loan alert is a gap.
+        // CLOSED 2026-08-13 by client decision (Reni): the gate is
+        // gone — full funding activates the loan itself, so no loan
+        // can sit in FUNDED waiting for someone to remember it. The
+        // verification the gate was meant to provide (agreement
+        // signed, borrower identified) now has to happen BEFORE the
+        // loan is published for investment, which is where it
+        // belonged: once investors' money is in, refusing to
+        // activate no longer protects anyone — and there is still
+        // no refund flow to unwind it.
+        //
+        // This test now only covers a loan FORCED into FUNDED (old
+        // rows, direct DB edits): it still generates no schedule,
+        // because nothing else transitions it.
         $loan = $this->makeLoanInStatus(Loan::STATUS_FUNDED);
 
         $this->assertSame(Loan::STATUS_FUNDED, $loan->fresh()->status);
@@ -307,7 +315,11 @@ class Phase3LifecycleTest extends TestCase
         if ($loan->status === Loan::STATUS_FUNDING) {
             $loan->transitionTo(Loan::STATUS_FUNDED);
         }
-        $loan->transitionTo(Loan::STATUS_ACTIVE);
+        // Пълното финансиране вече активира само (2026-08-13) — това остава
+        // само за случаите, в които кредитът е докаран до `funded` ръчно.
+        if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+            $loan->transitionTo(Loan::STATUS_ACTIVE);
+        }
         return [$loan->fresh(), $investor];
     }
 

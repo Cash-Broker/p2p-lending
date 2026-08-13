@@ -80,7 +80,8 @@ class InvestableAmountTest extends TestCase
 
         $fresh = $loan->fresh();
         $this->assertTrue($fresh->isFullyFunded());
-        $this->assertEquals(Loan::STATUS_FUNDED, $fresh->status);
+        // Hitting the investable cap fully funds it, which now also starts it.
+        $this->assertEquals(Loan::STATUS_ACTIVE, $fresh->status);
     }
 
     public function test_loan_without_cap_behaves_as_full_amount(): void

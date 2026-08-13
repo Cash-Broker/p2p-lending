@@ -46,9 +46,14 @@ class OfferLegacyAndGuardsTest extends TestCase
 
         $loan->refresh();
         $this->assertFalse($loan->usesOffers());
-        $this->assertSame(Loan::STATUS_FUNDED, $loan->status);
+        // Legacy loans auto-activate on full funding too (2026-08-13).
+        $this->assertSame(Loan::STATUS_ACTIVE, $loan->status);
 
-        $loan->transitionTo(Loan::STATUS_ACTIVE);
+        // Пълното финансиране вече активира само (2026-08-13) — това остава
+        // само за случаите, в които кредитът е докаран до `funded` ръчно.
+        if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+            $loan->transitionTo(Loan::STATUS_ACTIVE);
+        }
 
         // Legacy per-loan amortization schedule generated; no investment schedules.
         $this->assertSame(12, $loan->amortizationSchedules()->count());
@@ -70,7 +75,11 @@ class OfferLegacyAndGuardsTest extends TestCase
             $service->invest($user, $loan->fresh(), '1000.00', "g-{$type->value}", $offerId);
         }
 
-        $loan->refresh()->transitionTo(Loan::STATUS_ACTIVE);
+        // Пълното финансиране вече активира само (2026-08-13) — това остава
+        // само за случаите, в които кредитът е докаран до `funded` ръчно.
+        if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+            $loan->refresh()->transitionTo(Loan::STATUS_ACTIVE);
+        }
 
         return $loan->refresh();
     }

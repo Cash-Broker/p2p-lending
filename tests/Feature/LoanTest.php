@@ -184,9 +184,10 @@ class LoanTest extends TestCase
 
         $this->actingAs($user)->postJson("/api/loans/{$loan->id}/invest", ['amount' => 50, 'loan_offer_id' => $loan->offers()->value('id')], ['X-Idempotency-Key' => 'funded-' . uniqid()]);
 
-        // After audit fix: fully funded loans go to FUNDED, not ACTIVE
-        // Admin must manually activate via Filament
-        $this->assertEquals(Loan::STATUS_FUNDED, $loan->fresh()->status);
+        // Client decision 2026-08-13: the manual «Активирай» gate is gone —
+        // a fully funded loan starts repaying from the funding date, so it
+        // lands on ACTIVE, not FUNDED.
+        $this->assertEquals(Loan::STATUS_ACTIVE, $loan->fresh()->status);
     }
 
     public function test_invest_published_to_funded_via_funding_when_single_investment_fills_loan(): void
@@ -213,7 +214,8 @@ class LoanTest extends TestCase
             ['X-Idempotency-Key' => 'single-fill-' . uniqid()],
         )->assertSuccessful();
 
-        $this->assertEquals(Loan::STATUS_FUNDED, $loan->fresh()->status);
+        // Full funding activates on the spot (2026-08-13).
+        $this->assertEquals(Loan::STATUS_ACTIVE, $loan->fresh()->status);
         $this->assertEquals('1000.00', (string) $loan->fresh()->funded_amount);
     }
 

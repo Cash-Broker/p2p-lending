@@ -155,8 +155,17 @@ class Phase3AuditTrailTest extends TestCase
         // when InvestmentService calls transitionTo. ~30 min per
         // transition; 2 call sites total.
         //
-        // Test asserts the CURRENT gap. If v1.1 closes it, this test
-        // flips.
+        // PARTIALLY CLOSED 2026-08-13. Removing the «Активирай» button
+        // (client decision) made funding → active a SYSTEM-driven
+        // transition, and the Auditable fallback is wrong for it: the
+        // audit_logs row would be attributed to whichever INVESTOR
+        // happened to place the closing investment, as if they had
+        // activated the loan. So that one transition now emits the
+        // LoanEvent this finding asked for.
+        //
+        // Still open: published → funding and funding → funded remain
+        // silent, so the investor timeline still cannot show "funding
+        // started" / "fully funded".
         $loan = $this->makeDraftLoan();
         $loan->transitionTo(Loan::STATUS_PUBLISHED);
         $investor = $this->makeKycdInvestor();
@@ -167,26 +176,41 @@ class Phase3AuditTrailTest extends TestCase
             $investor, $loan->fresh(), '1000.00', (string) Str::uuid(),
         );
 
-        // Loan transitioned: published → funding → funded (2 transitions).
+        // published → funding → funded → active (3 transitions).
         $loan->refresh();
-        $this->assertSame(Loan::STATUS_FUNDED, $loan->status,
-            'sanity: InvestmentService transitioned the loan as expected');
+        $this->assertSame(Loan::STATUS_ACTIVE, $loan->status,
+            'sanity: full funding now activates the loan on its own');
 
-        $eventsAfter = LoanEvent::where('loan_id', $loan->id)->count();
+        $events = LoanEvent::where('loan_id', $loan->id)
+            ->where('id', '>', 0)
+            ->orderBy('id')
+            ->get();
 
-        $this->assertSame($eventsBefore, $eventsAfter,
-            'P3-F8: InvestmentService transitions do NOT write loan_events (documented gap)');
+        // EXACTLY one event, for the activation only — the two funding
+        // bookkeeping transitions still write nothing.
+        $this->assertCount($eventsBefore + 1, $events,
+            'P3-F8: only the auto-activation emits a loan_event; the funding transitions still do not');
+
+        $activation = $events->last();
+        $this->assertSame(LoanEvent::TYPE_STATUS_CHANGED, $activation->event_type);
+        $this->assertSame(Loan::STATUS_FUNDED, $activation->from_status);
+        $this->assertSame(Loan::STATUS_ACTIVE, $activation->to_status);
+        $this->assertSame(LoanEvent::TRIGGERED_BY_SYSTEM, $activation->triggered_by,
+            'the platform activated this, not the investor who happened to close the funding');
+        $this->assertNull($activation->triggered_by_user_id);
     }
 
     public function test_P3_F9_filament_admin_transitions_do_NOT_emit_loan_event(): void
     {
         // **Documents finding P3-F9 (LOW).**
         //
-        // Filament LoanResource actions (publish, unpublish, activate)
-        // call transitionTo() directly but do NOT write a loan_events
-        // row. Only Auditable's audit_logs is written (admin-only
+        // Filament LoanResource actions (publish, unpublish) call
+        // transitionTo() directly but do NOT write a loan_events row.
+        // Only Auditable's audit_logs is written (admin-only
         // visibility). Investor timeline does not show when a loan was
-        // published or activated.
+        // published. (The «Активирай» action this finding also covered
+        // no longer exists — activation moved into InvestmentService
+        // on 2026-08-13 and DOES emit a system event; see P3-F8.)
         //
         // Fix (v1.1 candidate): emit LoanEvent at each Filament action.
         // Admin as triggered_by_user_id — shows in the admin-internal
