@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\LoanController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PortfolioController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\PromotionController;
 use App\Http\Controllers\Api\SchedulerHealthController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\WithdrawalController;
@@ -51,6 +52,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Investor-only routes (verified email required)
     Route::middleware('investor')->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index']);
+
+        // Flash promos for the dashboard panel (Reni 2026-08-14).
+        Route::get('/promotions/active', [PromotionController::class, 'active']);
 
         // Browse loans (no KYC required — investors can browse before verification)
         Route::get('/loans', [LoanController::class, 'index']);

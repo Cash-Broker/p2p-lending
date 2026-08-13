@@ -17,6 +17,7 @@ class InvestmentService
         private WalletService $walletService,
         private InvestmentContractService $contractService,
         private InvestmentScheduleGenerator $scheduleGenerator,
+        private PromotionService $promotionService,
     ) {}
 
     /**
@@ -102,6 +103,11 @@ class InvestmentService
                 // activation-time generator then skips it (already exists).
                 if ($offer !== null) {
                     $this->scheduleGenerator->generateForInvestment($investment, $loan);
+
+                    // Flash promo (Reni 2026-08-14): invest inside a running
+                    // promo window → the upfront bonus lands atomically with
+                    // the investment. No promo / no budget → silent no-op.
+                    $this->promotionService->grantInvestBonus($investment, $loan, $user);
                 }
 
                 // Credit loan funded amount

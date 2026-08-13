@@ -4,6 +4,7 @@ import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler } from 'chart.js'
 import api from '../api/axios'
 import EarnedTicker from '../components/EarnedTicker.vue'
+import PromoPanel from '../components/PromoPanel.vue'
 import { useAuthStore } from '../stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
@@ -168,6 +169,9 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
           :lifetime="dashboard.lifetime_totals"
         />
       </div>
+
+      <!-- Flash promo panel — renders only while a promo is running -->
+      <PromoPanel />
 
       <!-- Stat cards -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
