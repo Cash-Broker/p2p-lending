@@ -21,3 +21,14 @@ export function formatEuro(value, decimals = 2) {
     maximumFractionDigits: decimals,
   })
 }
+
+/**
+ * Badge text for the daily pace («+0,44» / «< 0,01»), or null when nothing is
+ * accruing. The sign lives HERE: prefixing '+' in a template would garble the
+ * sub-stotinka branch into '+< 0,01'.
+ */
+export function formatDailyRate(rate) {
+  const numeric = parseFloat(rate) || 0
+  if (numeric <= 0) return null
+  return numeric < 0.01 ? '< 0,01' : `+${formatEuro(numeric)}`
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatEuro, tickerValue } from './earningsTicker'
+import { formatDailyRate, formatEuro, tickerValue } from './earningsTicker'
 
 describe('tickerValue', () => {
   it('returns the base amount at zero elapsed time', () => {
@@ -41,5 +41,22 @@ describe('formatEuro', () => {
   it('renders non-finite input as zero', () => {
     expect(bare(formatEuro(NaN))).toBe('0,00')
     expect(bare(formatEuro(Infinity))).toBe('0,00')
+  })
+})
+
+describe('formatDailyRate', () => {
+  it('prefixes normal rates with a plus sign', () => {
+    expect(formatDailyRate('0.4443')).toBe('+0,44')
+  })
+
+  it('renders sub-stotinka rates WITHOUT the plus (no "+<" collision)', () => {
+    // Regression: the template used to hardcode '+' producing '+< 0,01'.
+    expect(formatDailyRate('0.0043')).toBe('< 0,01')
+  })
+
+  it('returns null when nothing is accruing', () => {
+    expect(formatDailyRate('0.0000')).toBeNull()
+    expect(formatDailyRate(undefined)).toBeNull()
+    expect(formatDailyRate('-1')).toBeNull()
   })
 })

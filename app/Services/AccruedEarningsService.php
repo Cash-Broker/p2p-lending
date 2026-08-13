@@ -186,10 +186,17 @@ class AccruedEarningsService
         $finalInterest = (string) $row->interest;
         $maturity = $row->due_date->copy()->startOfDay();
         $firstDue = $maturity->copy()->subMonthsNoOverflow($term - 1);
+        // The ENGINE's maturity event: elapsed == term at firstDue + (term−1)
+        // months — for day-29–31 maturities subMonthsNoOverflow is not
+        // invertible, so this lands 1–3 days BEFORE the row's due_date and the
+        // engine releases there. Mirror the engine, not the calendar row,
+        // otherwise the counter would regress/plateau across the drift window.
+        $maturityMilestone = $firstDue->copy()->addMonthsNoOverflow($term - 1);
         $asOfDay = $asOf->copy()->startOfDay();
 
-        if ($asOf->gte($maturity)) {
-            // Matured but unpaid — the full schedule interest is earned.
+        if ($asOfDay->gte($maturityMilestone)) {
+            // Matured (per the engine's milestone math) but unpaid — the full
+            // schedule interest is earned.
             $totals['daily'] = bcadd($totals['daily'], $finalInterest, 2);
             $totals['live'] = bcadd($totals['live'], bcadd($finalInterest, '0', 6), 6);
 

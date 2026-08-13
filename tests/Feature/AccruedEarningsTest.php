@@ -15,6 +15,7 @@ use App\Services\PayoutAccrualService;
 use App\Services\WalletService;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
@@ -181,6 +182,38 @@ class AccruedEarningsTest extends TestCase
         $this->assertGreaterThan(0, (float) $engineAccrued);
         $this->assertGreaterThanOrEqual((float) $engineAccrued, (float) $result['amount_daily']);
         $this->assertLessThan((float) $rowInterest, (float) $result['amount_daily']);
+    }
+
+    public function test_capitalized_month_end_maturity_follows_engine_milestone_not_calendar_row(): void
+    {
+        // Regression (adversarial review 2026-08-13): a day-31 maturity makes
+        // subMonthsNoOverflow non-invertible — the engine's maturity milestone
+        // (firstDue + term−1 months) lands 2027-05-30, one day BEFORE the
+        // row's due_date. The counter must show the FULL interest from the
+        // milestone on (no plateau/regression across the drift window).
+        [$loan, $user] = $this->investorWithOfferLoan(PayoutType::Capitalized);
+
+        $row = $loan->investments()->first()->schedules()->first();
+        DB::table('investment_schedules')->where('id', $row->id)->update(['due_date' => '2027-05-31']);
+        $rowInterest = (string) $row->interest;
+
+        $service = app(AccruedEarningsService::class);
+
+        // On the engine's milestone date (before the calendar due date):
+        $atMilestone = $service->forUser($user->id, Carbon::parse('2027-05-30 00:30'));
+        $this->assertSame($rowInterest, $atMilestone['amount_daily']);
+
+        // The day before, the last month is still interpolating below target.
+        $beforeMilestone = $service->forUser($user->id, Carbon::parse('2027-05-29 12:00'));
+        $this->assertLessThan((float) $rowInterest, (float) $beforeMilestone['amount_daily']);
+        $this->assertGreaterThan(0, (float) $beforeMilestone['amount_daily']);
+
+        // And the engine agrees: it releases in full on that same drift date,
+        // after which the counter drops to zero and «Изплатени» takes over.
+        app(PayoutAccrualService::class)->processLoan($loan->id, Carbon::parse('2027-05-30 04:00'));
+
+        $this->assertSame('0.00', $service->forUser($user->id, Carbon::parse('2027-05-30 05:00'))['amount_daily']);
+        $this->assertSame($rowInterest, $user->wallet->fresh()->earned);
     }
 
     public function test_capitalized_fully_released_contributes_nothing(): void
