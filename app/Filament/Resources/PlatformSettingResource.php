@@ -43,6 +43,17 @@ class PlatformSettingResource extends Resource
     protected static ?string $pluralModelLabel = 'Настройки';
     protected static ?string $modelLabel = 'Настройка';
 
+    /**
+     * String settings that are really enums — the admin picks from a fixed
+     * list instead of free text (the DB CHECK is the backstop). key => options.
+     */
+    public const STRING_CHOICES = [
+        'dashboard_earned_mode' => [
+            'daily' => 'Дневно — сумата нараства веднъж на ден',
+            'live' => 'На живо — брояч в реално време',
+        ],
+    ];
+
     public static function canViewAny(): bool
     {
         return auth()->user()?->isAdmin() ?? false;
@@ -110,11 +121,22 @@ class PlatformSettingResource extends Resource
                     ->dehydrated(false)
                     ->afterStateHydrated(fn ($component, $record) => $component->state($record?->value)),
 
+                // enum-like string → Select with the allowed values only
+                Forms\Components\Select::make('value_choice')
+                    ->label('Стойност')
+                    ->visible(fn ($record) => isset(self::STRING_CHOICES[$record?->key]))
+                    ->options(fn ($record) => self::STRING_CHOICES[$record?->key] ?? [])
+                    ->required()
+                    ->native(false)
+                    ->dehydrated(false)
+                    ->afterStateHydrated(fn ($component, $record) => $component->state($record?->value)),
+
                 // string / json → Textarea
                 Forms\Components\Textarea::make('value_text')
                     ->label('Стойност')
                     ->rows(4)
-                    ->visible(fn ($record) => in_array($record?->type, ['string', 'json']))
+                    ->visible(fn ($record) => in_array($record?->type, ['string', 'json'])
+                        && ! isset(self::STRING_CHOICES[$record?->key]))
                     ->dehydrated(false)
                     ->afterStateHydrated(fn ($component, $record) => $component->state($record?->value)),
 

@@ -8,7 +8,9 @@ use App\Http\Resources\TransactionResource;
 use App\Http\Resources\WalletResource;
 use App\Models\Investment;
 use App\Models\Loan;
+use App\Models\PlatformSetting;
 use App\Models\Transaction;
+use App\Services\AccruedEarningsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -16,7 +18,7 @@ use Illuminate\Support\Collection;
 
 class DashboardController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    public function index(Request $request, AccruedEarningsService $accruedEarnings): JsonResponse
     {
         $this->authorize('viewAny', Investment::class);
 
@@ -50,12 +52,22 @@ class DashboardController extends Controller
 
         $monthlyEarnings = $this->getMonthlyEarnings($user->id);
 
+        // «Спечелени» ticker (2026-08-13): schedule-accrued interest not yet
+        // paid out — display-only reference, NOT withdrawable money. The admin
+        // picks the presentation variant via the dashboard_earned_mode setting
+        // (DB CHECK constrains it; the fallback below is defense in depth).
+        $mode = PlatformSetting::get('dashboard_earned_mode', 'daily');
+        if (! in_array($mode, ['daily', 'live'], true)) {
+            $mode = 'daily';
+        }
+
         return response()->json([
             'wallet' => new WalletResource($wallet),
             'active_investments_count' => $activeInvestmentsCount,
             'recent_transactions' => TransactionResource::collection($recentTransactions),
             'latest_loans' => LoanResource::collection($latestLoans),
             'monthly_earnings' => $monthlyEarnings,
+            'earned_accrual' => ['mode' => $mode] + $accruedEarnings->forUser($user->id),
         ]);
     }
 

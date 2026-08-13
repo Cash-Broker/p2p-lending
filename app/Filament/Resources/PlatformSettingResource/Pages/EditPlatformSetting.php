@@ -34,7 +34,11 @@ class EditPlatformSetting extends EditRecord
             'bool'  => $this->data['value_bool'] ? 'true' : 'false',
             'int'   => (string) (int) $this->data['value_int'],
             'float' => (string) (float) $this->data['value_float'],
-            default => (string) ($this->data['value_text'] ?? ''),
+            // Enum-like strings come from the Select ghost field; fall back to
+            // the current value so a missing state can never blank the setting.
+            default => isset(PlatformSettingResource::STRING_CHOICES[$this->record->key])
+                ? (string) ($this->data['value_choice'] ?? $this->record->value)
+                : (string) ($this->data['value_text'] ?? ''),
         };
 
         $data['value'] = $value;

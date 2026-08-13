@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler } from 'chart.js'
 import api from '../api/axios'
+import EarnedTicker from '../components/EarnedTicker.vue'
 import { useAuthStore } from '../stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
@@ -37,7 +38,9 @@ const statCards = computed(() => [
   { label: 'Общо', value: totalBalance.value, icon: 'total', color: 'navy' },
   { label: 'Свободни', value: wallet.value.available, icon: 'available', color: 'accent' },
   { label: 'Инвестирани', value: wallet.value.invested, icon: 'invested', color: 'blue' },
-  { label: 'Спечелени', value: wallet.value.earned, icon: 'earned', color: 'emerald' },
+  // «Изплатени» (2026-08-13, Reni): interest actually paid out — the live
+  // «Спечелени» accrual moved to the ticker above the cards.
+  { label: 'Изплатени', value: wallet.value.earned, icon: 'earned', color: 'emerald' },
 ])
 
 const chartData = computed(() => {
@@ -153,10 +156,13 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
     </div>
 
     <template v-else>
-      <!-- Greeting -->
-      <div class="mb-8">
-        <h1 class="text-2xl font-bold text-navy-700">Добре дошъл, {{ auth.user?.name?.split(' ')[0] }}</h1>
-        <p class="text-sm text-gray-500 mt-1">Ето обобщение на твоя акаунт</p>
+      <!-- Greeting + the green «Спечелени» accrual ticker (top-right) -->
+      <div class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-navy-700">Добре дошъл, {{ auth.user?.name?.split(' ')[0] }}</h1>
+          <p class="text-sm text-gray-500 mt-1">Ето обобщение на твоя акаунт</p>
+        </div>
+        <EarnedTicker v-if="dashboard?.earned_accrual" :accrual="dashboard.earned_accrual" />
       </div>
 
       <!-- Stat cards -->
