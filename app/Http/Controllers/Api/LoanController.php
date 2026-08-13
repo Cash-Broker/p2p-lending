@@ -230,6 +230,10 @@ class LoanController extends Controller
         return response()->json([
             'message' => 'Investment successful.',
             'investment' => new InvestmentResource($investment->load('loan')),
+            // Actual upfront promo bonus granted with this invest (null when
+            // no promo ran / budget was exhausted) — the SPA shows the real
+            // figure, never the advertised one (review 2026-08-14).
+            'promo_bonus' => $investment->promoBonusGranted,
         ], 201);
     }
 

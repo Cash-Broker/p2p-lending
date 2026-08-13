@@ -68,7 +68,7 @@ function isUrgent(p) {
       <div class="relative flex flex-col sm:flex-row sm:items-center gap-4">
         <!-- Bell + title -->
         <div class="flex items-center gap-3 min-w-0">
-          <div class="promo-bell flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent-400/20 text-accent-400">
+          <div class="promo-bell flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent-400/20 text-accent-400" aria-hidden="true">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
           </div>
           <div class="min-w-0">
@@ -83,7 +83,9 @@ function isUrgent(p) {
         <!-- Bonus badge -->
         <div class="promo-badge relative overflow-hidden rounded-xl bg-accent-400 px-3.5 py-2 text-center shrink-0 sm:ml-auto">
           <p class="text-sm font-extrabold leading-tight text-navy-700">+{{ bonusText(p) }} БОНУС</p>
-          <p class="text-[10px] font-semibold uppercase tracking-wider text-navy-700/70">веднага при инвестиция</p>
+          <p class="text-[10px] font-bold uppercase tracking-wider text-navy-700">
+            веднага при инвестиция<span v-if="p.remaining_budget !== null"> · до изчерпване</span>
+          </p>
         </div>
 
         <!-- Countdown + CTA -->
@@ -97,6 +99,7 @@ function isUrgent(p) {
           </div>
           <router-link
             :to="`/invest/${p.loan.id}`"
+            :aria-label="`Инвестирай сега в кредит #${p.loan.id}`"
             class="promo-cta rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-navy-700 transition-transform hover:scale-105"
           >
             Инвестирай сега

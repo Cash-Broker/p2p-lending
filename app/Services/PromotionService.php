@@ -85,6 +85,12 @@ class PromotionService
             'bonus_paid_total' => bcadd((string) $promotion->bonus_paid_total, $bonus, 2),
         ])->save();
 
+        // Surface the ACTUAL granted amount to the caller/API response —
+        // budget trimming must never be silent (adversarial review 2026-08-14).
+        // Declared transient property, NOT an Eloquent attribute (an attribute
+        // would go dirty and break a later save()).
+        $investment->promoBonusGranted = $bonus;
+
         // Bell + mail AFTER the money commits; failure only logs.
         DB::afterCommit(function () use ($user, $bonus, $loan) {
             try {
@@ -115,21 +121,17 @@ class PromotionService
                 'loan.offers' => fn ($q) => $q->where('is_enabled', true)->orderBy('position'),
             ])
             ->orderBy('ends_at')
+            ->limit(10)
             ->get()
-            ->filter(function (LoanPromotion $promotion) {
-                $free = bcsub($promotion->loan->fundingCap(), (string) $promotion->loan->funded_amount, 2);
-                $budget = $promotion->remainingBudget();
-
-                return bccomp($free, '0', 2) > 0 && ($budget === null || bccomp($budget, '0', 2) > 0);
-            })
-            ->take(3)
-            ->values()
             ->map(function (LoanPromotion $promotion) {
+                // fundingCap() runs queries — compute once per promo.
+                $free = bcsub($promotion->loan->fundingCap(), (string) $promotion->loan->funded_amount, 2);
                 $rates = $promotion->loan->offers->pluck('interest_rate')->map(fn ($r) => (string) $r);
 
                 return [
                     'id' => $promotion->id,
                     'bonus_percent' => (string) $promotion->bonus_percent,
+                    'remaining_budget' => $promotion->remainingBudget(),
                     'starts_at' => $promotion->starts_at->toIso8601String(),
                     'ends_at' => $promotion->ends_at->toIso8601String(),
                     'loan' => [
@@ -137,9 +139,33 @@ class PromotionService
                         'type' => $promotion->loan->type,
                         'term_months' => (int) $promotion->loan->term_months,
                         'offer_rate_range' => $rates->isEmpty() ? null : [$rates->min(), $rates->max()],
-                        'free_capacity' => bcsub($promotion->loan->fundingCap(), (string) $promotion->loan->funded_amount, 2),
+                        'free_capacity' => $free,
                     ],
+                    '_bonus_percent_raw' => (string) $promotion->bonus_percent,
+                    '_free' => $free,
                 ];
+            })
+            ->filter(function (array $row) {
+                // Loan can still take money, AND the remaining budget can still
+                // cover the bonus on at least a MINIMUM investment (50 €) — a
+                // promo that can no longer pay what its card advertises must
+                // drop off the panel, not lure clicks (review 2026-08-14).
+                if (bccomp($row['_free'], '0', 2) <= 0) {
+                    return false;
+                }
+                if ($row['remaining_budget'] === null) {
+                    return true;
+                }
+                $minBonus = bcdiv(bcmul('50.00', $row['_bonus_percent_raw'], 4), '100', 2);
+
+                return bccomp($row['remaining_budget'], $minBonus, 2) >= 0;
+            })
+            ->take(3)
+            ->values()
+            ->map(function (array $row) {
+                unset($row['_bonus_percent_raw'], $row['_free']);
+
+                return $row;
             });
     }
 }

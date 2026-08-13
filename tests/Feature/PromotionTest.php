@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\PayoutType;
 use App\Filament\Resources\PromotionResource\Pages\CreatePromotion;
+use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\LoanPromotion;
 use App\Models\Transaction;
@@ -57,10 +58,11 @@ class PromotionTest extends TestCase
         ]);
     }
 
-    private function invest(User $user, Loan $loan, string $amount, string $key): void
+    private function invest(User $user, Loan $loan, string $amount, string $key): Investment
     {
         $offerId = $loan->offers()->where('payout_type', PayoutType::InterestOnly)->value('id');
-        app(InvestmentService::class)->invest($user, $loan->fresh(), $amount, $key, $offerId);
+
+        return app(InvestmentService::class)->invest($user, $loan->fresh(), $amount, $key, $offerId);
     }
 
     // ── Money math ──
@@ -73,7 +75,10 @@ class PromotionTest extends TestCase
         $promo = $this->runningPromo($loan, '2.00');
         $user = $this->investor();
 
-        $this->invest($user, $loan, '1000.00', 'promo-inv-1');
+        $investment = $this->invest($user, $loan, '1000.00', 'promo-inv-1');
+
+        // The ACTUAL granted amount is surfaced to the API response layer.
+        $this->assertSame('20.00', $investment->promoBonusGranted);
 
         $investmentId = $loan->investments()->first()->id;
 
@@ -200,6 +205,22 @@ class PromotionTest extends TestCase
         $this->getJson('/api/promotions/active')->assertStatus(401);
     }
 
+    public function test_nearly_exhausted_budget_drops_the_promo_from_the_feed(): void
+    {
+        // Remaining budget below the bonus on a MINIMUM (50 €) investment —
+        // the card must vanish rather than advertise a bonus it can't pay.
+        $loan = $this->fundableLoan();
+        $promo = $this->runningPromo($loan, '2.00', '30.00');
+        $promo->forceFill(['bonus_paid_total' => '29.50'])->save(); // remaining 0.50 < 1.00 (2% от 50 €)
+
+        $user = User::factory()->create(['email_verified_at' => now()]);
+        $user->wallet()->create();
+
+        $this->actingAs($user)->getJson('/api/promotions/active')
+            ->assertOk()
+            ->assertJsonCount(0, 'promotions');
+    }
+
     // ── Admin flow ──
 
     public function test_admin_creates_promo_and_investors_get_the_bell(): void
@@ -230,7 +251,11 @@ class PromotionTest extends TestCase
         $this->assertTrue($promo->ends_at->between(now()->addMinutes(59), now()->addMinutes(61)));
         $this->assertSame($admin->id, $promo->created_by);
 
-        Notification::assertSentTo($investor, PromoStartedNotification::class);
+        // The bell deadline is Bulgarian wall-clock (Europe/Sofia), never the
+        // app timezone (UTC on prod) — review regression 2026-08-14.
+        $expectedHour = $promo->ends_at->copy()->timezone('Europe/Sofia')->format('H:i');
+        Notification::assertSentTo($investor, PromoStartedNotification::class,
+            fn (PromoStartedNotification $n) => str_contains($n->toArray($investor)['message'], "до {$expectedHour} ч."));
         Notification::assertNotSentTo($unverified, PromoStartedNotification::class);
         Notification::assertNotSentTo($admin, PromoStartedNotification::class);
     }

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\PayoutType;
+use App\Traits\Auditable;
 use Database\Factories\InvestmentFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -13,7 +14,14 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class Investment extends Model
 {
     /** @use HasFactory<InvestmentFactory> */
-    use \App\Traits\Auditable, HasFactory;
+    use Auditable, HasFactory;
+
+    /**
+     * Transient: the upfront promo bonus granted together with THIS invest
+     * call (PromotionService), surfaced in the invest API response. Declared
+     * property on purpose — never an Eloquent attribute, never persisted.
+     */
+    public ?string $promoBonusGranted = null;
 
     protected $fillable = [
         'user_id',

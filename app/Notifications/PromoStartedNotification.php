@@ -42,7 +42,10 @@ class PromoStartedNotification extends Notification implements ShouldQueue
                 '+%s%% бонус веднага при инвестиция в кредит #%d — само до %s ч.',
                 rtrim(rtrim($this->bonusPercent, '0'), '.'),
                 $this->loanId,
-                $this->endsAt->timezone(config('app.timezone'))->format('H:i'),
+                // Explicit Europe/Sofia: the audience is Bulgarian and prod's
+                // app timezone is UTC — a frozen UTC wall-clock would show a
+                // deadline 2-3 h «in the past» (review 2026-08-14).
+                $this->endsAt->copy()->timezone('Europe/Sofia')->format('H:i'),
             ),
         ];
     }

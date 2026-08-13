@@ -3,11 +3,15 @@
 namespace App\Filament\Resources\PromotionResource\Pages;
 
 use App\Filament\Resources\PromotionResource;
+use App\Models\LoanPromotion;
 use App\Models\User;
 use App\Notifications\PromoStartedNotification;
 use Filament\Resources\Pages\CreateRecord;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Validation\ValidationException;
 
 /**
  * The window starts at the CREATE click («прозорецът тръгва от момента на
@@ -33,19 +37,47 @@ class CreatePromotion extends CreateRecord
         return $data;
     }
 
+    /**
+     * Atomic one-running-promo-per-loan: the form rule is a TOCTOU check, so
+     * re-verify under a lock in the same transaction as the insert (two
+     * admins clicking «Създай» simultaneously must not race past it).
+     */
+    protected function handleRecordCreation(array $data): Model
+    {
+        return DB::transaction(function () use ($data) {
+            $duplicate = LoanPromotion::query()
+                ->where('loan_id', $data['loan_id'])
+                ->running()
+                ->lockForUpdate()
+                ->exists();
+
+            if ($duplicate) {
+                throw ValidationException::withMessages([
+                    'data.loan_id' => ['Този кредит вече има активна промо оферта — прекратете я първо.'],
+                ]);
+            }
+
+            return LoanPromotion::create($data);
+        });
+    }
+
     protected function afterCreate(): void
     {
         try {
-            $investors = User::query()
-                ->where('role', 'investor')
-                ->whereNotNull('email_verified_at')
-                ->get();
-
-            Notification::send($investors, new PromoStartedNotification(
+            $notification = new PromoStartedNotification(
                 (int) $this->record->loan_id,
                 (string) $this->record->bonus_percent,
                 $this->record->ends_at,
-            ));
+            );
+
+            // Chunked: never hydrate the whole investor base in the admin
+            // request; the notification itself is queued per recipient.
+            User::query()
+                ->where('role', 'investor')
+                ->whereNotNull('email_verified_at')
+                ->chunkById(500, function ($investors) use ($notification) {
+                    Notification::send($investors, $notification);
+                });
         } catch (\Throwable $e) {
             Log::error('Promo bell dispatch failed', [
                 'promotion_id' => $this->record->id,
