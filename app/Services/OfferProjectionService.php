@@ -37,6 +37,7 @@ class OfferProjectionService
         int $termMonths,
         PayoutType $type,
         ?CarbonInterface $firstDueDate = null,
+        ?CarbonInterface $anchor = null,
     ): array {
         if ($termMonths <= 0) {
             throw new InvalidArgumentException('Term must be at least 1 month.');
@@ -47,9 +48,9 @@ class OfferProjectionService
         $monthlyRate = bcdiv(bcdiv($annualRate, '100', self::SCALE), '12', self::SCALE);
 
         return match ($type) {
-            PayoutType::Amortizing => $this->amortizing($principal, $monthlyRate, $termMonths, $firstDueDate),
-            PayoutType::InterestOnly => $this->interestOnly($principal, $monthlyRate, $termMonths, $firstDueDate),
-            PayoutType::Capitalized => $this->capitalized($principal, $monthlyRate, $termMonths, $firstDueDate),
+            PayoutType::Amortizing => $this->amortizing($principal, $monthlyRate, $termMonths, $firstDueDate, $anchor),
+            PayoutType::InterestOnly => $this->interestOnly($principal, $monthlyRate, $termMonths, $firstDueDate, $anchor),
+            PayoutType::Capitalized => $this->capitalized($principal, $monthlyRate, $termMonths, $firstDueDate, $anchor),
         };
     }
 
@@ -95,7 +96,7 @@ class OfferProjectionService
      * (shared monthly-payment formula, interest on remaining balance, last row
      * absorbs rounding drift) so projection == live schedule.
      */
-    private function amortizing(string $principal, string $monthlyRate, int $term, ?CarbonInterface $firstDueDate): array
+    private function amortizing(string $principal, string $monthlyRate, int $term, ?CarbonInterface $firstDueDate, ?CarbonInterface $anchor = null): array
     {
         $monthlyPayment = AmortizationService::calculateMonthlyPayment($principal, $monthlyRate, $term);
 
@@ -107,7 +108,7 @@ class OfferProjectionService
             $total = bcadd($principalPart, $interest, 2);
 
             $rows[] = [
-                'due_date' => $this->dueDate($i, $firstDueDate),
+                'due_date' => $this->dueDate($i, $firstDueDate, $anchor),
                 'principal' => $principalPart,
                 'interest' => $interest,
                 'total' => $total,
@@ -120,7 +121,7 @@ class OfferProjectionService
     }
 
     /** Interest each month; full principal in the final month. */
-    private function interestOnly(string $principal, string $monthlyRate, int $term, ?CarbonInterface $firstDueDate): array
+    private function interestOnly(string $principal, string $monthlyRate, int $term, ?CarbonInterface $firstDueDate, ?CarbonInterface $anchor = null): array
     {
         $interest = bcmul($principal, $monthlyRate, 2);
 
@@ -128,7 +129,7 @@ class OfferProjectionService
         for ($i = 1; $i <= $term; $i++) {
             $principalPart = $i === $term ? $principal : '0.00';
             $rows[] = [
-                'due_date' => $this->dueDate($i, $firstDueDate),
+                'due_date' => $this->dueDate($i, $firstDueDate, $anchor),
                 'principal' => $principalPart,
                 'interest' => $interest,
                 'total' => bcadd($principalPart, $interest, 2),
@@ -143,14 +144,14 @@ class OfferProjectionService
      * interest in one lump. Compounds at SCALE and rounds only the final figures
      * (no per-month rounding → no drift). One row, on the maturity date.
      */
-    private function capitalized(string $principal, string $monthlyRate, int $term, ?CarbonInterface $firstDueDate): array
+    private function capitalized(string $principal, string $monthlyRate, int $term, ?CarbonInterface $firstDueDate, ?CarbonInterface $anchor = null): array
     {
         $growth = bcpow(bcadd('1', $monthlyRate, self::SCALE), (string) $term, self::SCALE);
         $maturityValue = bcmul($principal, $growth, 2);
         $interest = bcsub($maturityValue, $principal, 2);
 
         return [[
-            'due_date' => $this->dueDate($term, $firstDueDate),
+            'due_date' => $this->dueDate($term, $firstDueDate, $anchor),
             'principal' => $principal,
             'interest' => $interest,
             'total' => $maturityValue,
@@ -158,13 +159,45 @@ class OfferProjectionService
     }
 
     /**
-     * Installment due date. Mirrors AmortizationService: anchored monthly from
-     * firstDueDate when given, else the legacy now()+30·i spacing.
+     * Reconstruct the TERM (months) a capitalized schedule row was generated
+     * with, from its own frozen figures: interest = P·((1+r)^n − 1) ⇒
+     * n = ln((P+I)/P) / ln(1+r).
+     *
+     * The live loan.term_months must NEVER feed capitalized milestone math:
+     * loan fields are editable in every status (client decision 2026-08-10)
+     * while the row is frozen at invest, so a term edit would silently move
+     * the engine's compounding milestones off the row — minting phantom
+     * accrued interest (term extended) or stalling accrual (term shortened).
+     * Adversarial review finding 2026-08-14.
+     *
+     * Float log() is deliberate and safe here: this derives an integer month
+     * COUNT (consecutive n values differ by ~1.2% in log space — far beyond
+     * float error), never a money amount.
      */
-    private function dueDate(int $i, ?CarbonInterface $firstDueDate): CarbonInterface
+    public static function capitalizedTermFromRow(string $principal, string $annualRatePct, string $rowInterest, int $fallbackTerm): int
+    {
+        if (bccomp($principal, '0', 2) <= 0
+            || bccomp($annualRatePct, '0', 2) <= 0
+            || bccomp($rowInterest, '0', 2) <= 0) {
+            return max(1, $fallbackTerm);
+        }
+
+        $monthlyRate = (float) bcdiv(bcdiv($annualRatePct, '100', self::SCALE), '12', self::SCALE);
+        $growth = ((float) $principal + (float) $rowInterest) / (float) $principal;
+
+        return max(1, (int) round(log($growth) / log(1.0 + $monthlyRate)));
+    }
+
+    /**
+     * Installment due date. Mirrors AmortizationService: anchored monthly from
+     * firstDueDate when given, else the legacy 30·i-day spacing counted from
+     * $anchor (defaults to now — e.g. the invest moment for schedules
+     * generated at invest time, or the activation moment for legacy catch-up).
+     */
+    private function dueDate(int $i, ?CarbonInterface $firstDueDate, ?CarbonInterface $anchor = null): CarbonInterface
     {
         return $firstDueDate
             ? $firstDueDate->copy()->addMonthsNoOverflow($i - 1)
-            : now()->addDays(30 * $i);
+            : ($anchor ?? now())->copy()->addDays(30 * $i);
     }
 }

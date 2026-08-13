@@ -6,16 +6,16 @@ use App\Enums\PayoutType;
 use App\Models\AmortizationSchedule;
 use App\Models\Investment;
 use App\Models\Loan;
-use App\Models\PlatformSetting;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Services\AccruedEarningsService;
 use App\Services\InvestmentService;
 use App\Services\PayoutAccrualService;
+use App\Services\ScheduledPayoutService;
 use App\Services\WalletService;
-use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
@@ -216,6 +216,42 @@ class AccruedEarningsTest extends TestCase
         $this->assertSame($rowInterest, $user->wallet->fresh()->earned);
     }
 
+    public function test_capitalized_term_edit_after_invest_does_not_move_the_milestones(): void
+    {
+        // Regression (adversarial review 2026-08-14, HIGH): the engine used
+        // the LIVE loan.term_months against invest-frozen rows — an allowed
+        // term edit minted phantom accrued interest. Milestones must follow
+        // the FROZEN row (term reconstructed from its own figures).
+        [$loan, $user] = $this->investorWithOfferLoan(PayoutType::Capitalized);
+
+        $rowInterest = (string) $loan->investments()->first()->schedules()->first()->interest;
+
+        // Admin doubles the term AFTER the money is in (allowed: full-edit
+        // client decision 2026-08-10 — only a warning banner).
+        $loan->forceFill(['term_months' => 24])->save();
+
+        $engine = app(PayoutAccrualService::class);
+
+        // ~6 months in: with the live-term bug elapsed would jump past the
+        // frozen schedule and accrue MORE than the row's total interest.
+        $engine->processLoan($loan->id, now()->addDays(185));
+        $accrued = $user->wallet->fresh()->accrued;
+        $this->assertGreaterThan(0, (float) $accrued);
+        $this->assertLessThan((float) $rowInterest, (float) $accrued);
+
+        // At the frozen maturity everything reconciles to the EXACT row
+        // interest — nothing stranded in `accrued`, ledger clean.
+        $engine->processLoan($loan->id, now()->addDays(400));
+        $wallet = $user->wallet->fresh();
+        $this->assertSame('0.00', $wallet->accrued);
+        $this->assertSame($rowInterest, $wallet->earned);
+        $this->assertSame(0, Artisan::call('ledger:reconcile'));
+
+        // The display mirrors the same frozen milestones.
+        $display = app(AccruedEarningsService::class)->forUser($user->id, now()->addDays(185));
+        $this->assertSame('0.00', $display['amount_daily']); // all released by now
+    }
+
     public function test_capitalized_fully_released_contributes_nothing(): void
     {
         [$loan, $user] = $this->investorWithOfferLoan(PayoutType::Capitalized);
@@ -295,55 +331,242 @@ class AccruedEarningsTest extends TestCase
         $this->assertSame('0.0000000000', $result['per_second_rate']);
     }
 
-    // ── Dashboard endpoint + the display-mode setting ──
+    // ── Interest runs from the INVEST moment (Reni 2026-08-13) ──
 
-    public function test_dashboard_exposes_earned_accrual_with_default_daily_mode(): void
+    public function test_partial_investment_in_funding_loan_accrues_immediately(): void
     {
+        Notification::fake();
+
+        // 1 000 investable, only 500 invested — the loan stays in funding
+        // («не всички кредити се запълват на 100% … не трябва да има
+        // отношение») and the investor's counter runs anyway.
+        $loan = Loan::factory()->published()->create([
+            'amount' => 1000, 'investable_amount' => 1000, 'funded_amount' => 0,
+            'interest_rate' => '12.00', 'term_months' => 12,
+        ]);
+
+        $user = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
+        $user->wallet()->create();
+        app(WalletService::class)->credit($user->id, '5000.00', Transaction::TYPE_DEPOSIT, 'seed deposit');
+
+        $offerId = $loan->offers()->where('payout_type', PayoutType::InterestOnly)->value('id');
+        $investment = app(InvestmentService::class)->invest($user, $loan->fresh(), '500.00', 'inv-partial', $offerId);
+
+        $this->assertSame(Loan::STATUS_FUNDING, $loan->fresh()->status);
+
+        // The schedule exists from the invest click, anchored on today.
+        $this->assertSame(12, $investment->schedules()->count());
+        $this->assertSame(now()->addDays(30)->toDateString(), $investment->schedules()->orderBy('due_date')->first()->due_date->toDateString());
+
+        // 500 @ 16% → 6.66/month; 15 of 30 days → 3.33.
+        $result = app(AccruedEarningsService::class)->forUser($user->id, now()->addDays(15));
+        $this->assertSame('3.33', $result['amount_daily']);
+    }
+
+    public function test_payout_engine_pays_investors_of_a_funding_loan(): void
+    {
+        Notification::fake();
+
+        $loan = Loan::factory()->published()->create([
+            'amount' => 1000, 'investable_amount' => 1000, 'funded_amount' => 0,
+            'interest_rate' => '12.00', 'term_months' => 12,
+        ]);
+
+        $user = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
+        $user->wallet()->create();
+        app(WalletService::class)->credit($user->id, '5000.00', Transaction::TYPE_DEPOSIT, 'seed deposit');
+
+        $offerId = $loan->offers()->where('payout_type', PayoutType::InterestOnly)->value('id');
+        app(InvestmentService::class)->invest($user, $loan->fresh(), '500.00', 'inv-partial-pay', $offerId);
+
+        // First installment due 30 days in — the engine pays it although the
+        // loan never left funding.
+        app(PayoutAccrualService::class)->processLoan($loan->id, now()->addDays(30));
+
+        $wallet = $user->wallet->fresh();
+        $this->assertSame('6.66', $wallet->earned);
+        $this->assertSame(0, Artisan::call('ledger:reconcile'));
+
+        // …and the counter dropped back accordingly (nothing due-unpaid left).
+        $this->assertSame('0.00', app(AccruedEarningsService::class)->forUser($user->id, now()->addDays(30))['amount_daily']);
+    }
+
+    public function test_activation_does_not_duplicate_invest_time_schedules(): void
+    {
+        // Full funding auto-activates; the activation generator must skip the
+        // rows already created at invest time.
+        [$loan, $user] = $this->investorWithOfferLoan(PayoutType::InterestOnly);
+
+        $this->assertSame(Loan::STATUS_ACTIVE, $loan->status);
+        $this->assertSame(12, $loan->investments()->first()->schedules()->count());
+    }
+
+    public function test_backfill_command_anchors_missing_schedules_at_invested_at(): void
+    {
+        Notification::fake();
+
+        // Simulate a pre-change investment: offer investment without schedules
+        // in a funding loan, invested 20 days ago.
+        $loan = Loan::factory()->published()->create([
+            'amount' => 1000, 'investable_amount' => 1000, 'funded_amount' => 500,
+            'interest_rate' => '12.00', 'term_months' => 12,
+            'status' => Loan::STATUS_FUNDING,
+        ]);
+        $offerId = $loan->offers()->where('payout_type', PayoutType::InterestOnly)->value('id');
+
+        $user = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
+        $user->wallet()->create();
+
+        $investment = Investment::factory()->create([
+            'user_id' => $user->id,
+            'loan_id' => $loan->id,
+            'loan_offer_id' => $offerId,
+            'amount' => 500,
+            'interest_rate' => '16.00',
+            'payout_type' => PayoutType::InterestOnly,
+            'invested_at' => now()->subDays(20),
+        ]);
+
+        $this->artisan('loans:backfill-investment-schedules')->assertSuccessful();
+
+        // Anchored at invested_at: first due = invested_at + 30 days.
+        $first = $investment->schedules()->orderBy('due_date')->first();
+        $this->assertNotNull($first);
+        $this->assertSame(now()->subDays(20)->addDays(30)->toDateString(), $first->due_date->toDateString());
+
+        // 20 of 30 days already elapsed → the counter shows the catch-up.
+        $result = app(AccruedEarningsService::class)->forUser($user->id);
+        $this->assertSame('4.44', $result['amount_daily']); // 6.66 × 20/30
+
+        // Idempotent: a second run adds nothing.
+        $this->artisan('loans:backfill-investment-schedules')->assertSuccessful();
+        $this->assertSame(12, $investment->schedules()->count());
+    }
+
+    public function test_activation_generates_schedules_for_co_investors_without_them(): void
+    {
+        Notification::fake();
+
+        // Regression (adversarial review 2026-08-14): the funded→active
+        // catch-up used a LOAN-level exists() guard — the closing investor's
+        // invest-time rows made it true and a pre-change co-investor without
+        // schedules was stranded. generate() must run unconditionally.
+        $loan = Loan::factory()->published()->create([
+            'amount' => 1000, 'investable_amount' => 1000, 'funded_amount' => 400,
+            'interest_rate' => '12.00', 'term_months' => 12,
+            'status' => Loan::STATUS_FUNDING,
+        ]);
+        $offerId = $loan->offers()->where('payout_type', PayoutType::InterestOnly)->value('id');
+
+        // Pre-change investor A: investment WITHOUT schedules.
+        $userA = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
+        $userA->wallet()->create();
+        $investmentA = Investment::factory()->create([
+            'user_id' => $userA->id, 'loan_id' => $loan->id, 'loan_offer_id' => $offerId,
+            'amount' => 400, 'interest_rate' => '16.00', 'payout_type' => PayoutType::InterestOnly,
+            'invested_at' => now()->subDays(10),
+        ]);
+
+        // Post-change investor B closes the loan through the real flow.
+        $userB = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
+        $userB->wallet()->create();
+        app(WalletService::class)->credit($userB->id, '1000.00', Transaction::TYPE_DEPOSIT, 'seed');
+        app(InvestmentService::class)->invest($userB, $loan->fresh(), '600.00', 'inv-closing', $offerId);
+
+        $this->assertSame(Loan::STATUS_ACTIVE, $loan->fresh()->status);
+
+        // BOTH investors have full schedules — B's from invest time, A's
+        // generated at activation by the unconditional catch-up.
+        $this->assertSame(12, $investmentA->schedules()->count());
+        $this->assertSame(12, $loan->investments()->where('user_id', $userB->id)->first()->schedules()->count());
+    }
+
+    public function test_legacy_funding_loan_neither_pays_nor_accrues(): void
+    {
+        // Legacy world keeps the old scope (active/late only): the dispatcher
+        // must no-op — not throw — and the counter must not show what the
+        // legacy engine won't pay.
+        $loan = Loan::factory()->create(['status' => Loan::STATUS_FUNDING, 'funded_amount' => 500]);
+
         $user = User::factory()->create(['email_verified_at' => now()]);
         $user->wallet()->create();
+        Investment::factory()->create(['user_id' => $user->id, 'loan_id' => $loan->id, 'amount' => 500, 'loan_offer_id' => null]);
+
+        AmortizationSchedule::create([
+            'loan_id' => $loan->id,
+            'due_date' => now()->subDay()->toDateString(),
+            'principal' => '80.00',
+            'interest' => '40.00',
+            'total' => '120.00',
+            'status' => 'pending',
+        ]);
+
+        $result = app(ScheduledPayoutService::class)->runForLoan($loan->fresh());
+        $this->assertSame('legacy', $result['type']);
+        $this->assertSame(0, $result['posted_count']);
+
+        $this->assertSame('0.00', app(AccruedEarningsService::class)->forUser($user->id)['amount_daily']);
+    }
+
+    public function test_display_falls_back_to_projection_when_schedules_missing(): void
+    {
+        Notification::fake();
+
+        // Pre-backfill state: no schedule rows at all — the counter still runs
+        // from invested_at via the pure projection fallback.
+        $loan = Loan::factory()->published()->create([
+            'amount' => 1000, 'investable_amount' => 1000, 'funded_amount' => 500,
+            'interest_rate' => '12.00', 'term_months' => 12,
+            'status' => Loan::STATUS_FUNDING,
+        ]);
+        $offerId = $loan->offers()->where('payout_type', PayoutType::InterestOnly)->value('id');
+
+        $user = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
+        $user->wallet()->create();
+
+        Investment::factory()->create([
+            'user_id' => $user->id,
+            'loan_id' => $loan->id,
+            'loan_offer_id' => $offerId,
+            'amount' => 500,
+            'interest_rate' => '16.00',
+            'payout_type' => PayoutType::InterestOnly,
+            'invested_at' => now()->subDays(15),
+        ]);
+
+        $result = app(AccruedEarningsService::class)->forUser($user->id);
+
+        $this->assertSame('3.33', $result['amount_daily']); // 6.66 × 15/30
+    }
+
+    // ── Dashboard endpoint payload ──
+
+    public function test_dashboard_exposes_earned_accrual_and_lifetime_totals(): void
+    {
+        $user = User::factory()->create(['email_verified_at' => now()]);
+        $wallet = $user->wallet()->create();
+        $wallet->forceFill(['earned' => 120.50])->save();
+
+        Transaction::factory()->create(['user_id' => $user->id, 'type' => Transaction::TYPE_WITHDRAWAL, 'amount' => 200]);
+        Transaction::factory()->create(['user_id' => $user->id, 'type' => Transaction::TYPE_WITHDRAWAL, 'amount' => 50.25]);
 
         $this->actingAs($user)->getJson('/api/dashboard')
             ->assertOk()
-            ->assertJsonPath('earned_accrual.mode', 'daily')
             ->assertJsonStructure([
-                'earned_accrual' => ['mode', 'amount_daily', 'amount_live', 'daily_rate', 'per_second_rate', 'as_of'],
-            ]);
+                'earned_accrual' => ['amount_daily', 'amount_live', 'daily_rate', 'hourly_rate', 'per_second_rate', 'as_of'],
+                'lifetime_totals' => ['earned_paid', 'withdrawn_total'],
+            ])
+            ->assertJsonPath('lifetime_totals.earned_paid', '120.50')
+            ->assertJsonPath('lifetime_totals.withdrawn_total', '250.25');
     }
 
-    public function test_dashboard_mode_follows_the_platform_setting(): void
+    public function test_hourly_rate_is_daily_rate_over_24(): void
     {
-        PlatformSetting::set('dashboard_earned_mode', 'live');
+        [, $user] = $this->investorWithOfferLoan(PayoutType::InterestOnly);
 
-        $user = User::factory()->create(['email_verified_at' => now()]);
-        $user->wallet()->create();
+        $result = app(AccruedEarningsService::class)->forUser($user->id, now()->addDays(15));
 
-        $this->actingAs($user)->getJson('/api/dashboard')
-            ->assertOk()
-            ->assertJsonPath('earned_accrual.mode', 'live');
-    }
-
-    public function test_missing_setting_falls_back_to_daily(): void
-    {
-        DB::table('platform_settings')->where('key', 'dashboard_earned_mode')->delete();
-
-        $user = User::factory()->create(['email_verified_at' => now()]);
-        $user->wallet()->create();
-
-        $this->actingAs($user)->getJson('/api/dashboard')
-            ->assertOk()
-            ->assertJsonPath('earned_accrual.mode', 'daily');
-    }
-
-    public function test_db_check_rejects_invalid_mode(): void
-    {
-        if (DB::getDriverName() === 'sqlite') {
-            $this->markTestSkipped('CHECK constraint is MySQL-only.');
-        }
-
-        $this->expectException(QueryException::class);
-
-        DB::table('platform_settings')
-            ->where('key', 'dashboard_earned_mode')
-            ->update(['value' => 'hourly']);
+        // 13.33/30 = 0.4443/day → 0.0185/hour (bc trunc at 4).
+        $this->assertSame('0.0185', $result['hourly_rate']);
     }
 }

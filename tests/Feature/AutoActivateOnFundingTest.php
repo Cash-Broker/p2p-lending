@@ -91,7 +91,10 @@ class AutoActivateOnFundingTest extends TestCase
         $loan->refresh();
 
         $this->assertSame(Loan::STATUS_FUNDING, $loan->status);
-        $this->assertSame(0, $loan->investmentSchedules()->count());
+        // Since 2026-08-13 (Reni: «олихвяването тръгва от инвестицията») the
+        // investor's OWN schedule exists from the invest click even though the
+        // loan hasn't activated — partial funding no longer means no schedule.
+        $this->assertSame(12, $loan->investmentSchedules()->count());
     }
 
     public function test_every_investor_gets_their_own_plan_at_activation(): void

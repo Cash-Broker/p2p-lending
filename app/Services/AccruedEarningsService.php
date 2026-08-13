@@ -22,9 +22,11 @@ use Illuminate\Support\Collection;
  * Semantics mirror the actual payout engine so the reference number and the
  * real money agree:
  *
- *   • Only loans the engine pays (STATUS_ACTIVE / STATUS_LATE — the exact
- *     filter of ScheduledPayoutService::runAllAutomatic). Default is where the
- *     open write-off decision lives; the engine stops there, so do we.
+ *   • Only loans the engine pays (Loan::PAYOUT_ELIGIBLE_STATUSES — the exact
+ *     filter of ScheduledPayoutService::runAllAutomatic; incl. funding-stage
+ *     loans since 2026-08-13, «олихвяването тръгва от инвестицията»). Default
+ *     is where the open write-off decision lives; the engine stops there, so
+ *     do we.
  *   • Unpaid (pending/late) schedule rows only. A row's interest accrues
  *     linearly across its period and counts IN FULL once due-but-unpaid; the
  *     moment the engine marks it paid the amount leaves this counter and shows
@@ -55,10 +57,13 @@ class AccruedEarningsService
      */
     private const PERIOD_DAYS = 30;
 
-    public function __construct(private InvestorDistributionService $distribution) {}
+    public function __construct(
+        private InvestorDistributionService $distribution,
+        private OfferProjectionService $projection,
+    ) {}
 
     /**
-     * @return array{amount_daily:string, amount_live:string, daily_rate:string, per_second_rate:string, as_of:string}
+     * @return array{amount_daily:string, amount_live:string, daily_rate:string, hourly_rate:string, per_second_rate:string, as_of:string}
      */
     public function forUser(int $userId, ?CarbonInterface $asOf = null): array
     {
@@ -72,7 +77,7 @@ class AccruedEarningsService
 
         $investments = Investment::query()
             ->where('user_id', $userId)
-            ->whereHas('loan', fn ($q) => $q->whereIn('status', [Loan::STATUS_ACTIVE, Loan::STATUS_LATE]))
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES))
             ->with([
                 'loan',
                 'schedules' => fn ($q) => $q->orderBy('due_date')->orderBy('id'),
@@ -84,11 +89,19 @@ class AccruedEarningsService
                 continue; // handled per-loan below (share of the loan schedule)
             }
 
+            // Schedules exist from the invest moment (2026-08-13). For
+            // investments predating that (not yet backfilled) fall back to a
+            // pure projection anchored on invested_at, so the counter runs
+            // «нон стоп» from the first euro either way.
+            $rows = $investment->schedules->isNotEmpty()
+                ? $investment->schedules
+                : $this->projectedRows($investment);
+
             if ($investment->payout_type === PayoutType::Capitalized) {
-                $this->addCapitalized($investment, $asOf, $totals);
+                $this->addCapitalized($investment, $rows, $asOf, $totals);
             } else {
                 $this->addScheduledRows(
-                    $investment->schedules,
+                    $rows,
                     $asOf,
                     $totals,
                     // Offer rows carry the investor's own interest — full weight.
@@ -105,6 +118,13 @@ class AccruedEarningsService
             ->unique('id');
 
         foreach ($legacyLoans as $loan) {
+            // Legacy world unchanged (mirrors ScheduledPayoutService): the
+            // engine posts legacy installments only on active/late loans, so
+            // the counter must not accrue what won't be paid.
+            if (! in_array($loan->status, [Loan::STATUS_ACTIVE, Loan::STATUS_LATE], true)) {
+                continue;
+            }
+
             $this->addLegacyLoan($loan, $userId, $asOf, $totals);
         }
 
@@ -114,9 +134,38 @@ class AccruedEarningsService
             'amount_daily' => bcadd($totals['daily'], '0', 2),
             'amount_live' => bcadd($totals['live'], '0', 6),
             'daily_rate' => bcadd($totals['rate_per_day'], '0', 4),
+            'hourly_rate' => bcdiv($totals['rate_per_day'], '24', 4),
             'per_second_rate' => $perSecond,
             'as_of' => $asOf->toIso8601String(),
         ];
+    }
+
+    /**
+     * Projection fallback for offer investments without persisted schedules
+     * (pre-2026-08-13 investments before the backfill runs). Row shape mimics
+     * InvestmentSchedule closely enough for the accrual math: due_date /
+     * interest / status.
+     *
+     * @return Collection<int, object>
+     */
+    private function projectedRows(Investment $investment): Collection
+    {
+        $anchor = $investment->invested_at ?? $investment->created_at;
+
+        $rows = $this->projection->schedule(
+            (string) $investment->amount,
+            (string) $investment->interest_rate,
+            (int) $investment->loan->term_months,
+            $investment->payout_type,
+            null,
+            $anchor,
+        );
+
+        return collect($rows)->map(fn (array $row) => (object) [
+            'due_date' => $row['due_date'],
+            'interest' => $row['interest'],
+            'status' => 'pending',
+        ]);
     }
 
     /**
@@ -167,20 +216,24 @@ class AccruedEarningsService
      * monthly milestones, plus linear interpolation toward the next milestone.
      * Milestone dates replicate PayoutAccrualService::processCapitalized.
      */
-    private function addCapitalized(Investment $investment, CarbonInterface $asOf, array &$totals): void
+    private function addCapitalized(Investment $investment, Collection $rows, CarbonInterface $asOf, array &$totals): void
     {
-        /** @var InvestmentSchedule|null $row capitalized has exactly one maturity row */
-        $row = $investment->schedules
-            ->first(fn ($r) => in_array($r->status, ['pending', 'late'], true));
+        /** @var InvestmentSchedule|object|null $row capitalized has exactly one maturity row */
+        $row = $rows->first(fn ($r) => in_array($r->status, ['pending', 'late'], true));
 
         if (! $row) {
             return; // matured + released (or nothing generated yet)
         }
 
-        $term = (int) $investment->loan->term_months;
-        if ($term <= 0) {
-            return;
-        }
+        // Term from the FROZEN row — mirrors the engine; the live (editable)
+        // loan.term_months must not move the milestones (see
+        // OfferProjectionService::capitalizedTermFromRow).
+        $term = OfferProjectionService::capitalizedTermFromRow(
+            (string) $investment->amount,
+            (string) $investment->interest_rate,
+            (string) $row->interest,
+            (int) $investment->loan->term_months,
+        );
 
         $principal = (string) $investment->amount;
         $finalInterest = (string) $row->interest;

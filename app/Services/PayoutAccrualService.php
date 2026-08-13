@@ -52,8 +52,11 @@ class PayoutAccrualService
         DB::transaction(function () use ($loanId, $asOf, &$summary) {
             $loan = Loan::where('id', $loanId)->lockForUpdate()->firstOrFail();
 
-            if (! in_array($loan->status, [Loan::STATUS_ACTIVE, Loan::STATUS_LATE], true)) {
-                throw new InvalidArgumentException('Scheduled payout can only run for active or late loans.');
+            // Since 2026-08-13 (Reni: interest runs from the invest moment) a
+            // loan doesn't need to be activated for its investors to be paid —
+            // funding-stage loans qualify too. Terminal + default stay out.
+            if (! in_array($loan->status, Loan::PAYOUT_ELIGIBLE_STATUSES, true)) {
+                throw new InvalidArgumentException('Scheduled payout cannot run for this loan status.');
             }
 
             $investments = $loan->investments()
@@ -134,7 +137,14 @@ class PayoutAccrualService
             return; // already matured + released
         }
 
-        $term = (int) $loan->term_months;
+        // Term from the FROZEN row — never the live (editable) loan.term_months.
+        // See OfferProjectionService::capitalizedTermFromRow.
+        $term = OfferProjectionService::capitalizedTermFromRow(
+            (string) $investment->amount,
+            (string) $investment->interest_rate,
+            (string) $row->interest,
+            (int) $loan->term_months,
+        );
         $amount = (string) $investment->amount;
         $maturity = $row->due_date->copy()->startOfDay();
         $firstDue = $maturity->copy()->subMonthsNoOverflow($term - 1);

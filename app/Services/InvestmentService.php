@@ -16,6 +16,7 @@ class InvestmentService
     public function __construct(
         private WalletService $walletService,
         private InvestmentContractService $contractService,
+        private InvestmentScheduleGenerator $scheduleGenerator,
     ) {}
 
     /**
@@ -92,6 +93,16 @@ class InvestmentService
                     "Investment in loan #{$loan->id}",
                     "investment:{$investment->id}"
                 );
+
+                // Client decision 2026-08-13 (Reni): «след като клиент
+                // инвестира, олихвяването си тръгва веднага за него» — the
+                // payout schedule exists from the INVEST moment (anchored to
+                // now == invested_at), regardless of whether the loan ever
+                // reaches 100% funding. Atomic with the money move; the
+                // activation-time generator then skips it (already exists).
+                if ($offer !== null) {
+                    $this->scheduleGenerator->generateForInvestment($investment, $loan);
+                }
 
                 // Credit loan funded amount
                 $newFundedAmount = bcadd($loan->funded_amount, $amount, 2);

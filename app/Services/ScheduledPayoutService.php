@@ -35,6 +35,15 @@ class ScheduledPayoutService
             return ['type' => 'offer'] + $this->accrual->processLoan($loan->id, $asOf);
         }
 
+        // Legacy world keeps the pre-2026-08-13 scope: «олихвяването тръгва
+        // от инвестицията» was implemented for the OFFER product; the legacy
+        // engine (RepaymentService) still — correctly — refuses non-active
+        // loans, so the dispatcher must not feed it funding-stage legacy
+        // loans (they would throw every night). Closed historical set.
+        if (! in_array($loan->status, [Loan::STATUS_ACTIVE, Loan::STATUS_LATE], true)) {
+            return ['type' => 'legacy', 'posted_count' => 0];
+        }
+
         // Legacy: post every amortization installment due on/before $asOf.
         $rows = $loan->amortizationSchedules()
             ->whereIn('status', ['pending', 'late'])
@@ -53,8 +62,10 @@ class ScheduledPayoutService
     }
 
     /**
-     * Run due payouts for EVERY active/late loan in automatic mode. One loan's
-     * failure is logged and skipped — it must not stop the rest of the batch.
+     * Run due payouts for EVERY payout-eligible loan in automatic mode
+     * (incl. funding-stage loans since 2026-08-13 — interest runs from the
+     * invest moment). One loan's failure is logged and skipped — it must not
+     * stop the rest of the batch.
      *
      * @return array{loans_processed:int, loans_failed:int}
      */
@@ -65,7 +76,7 @@ class ScheduledPayoutService
         $failed = 0;
 
         Loan::query()
-            ->whereIn('status', [Loan::STATUS_ACTIVE, Loan::STATUS_LATE])
+            ->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES)
             ->where('payout_mode', Loan::PAYOUT_MODE_AUTOMATIC)
             ->orderBy('id')
             ->chunkById(100, function ($loans) use ($asOf, &$processed, &$failed) {

@@ -91,6 +91,20 @@ class Loan extends Model
         self::STATUS_FUNDING,
     ];
 
+    // Statuses the payout engine serves (client decision 2026-08-13, Reni:
+    // «след като клиент инвестира, олихвяването си тръгва веднага за него» —
+    // interest runs from the INVEST moment, regardless of whether the loan
+    // ever reaches 100% funding; a partially funded loan may stay that way).
+    // Terminal (repaid/bought_back) and default stay excluded — default is
+    // where the open write-off decision lives.
+    const PAYOUT_ELIGIBLE_STATUSES = [
+        self::STATUS_PUBLISHED,
+        self::STATUS_FUNDING,
+        self::STATUS_FUNDED,
+        self::STATUS_ACTIVE,
+        self::STATUS_LATE,
+    ];
+
     // Visibility — orthogonal to status. PRIVATE loans are hidden from the
     // public marketplace and reachable only via their share link (see
     // share_token + loan_grants + LoanPolicy::view).
@@ -276,9 +290,13 @@ class Loan extends Model
             // or a LATE → ACTIVE return doesn't regenerate / throw.
             if ($fromStatus === self::STATUS_FUNDED && $newStatus === self::STATUS_ACTIVE) {
                 if ($this->usesOffers()) {
-                    if (! $this->investmentSchedules()->exists()) {
-                        app(InvestmentScheduleGenerator::class)->generate($this);
-                    }
+                    // UNCONDITIONAL since 2026-08-14: generate() is
+                    // per-investment idempotent (fills in only investments
+                    // without rows). A loan-level exists() guard here would be
+                    // true the moment ONE investment has invest-time rows,
+                    // silently stranding a pre-change co-investor without a
+                    // schedule (adversarial review finding).
+                    app(InvestmentScheduleGenerator::class)->generate($this);
                 } elseif (! $this->amortizationSchedules()->exists()) {
                     app(AmortizationService::class)->generateSchedule($this);
                 }

@@ -23,12 +23,30 @@ export function formatEuro(value, decimals = 2) {
 }
 
 /**
- * Badge text for the daily pace («+0,44» / «< 0,01»), or null when nothing is
- * accruing. The sign lives HERE: prefixing '+' in a template would garble the
- * sub-stotinka branch into '+< 0,01'.
+ * Badge text for a pace figure («+0,44» / «< 0,01»), or null when nothing is
+ * accruing (or the intro animation hasn't reached the badges yet). The sign
+ * lives HERE: prefixing '+' in a template would garble the sub-stotinka
+ * branch into '+< 0,01'. `progress` (0..1) scales the number during the
+ * count-up intro; sub-stotinka rates don't count up — they fade in whole.
  */
-export function formatDailyRate(rate) {
+export function animatedRateText(rate, progress = 1) {
   const numeric = parseFloat(rate) || 0
-  if (numeric <= 0) return null
-  return numeric < 0.01 ? '< 0,01' : `+${formatEuro(numeric)}`
+  if (numeric <= 0 || progress <= 0) return null
+  if (numeric < 0.01) return '< 0,01'
+  const scaled = numeric * Math.min(1, progress)
+  // Early intro frames of a small rate would round to «+0,00» — the exact
+  // display the sub-stotinka branch exists to avoid. Hold the badge until
+  // it has at least a stotinka to show.
+  if (scaled < 0.005) return null
+  return `+${formatEuro(scaled)}`
+}
+
+/**
+ * Eased (easeOutCubic) 0..1 progress for the load-in count-up animation.
+ * Negative elapsed (stage not started) → 0; past the duration → 1.
+ */
+export function countUpProgress(elapsedMs, durationMs) {
+  if (!(durationMs > 0)) return 1
+  const p = Math.min(1, Math.max(0, elapsedMs / durationMs))
+  return 1 - Math.pow(1 - p, 3)
 }

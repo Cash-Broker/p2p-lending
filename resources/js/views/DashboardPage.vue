@@ -156,13 +156,17 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
     </div>
 
     <template v-else>
-      <!-- Greeting + the green «Спечелени» accrual ticker (top-right) -->
+      <!-- Greeting + the green «Текуща печалба» ticker (top-right) -->
       <div class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
           <h1 class="text-2xl font-bold text-navy-700">Добре дошъл, {{ auth.user?.name?.split(' ')[0] }}</h1>
           <p class="text-sm text-gray-500 mt-1">Ето обобщение на твоя акаунт</p>
         </div>
-        <EarnedTicker v-if="dashboard?.earned_accrual" :accrual="dashboard.earned_accrual" />
+        <EarnedTicker
+          v-if="dashboard?.earned_accrual"
+          :accrual="dashboard.earned_accrual"
+          :lifetime="dashboard.lifetime_totals"
+        />
       </div>
 
       <!-- Stat cards -->

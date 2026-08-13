@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDailyRate, formatEuro, tickerValue } from './earningsTicker'
+import { animatedRateText, countUpProgress, formatEuro, tickerValue } from './earningsTicker'
 
 describe('tickerValue', () => {
   it('returns the base amount at zero elapsed time', () => {
@@ -44,19 +44,52 @@ describe('formatEuro', () => {
   })
 })
 
-describe('formatDailyRate', () => {
-  it('prefixes normal rates with a plus sign', () => {
-    expect(formatDailyRate('0.4443')).toBe('+0,44')
+describe('animatedRateText', () => {
+  it('prefixes normal rates with a plus sign at full progress', () => {
+    expect(animatedRateText('0.4443')).toBe('+0,44')
+    expect(animatedRateText('0.4443', 1)).toBe('+0,44')
   })
 
-  it('renders sub-stotinka rates WITHOUT the plus (no "+<" collision)', () => {
+  it('scales the number by the intro progress', () => {
+    expect(animatedRateText('0.50', 0.5)).toBe('+0,25')
+    expect(animatedRateText('0.50', 2)).toBe('+0,50') // clamped
+  })
+
+  it('holds the badge instead of flashing «+0,00» on early frames of a small rate', () => {
+    // Regression: 0.02 × 0.08 ≈ 0.0016 used to render '+0,00'.
+    expect(animatedRateText('0.02', 0.08)).toBeNull()
+    expect(animatedRateText('0.02', 1)).toBe('+0,02')
+  })
+
+  it('renders sub-stotinka rates WITHOUT the plus (no "+<" collision) and without scaling', () => {
     // Regression: the template used to hardcode '+' producing '+< 0,01'.
-    expect(formatDailyRate('0.0043')).toBe('< 0,01')
+    expect(animatedRateText('0.0043', 1)).toBe('< 0,01')
+    expect(animatedRateText('0.0043', 0.3)).toBe('< 0,01')
   })
 
-  it('returns null when nothing is accruing', () => {
-    expect(formatDailyRate('0.0000')).toBeNull()
-    expect(formatDailyRate(undefined)).toBeNull()
-    expect(formatDailyRate('-1')).toBeNull()
+  it('returns null when nothing is accruing or the stage has not started', () => {
+    expect(animatedRateText('0.0000')).toBeNull()
+    expect(animatedRateText(undefined)).toBeNull()
+    expect(animatedRateText('-1')).toBeNull()
+    expect(animatedRateText('0.4443', 0)).toBeNull()
+  })
+})
+
+describe('countUpProgress', () => {
+  it('is 0 before the stage starts and 1 after it ends', () => {
+    expect(countUpProgress(-500, 1000)).toBe(0)
+    expect(countUpProgress(0, 1000)).toBe(0)
+    expect(countUpProgress(1000, 1000)).toBe(1)
+    expect(countUpProgress(5000, 1000)).toBe(1)
+  })
+
+  it('eases out — more than linear halfway through', () => {
+    const half = countUpProgress(500, 1000)
+    expect(half).toBeGreaterThan(0.5)
+    expect(half).toBeLessThan(1)
+  })
+
+  it('treats a non-positive duration as instantly complete', () => {
+    expect(countUpProgress(100, 0)).toBe(1)
   })
 })

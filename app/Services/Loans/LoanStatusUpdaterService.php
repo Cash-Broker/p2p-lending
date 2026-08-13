@@ -172,6 +172,7 @@ class LoanStatusUpdaterService
                     'default_schedule_count' => $loan->amortizationSchedules()->where('status', 'default')->count(),
                 ]);
                 $result['recovery_skipped_default'][] = $loanId;
+
                 return null;
             }
 
@@ -330,6 +331,7 @@ class LoanStatusUpdaterService
             Log::warning('loans:process-late auto-repay skipped: active loan without schedule', [
                 'loan_id' => $loan->id,
             ]);
+
             return false;
         }
 
@@ -367,6 +369,7 @@ class LoanStatusUpdaterService
             Log::warning('loans:process-late auto-repay skipped: offer-based loan also has legacy (no-offer) investments — manual review required', [
                 'loan_id' => $loan->id,
             ]);
+
             return false;
         }
 
@@ -377,6 +380,26 @@ class LoanStatusUpdaterService
             Log::warning('loans:process-late auto-repay skipped: active offer-based loan without investment schedules', [
                 'loan_id' => $loan->id,
             ]);
+
+            return false;
+        }
+
+        // Coverage guard (2026-08-14): EVERY offer investment must own at
+        // least one schedule row before the loan may close terminally — a
+        // schedule-less investment (pre-invest-time-generation data that was
+        // never backfilled) would otherwise be silently stranded with its
+        // principal unreturned, and `repaid` accepts no transitions back.
+        $coveredInvestments = $loan->investmentSchedules()
+            ->distinct()
+            ->count('investment_id');
+        $offerInvestments = $loan->investments()->whereNotNull('loan_offer_id')->count();
+        if ($coveredInvestments < $offerInvestments) {
+            Log::warning('loans:process-late auto-repay skipped: offer investment(s) without schedule rows — run loans:backfill-investment-schedules', [
+                'loan_id' => $loan->id,
+                'covered_investments' => $coveredInvestments,
+                'offer_investments' => $offerInvestments,
+            ]);
+
             return false;
         }
 
@@ -401,6 +424,7 @@ class LoanStatusUpdaterService
             Log::warning('loans:process-late auto-repay skipped: investors fully paid but borrower schedule has late/default rows — manual review required', [
                 'loan_id' => $loan->id,
             ]);
+
             return false;
         }
 

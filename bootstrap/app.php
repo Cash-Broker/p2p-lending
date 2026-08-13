@@ -73,6 +73,16 @@ return Application::configure(basePath: dirname(__DIR__))
             ->withoutOverlapping(15)
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/telegram-digest.log'));
+
+        // Investor weekly earnings bulletin (Reni 2026-08-13) — Monday
+        // mornings after the admin digest. Queued mails; investors with
+        // nothing received and nothing accruing are skipped. Kill switch:
+        // investor_weekly_email_enabled platform setting.
+        $schedule->command('investors:weekly-earnings')
+            ->weeklyOn(1, '09:30')
+            ->withoutOverlapping(30)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/investors-weekly-earnings.log'));
     })
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

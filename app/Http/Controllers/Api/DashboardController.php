@@ -8,7 +8,6 @@ use App\Http\Resources\TransactionResource;
 use App\Http\Resources\WalletResource;
 use App\Models\Investment;
 use App\Models\Loan;
-use App\Models\PlatformSetting;
 use App\Models\Transaction;
 use App\Services\AccruedEarningsService;
 use Illuminate\Http\JsonResponse;
@@ -52,14 +51,12 @@ class DashboardController extends Controller
 
         $monthlyEarnings = $this->getMonthlyEarnings($user->id);
 
-        // «Спечелени» ticker (2026-08-13): schedule-accrued interest not yet
-        // paid out — display-only reference, NOT withdrawable money. The admin
-        // picks the presentation variant via the dashboard_earned_mode setting
-        // (DB CHECK constrains it; the fallback below is defense in depth).
-        $mode = PlatformSetting::get('dashboard_earned_mode', 'daily');
-        if (! in_array($mode, ['daily', 'live'], true)) {
-            $mode = 'daily';
-        }
+        // Lifetime figures behind the «Спечелени» / «Изтеглени» buttons
+        // (Reni 2026-08-13). Withdrawn = net paid-out withdrawals; the fee
+        // rows are a separate type and deliberately not part of the figure.
+        $withdrawnTotal = (string) Transaction::where('user_id', $user->id)
+            ->where('type', Transaction::TYPE_WITHDRAWAL)
+            ->sum('amount');
 
         return response()->json([
             'wallet' => new WalletResource($wallet),
@@ -67,7 +64,14 @@ class DashboardController extends Controller
             'recent_transactions' => TransactionResource::collection($recentTransactions),
             'latest_loans' => LoanResource::collection($latestLoans),
             'monthly_earnings' => $monthlyEarnings,
-            'earned_accrual' => ['mode' => $mode] + $accruedEarnings->forUser($user->id),
+            // «Текуща печалба» (2026-08-13): schedule-accrued interest not yet
+            // paid out — display-only reference, NOT withdrawable money. Always
+            // live (per-second) + daily/hourly paces; no admin variant switch.
+            'earned_accrual' => $accruedEarnings->forUser($user->id),
+            'lifetime_totals' => [
+                'earned_paid' => (string) $wallet->earned,
+                'withdrawn_total' => bcadd($withdrawnTotal ?: '0', '0', 2),
+            ],
         ]);
     }
 

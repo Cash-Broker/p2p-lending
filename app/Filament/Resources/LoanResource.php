@@ -430,7 +430,7 @@ class LoanResource extends Resource
                     ->label('Пусни плащане сега')
                     ->icon('heroicon-o-banknotes')
                     ->color('success')
-                    ->visible(fn (Loan $r) => in_array($r->status, [Loan::STATUS_ACTIVE, Loan::STATUS_LATE], true))
+                    ->visible(fn (Loan $r) => in_array($r->status, Loan::PAYOUT_ELIGIBLE_STATUSES, true))
                     ->requiresConfirmation()
                     ->modalHeading(fn (Loan $record) => "Изплащане към инвеститорите за кредит #{$record->id}")
                     ->modalDescription('Начислява/освобождава всички дължими към момента суми по плановете на инвеститорите. Същото действие, което авто-режимът прави сам на падеж — тук го пускате ръчно.')
