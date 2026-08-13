@@ -5,8 +5,10 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\PlatformSettingResource\Pages;
 use App\Models\PlatformSetting;
 use BackedEnum;
+use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -36,11 +38,16 @@ class PlatformSettingResource extends Resource
 {
     protected static ?string $model = PlatformSetting::class;
 
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-cog-6-tooth';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-cog-6-tooth';
+
     protected static ?string $navigationLabel = 'Настройки';
-    protected static string | UnitEnum | null $navigationGroup = 'Система';
+
+    protected static string|UnitEnum|null $navigationGroup = 'Система';
+
     protected static ?int $navigationSort = 9;
+
     protected static ?string $pluralModelLabel = 'Настройки';
+
     protected static ?string $modelLabel = 'Настройка';
 
     /**
@@ -74,7 +81,7 @@ class PlatformSettingResource extends Resource
     public static function form(Schema $form): Schema
     {
         return $form->schema([
-            \Filament\Schemas\Components\Section::make()->schema([
+            Section::make()->schema([
                 Forms\Components\TextInput::make('key')
                     ->label('Ключ')
                     ->disabled() // immutable once seeded
@@ -151,7 +158,7 @@ class PlatformSettingResource extends Resource
                 Forms\Components\Hidden::make('value'),
             ])->columns(2),
 
-            \Filament\Schemas\Components\Section::make()->schema([
+            Section::make()->schema([
                 Forms\Components\Placeholder::make('warning')
                     ->label('')
                     ->content('⚠️ Промяната влиза в сила при следващото daily late-check изпълнение (03:30). Аудит запис се записва автоматично.'),
@@ -171,7 +178,7 @@ class PlatformSettingResource extends Resource
             ])
             ->defaultSort('key')
             ->actions([
-                \Filament\Actions\EditAction::make()->label('Редактирай'),
+                EditAction::make()->label('Редактирай'),
             ]);
     }
 
@@ -179,7 +186,7 @@ class PlatformSettingResource extends Resource
     {
         return [
             'index' => Pages\ListPlatformSettings::route('/'),
-            'edit'  => Pages\EditPlatformSetting::route('/{record}/edit'),
+            'edit' => Pages\EditPlatformSetting::route('/{record}/edit'),
         ];
     }
 }

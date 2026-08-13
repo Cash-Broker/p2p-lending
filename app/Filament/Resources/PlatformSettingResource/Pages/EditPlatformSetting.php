@@ -31,8 +31,8 @@ class EditPlatformSetting extends EditRecord
         $type = $this->record->type;
 
         $value = match ($type) {
-            'bool'  => $this->data['value_bool'] ? 'true' : 'false',
-            'int'   => (string) (int) $this->data['value_int'],
+            'bool' => $this->data['value_bool'] ? 'true' : 'false',
+            'int' => (string) (int) $this->data['value_int'],
             'float' => (string) (float) $this->data['value_float'],
             // Enum-like strings come from the Select ghost field; fall back to
             // the current value so a missing state can never blank the setting.
@@ -42,6 +42,7 @@ class EditPlatformSetting extends EditRecord
         };
 
         $data['value'] = $value;
+
         return $data;
     }
 }

@@ -8,6 +8,7 @@ use App\Models\InvestmentSchedule;
 use App\Models\Loan;
 use App\Services\Loans\InvestorDistributionService;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 
 /**
@@ -124,7 +125,7 @@ class AccruedEarningsService
      * date (or due − 30 days for the first row — the generation spacing, i.e.
      * activation) to its own due date.
      *
-     * @param  Collection<int, \Illuminate\Database\Eloquent\Model>  $rows  ordered by due_date,id; must expose due_date/interest/status
+     * @param  Collection<int, Model>  $rows  ordered by due_date,id; must expose due_date/interest/status
      * @param  string  $weight  multiplier on each row's interest (legacy invested share; '1' for own rows)
      */
     private function addScheduledRows(Collection $rows, CarbonInterface $asOf, array &$totals, string $weight): void

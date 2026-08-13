@@ -13,6 +13,7 @@ use App\Services\AccruedEarningsService;
 use App\Services\InvestmentService;
 use App\Services\PayoutAccrualService;
 use App\Services\WalletService;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
@@ -266,7 +267,7 @@ class AccruedEarningsTest extends TestCase
             $this->markTestSkipped('CHECK constraint is MySQL-only.');
         }
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectException(QueryException::class);
 
         DB::table('platform_settings')
             ->where('key', 'dashboard_earned_mode')
