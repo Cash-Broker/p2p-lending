@@ -53,6 +53,46 @@ class AccruedEarningsTest extends TestCase
         return [$loan->refresh(), $user];
     }
 
+    // ── Portfolio aggregation across many loans and plans ──
+
+    public function test_portfolio_sums_across_loans_and_plans(): void
+    {
+        Notification::fake();
+
+        // One investor spread across three loans, one per payout plan — the
+        // counter is the SUM of every plan's own accrual math (the client's
+        // "може да е инвестирал в 100 кредита" case in miniature).
+        $user = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
+        $user->wallet()->create();
+        app(WalletService::class)->credit($user->id, '5000.00', Transaction::TYPE_DEPOSIT, 'seed deposit');
+
+        foreach ([PayoutType::InterestOnly, PayoutType::Amortizing, PayoutType::Capitalized] as $type) {
+            $loan = Loan::factory()->published()->create([
+                'amount' => 1000, 'investable_amount' => 1000, 'funded_amount' => 0,
+                'interest_rate' => '12.00', 'term_months' => 12,
+            ]);
+            $offerId = $loan->offers()->where('payout_type', $type)->value('id');
+            app(InvestmentService::class)->invest($user, $loan->fresh(), '1000.00', "inv-mix-{$type->value}", $offerId);
+            if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
+                $loan->transitionTo(Loan::STATUS_ACTIVE);
+            }
+        }
+
+        // A solo investor with an IDENTICAL capitalized position isolates the
+        // calendar-dependent capitalized component, so the assertion stays
+        // deterministic on any run date.
+        [, $solo] = $this->investorWithOfferLoan(PayoutType::Capitalized);
+
+        $service = app(AccruedEarningsService::class);
+        $asOf = now()->addDays(15);
+
+        // interest-only 6.66 + amortizing 5.00 + (capitalized, measured solo).
+        $capitalized = $service->forUser($solo->id, $asOf)['amount_daily'];
+        $expected = bcadd(bcadd('6.66', '5.00', 2), $capitalized, 2);
+
+        $this->assertSame($expected, $service->forUser($user->id, $asOf)['amount_daily']);
+    }
+
     // ── Offer-based: amortizing / interest-only ──
 
     public function test_interest_only_accrues_pro_rata_by_day(): void
