@@ -82,17 +82,34 @@ class EngagementDashboardTest extends TestCase
 
     public function test_short_gap_shows_no_banner(): void
     {
+        // Under the 1-hour gap (lowered from 6 h, Yordan 2026-08-14) the
+        // banner stays quiet — ordinary same-session browsing must not fire it.
         $user = $this->verifiedInvestor();
-        $user->forceFill(['dashboard_seen_at' => now()->subHour()])->save();
+        $user->forceFill(['dashboard_seen_at' => now()->subMinutes(20)])->save();
 
         Transaction::factory()->create([
             'user_id' => $user->id, 'type' => Transaction::TYPE_REPAYMENT_INTEREST,
-            'amount' => 10, 'created_at' => now()->subMinutes(30),
+            'amount' => 10, 'created_at' => now()->subMinutes(10),
         ]);
 
         $this->actingAs($user)->getJson('/api/dashboard')
             ->assertOk()
             ->assertJsonPath('since_last_visit', null);
+    }
+
+    public function test_ninety_minute_gap_with_income_shows_the_banner(): void
+    {
+        $user = $this->verifiedInvestor();
+        $user->forceFill(['dashboard_seen_at' => now()->subMinutes(90)])->save();
+
+        Transaction::factory()->create([
+            'user_id' => $user->id, 'type' => Transaction::TYPE_REPAYMENT_INTEREST,
+            'amount' => 10, 'created_at' => now()->subMinutes(45),
+        ]);
+
+        $this->actingAs($user)->getJson('/api/dashboard')
+            ->assertOk()
+            ->assertJsonPath('since_last_visit.received', '10.00');
     }
 
     public function test_long_gap_with_income_returns_the_exact_received_sum(): void
@@ -221,13 +238,35 @@ class EngagementDashboardTest extends TestCase
         $this->assertSame('16.00', $response->json('market_rate_range.max'));
     }
 
-    public function test_market_rate_range_null_without_fundable_loans(): void
+    public function test_market_rate_range_includes_private_loans(): void
     {
+        // The platform currently sells by private link only (Yordan
+        // 2026-08-14) — the bare percentage feeds the slider without leaking
+        // any loan identity.
+        $loan = Loan::factory()->published()->create([
+            'amount' => 5000, 'investable_amount' => 5000, 'funded_amount' => 0,
+            'interest_rate' => '12.00', 'term_months' => 12,
+        ]);
+        $loan->forceFill(['visibility' => Loan::VISIBILITY_PRIVATE, 'share_token' => Loan::generateShareToken()])->save();
+        $loan->offers()->where('payout_type', PayoutType::InterestOnly)->update(['interest_rate' => '18.00']);
+
         $user = $this->verifiedInvestor();
 
-        $this->actingAs($user)->getJson('/api/dashboard')
-            ->assertOk()
-            ->assertJsonPath('market_rate_range', null);
+        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
+
+        $this->assertSame('18.00', $response->json('market_rate_range.max'));
+    }
+
+    public function test_market_rate_range_falls_back_to_the_default_rate_without_open_loans(): void
+    {
+        // The dream never goes dark: with zero open loans the slider projects
+        // at the standard seeded «само лихва» rate.
+        $user = $this->verifiedInvestor();
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
+
+        $this->assertSame('16.00', $response->json('market_rate_range.min'));
+        $this->assertSame('16.00', $response->json('market_rate_range.max'));
     }
 
     // ── Социално доказателство ──

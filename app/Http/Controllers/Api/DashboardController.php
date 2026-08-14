@@ -105,7 +105,9 @@ class DashboardController extends Controller
      */
     private function sinceLastVisit(User $user, ?Carbon $previousSeen): ?array
     {
-        if ($previousSeen === null || $previousSeen->gt(now()->subHours(6))) {
+        // 1 hour (was 6, Yordan 2026-08-14): step out for lunch, come back —
+        // the platform greets you. Shorter would fire on ordinary browsing.
+        if ($previousSeen === null || $previousSeen->gt(now()->subHour())) {
             return null;
         }
 
@@ -236,23 +238,28 @@ class DashboardController extends Controller
     }
 
     /**
-     * Current «само лихва» offer rate range across open public loans — feeds
-     * the what-if slider's honest projection. Null when nothing is investable.
+     * Current «само лихва» offer rate range across ALL open loans — feeds the
+     * what-if slider's honest projection. Private loans deliberately included
+     * (Yordan 2026-08-14: the platform currently sells by private link only,
+     * and the slider must not die) — only the bare percentage flows out, no
+     * loan identity/amount/count. With no open loans at all, falls back to
+     * the standard seeded «само лихва» rate so the dream never goes dark.
      *
-     * @return array{min: string, max: string}|null
+     * @return array{min: string, max: string}
      */
-    private function marketRateRange(): ?array
+    private function marketRateRange(): array
     {
         $rates = LoanOffer::query()
             ->where('is_enabled', true)
             ->where('payout_type', PayoutType::InterestOnly)
-            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::FUNDABLE_STATUSES)
-                ->where('visibility', Loan::VISIBILITY_PUBLIC))
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::FUNDABLE_STATUSES))
             ->pluck('interest_rate')
             ->map(fn ($r) => (string) $r);
 
         if ($rates->isEmpty()) {
-            return null;
+            $default = PayoutType::InterestOnly->defaultRate();
+
+            return ['min' => $default, 'max' => $default];
         }
 
         return ['min' => $rates->min(), 'max' => $rates->max()];
