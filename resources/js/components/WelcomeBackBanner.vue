@@ -28,8 +28,22 @@ function formatAmount(val) {
         <div class="min-w-0">
           <p class="text-[11px] font-bold uppercase tracking-[0.14em] text-accent-500 mb-1">👋 Докато те нямаше</p>
           <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-navy-700">
+            <!-- Headline: the best TRUE news available, in priority order —
+                 the banner always says something, never invents a number. -->
             <span v-if="parseFloat(data.received) > 0" class="font-bold text-accent-500 text-base">
               +{{ formatAmount(data.received) }} € постъпления
+            </span>
+            <span v-else-if="parseFloat(data.accrual_growth) >= 0.01" class="font-bold text-accent-500 text-base">
+              печалбата ти порасна с +{{ formatAmount(data.accrual_growth) }} €
+            </span>
+            <span v-else-if="parseFloat(data.accrued_now) > 0" class="font-bold text-accent-500 text-base">
+              печалбата ти вече е {{ formatAmount(data.accrued_now) }} € и продължава да расте
+            </span>
+            <span v-else-if="parseFloat(data.available) >= 50" class="font-semibold">
+              💤 {{ formatAmount(data.available) }} € свободни чакат да заработят за теб
+            </span>
+            <span v-else-if="!data.new_promos && !data.hot_loan" class="font-semibold">
+              Нови възможности за инвестиция те чакат
             </span>
             <span v-if="data.new_promos > 0" class="font-semibold">
               ⚡ {{ data.new_promos === 1 ? 'Нова промо оферта те чака' : `${data.new_promos} нови промо оферти те чакат` }}

@@ -11,8 +11,26 @@ const props = defineProps({
   available: { type: String, default: '0.00' },
 })
 
-const max = computed(() => sliderMax(props.available))
 const amount = ref(Math.min(Math.max(500, Math.round((parseFloat(props.available) || 0) / 50) * 50), sliderMax(props.available)))
+
+// Freely typed amounts (Reni 2026-08-14: «да може да се набират каквито
+// искат, а не до 2000») — the slider max stretches to whatever was typed.
+const max = computed(() => {
+  const base = sliderMax(props.available)
+  const typed = parseFloat(amount.value) || 0
+  return Math.max(base, Math.ceil(typed / 500) * 500)
+})
+
+function onAmountInput(event) {
+  const raw = parseFloat(String(event.target.value).replace(/[^\d]/g, ''))
+  amount.value = Number.isFinite(raw) ? Math.max(0, Math.min(raw, 100_000_000)) : 0
+}
+
+function onAmountBlur() {
+  // Settle below the 50 € minimum only when they stop typing — snapping mid-
+  // keystroke would fight the input.
+  if ((parseFloat(amount.value) || 0) < 50) amount.value = 50
+}
 
 const low = computed(() => projectYearlyInterest(amount.value, props.rateRange.min))
 const high = computed(() => projectYearlyInterest(amount.value, props.rateRange.max))
@@ -22,13 +40,25 @@ function fmt(v) {
   return v.toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-const fillPercent = computed(() => Math.round(((amount.value - 50) / (max.value - 50)) * 100))
+const fillPercent = computed(() =>
+  Math.round(((Math.min(amount.value, max.value) - 50) / (max.value - 50)) * 100))
 </script>
 
 <template>
   <div class="rounded-2xl border border-gray-100 bg-white p-6">
     <h2 class="text-base font-bold text-navy-700 mb-1">Ами ако инвестираш…</h2>
-    <p class="text-3xl font-extrabold text-navy-700 tabular-nums mb-3">{{ fmt(amount) }} <span class="text-base font-semibold text-gray-400">€</span></p>
+    <div class="flex items-baseline gap-1 mb-3">
+      <input
+        :value="amount"
+        @input="onAmountInput"
+        @blur="onAmountBlur"
+        type="text"
+        inputmode="numeric"
+        aria-label="Сума за проекция — въведи свободно"
+        class="whatif-amount w-full max-w-[220px] text-3xl font-extrabold text-navy-700 tabular-nums bg-transparent border-0 border-b-2 border-dashed border-gray-200 focus:border-accent-400 focus:outline-none focus:ring-0 p-0"
+      />
+      <span class="text-base font-semibold text-gray-400">€</span>
+    </div>
 
     <input
       v-model.number="amount"

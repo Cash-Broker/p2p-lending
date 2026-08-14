@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\InvestmentService;
 use App\Services\WalletService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
 
@@ -139,6 +140,40 @@ class EngagementDashboardTest extends TestCase
         $this->actingAs($user)->getJson('/api/dashboard')
             ->assertOk()
             ->assertJsonPath('since_last_visit.received', '17.50');
+    }
+
+    public function test_banner_always_returns_after_the_gap_even_without_news(): void
+    {
+        // Reni: «винаги да има новини» — the block always comes back after the
+        // gap; the frontend picks a truthful fallback headline.
+        $user = $this->verifiedInvestor();
+        $user->forceFill(['dashboard_seen_at' => now()->subHours(3)])->save();
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
+
+        $this->assertNotNull($response->json('since_last_visit'));
+        $this->assertSame('0.00', $response->json('since_last_visit.received'));
+        $this->assertSame('0.00', $response->json('since_last_visit.accrued_now'));
+        $this->assertSame('0.00', $response->json('since_last_visit.available'));
+    }
+
+    public function test_accrual_growth_carries_the_banner_when_no_payout_landed(): void
+    {
+        // Reni 2026-08-14: monthly payouts are rare — the ticking profit
+        // itself is the news. Schedule backdated 10 days so the 2-day window
+        // sits mid-period: growth = 2 days × 13.33/30 ≈ 0.88 €.
+        [$loan, $user] = $this->investedUser();
+        DB::table('investment_schedules')
+            ->where('loan_id', $loan->id)
+            ->update(['due_date' => DB::raw('DATE_SUB(due_date, INTERVAL 10 DAY)')]);
+        $user->forceFill(['dashboard_seen_at' => now()->subDays(2)])->save();
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
+
+        $growth = (float) $response->json('since_last_visit.accrual_growth');
+        $this->assertGreaterThan(0.80, $growth);
+        $this->assertLessThan(1.00, $growth);
+        $this->assertSame('0.00', $response->json('since_last_visit.received'));
     }
 
     public function test_new_running_promo_counts_in_the_banner(): void

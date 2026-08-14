@@ -73,7 +73,9 @@ class DashboardController extends Controller
         // purged) and rewrite users.updated_at on every visit.
         $previousSeen = $user->dashboard_seen_at;
         User::whereKey($user->id)->toBase()->update(['dashboard_seen_at' => now()]);
-        $sinceLastVisit = $this->sinceLastVisit($user, $previousSeen);
+
+        $accrual = $accruedEarnings->forUser($user->id);
+        $sinceLastVisit = $this->sinceLastVisit($user, $previousSeen, $accrual, $accruedEarnings);
 
         return response()->json([
             'wallet' => new WalletResource($wallet),
@@ -84,7 +86,7 @@ class DashboardController extends Controller
             // «Текуща печалба» (2026-08-13): schedule-accrued interest not yet
             // paid out — display-only reference, NOT withdrawable money. Always
             // live (per-second) + daily/hourly paces; no admin variant switch.
-            'earned_accrual' => $accruedEarnings->forUser($user->id),
+            'earned_accrual' => $accrual,
             'lifetime_totals' => [
                 'earned_paid' => (string) $wallet->earned,
                 'withdrawn_total' => bcadd($withdrawnTotal ?: '0', '0', 2),
@@ -103,7 +105,7 @@ class DashboardController extends Controller
      *
      * @return array<string, mixed>|null
      */
-    private function sinceLastVisit(User $user, ?Carbon $previousSeen): ?array
+    private function sinceLastVisit(User $user, ?Carbon $previousSeen, array $accrualNow, AccruedEarningsService $accruedEarnings): ?array
     {
         // 1 hour (was 6, Yordan 2026-08-14): step out for lunch, come back —
         // the platform greets you. Shorter would fire on ordinary browsing.
@@ -153,14 +155,31 @@ class DashboardController extends Controller
             ->sortByDesc('funded_percentage')
             ->first();
 
-        $hasNews = bccomp($received, '0', 2) > 0 || $newPromos > 0 || $hotLoan !== null;
-        if (! $hasNews) {
-            return null;
+        // «Печалбата ти порасна с +X €» (Reni 2026-08-14): monthly payouts are
+        // rare, but the running profit ticks for anyone with deployed money —
+        // that growth IS the news. Shown only when NO payout landed in the
+        // window: then the currently-unpaid rows are exactly the rows that
+        // were accruing at the previous visit too, so live(now) − live(prev)
+        // is the exact counter delta. With a payout in the window the paid
+        // amount itself is the (bigger) headline and the delta would be
+        // ill-defined — «received» carries the banner instead.
+        $accrualGrowth = '0.00';
+        if (bccomp($received, '0', 2) <= 0) {
+            $accrualPrev = $accruedEarnings->forUser($user->id, $previousSeen);
+            $growth = bcsub($accrualNow['amount_live'], $accrualPrev['amount_live'], 2);
+            $accrualGrowth = bccomp($growth, '0', 2) > 0 ? $growth : '0.00';
         }
 
+        // ALWAYS return the block after the gap (Reni via Yordan 2026-08-14:
+        // «винаги да има новини, да им е готино») — the frontend picks the
+        // best available headline down a priority chain, so the banner is
+        // never empty and never invents a number.
         return [
             'previous_seen_at' => $previousSeen->toIso8601String(),
             'received' => $received,
+            'accrual_growth' => $accrualGrowth,
+            'accrued_now' => bcadd($accrualNow['amount_live'], '0', 2),
+            'available' => (string) ($user->wallet->available ?? '0.00'),
             'new_promos' => $newPromos,
             'hot_loan' => $hotLoan,
         ];
