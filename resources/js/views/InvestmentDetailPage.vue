@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../api/axios'
+import FreeCapacityBadge from '../components/FreeCapacityBadge.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -339,14 +340,24 @@ async function confirmInvest() {
               <strong class="text-accent-500">Доходност</strong> — какво печелите вие от тази инвестиция.
             </p>
 
-            <!-- Funding progress -->
+            <!-- Funding progress + the big «свободно» figure (Reni 2026-08-14:
+                 big clear digits at this spot — the small «Макс» in the invest
+                 box was barely visible). Count-up + live dot + scarcity flip
+                 live in FreeCapacityBadge. -->
             <div class="mt-4">
-              <div class="flex items-center justify-between text-sm mb-2">
-                <span class="text-gray-500">Финансирано: {{ formatAmount(loan.funded_amount) }} от {{ formatAmount(loan.amount) }} €</span>
-                <span class="font-semibold text-navy-700">{{ loan.funded_percentage }}%</span>
+              <div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 mb-2">
+                <span class="text-sm text-gray-500">Финансирано: {{ formatAmount(loan.funded_amount) }} от {{ formatAmount(loan.amount) }} €</span>
+                <FreeCapacityBadge
+                  v-if="['published', 'funding'].includes(loan.status) && parseFloat(remaining) > 0"
+                  :remaining="remaining"
+                  :cap="String(loan.investable_amount ?? loan.amount)"
+                />
               </div>
-              <div class="w-full h-3 rounded-full bg-gray-100">
-                <div class="h-full rounded-full bg-accent-400 transition-all duration-500" :style="{ width: loan.funded_percentage + '%' }"></div>
+              <div class="flex items-center gap-3">
+                <div class="funding-track flex-1 h-3 rounded-full bg-gray-100 overflow-hidden" :class="{ 'funding-track--open': ['published', 'funding'].includes(loan.status) }">
+                  <div class="h-full rounded-full bg-accent-400 transition-all duration-500" :style="{ width: loan.funded_percentage + '%' }"></div>
+                </div>
+                <span class="text-sm font-semibold text-navy-700 shrink-0">{{ loan.funded_percentage }}%</span>
               </div>
             </div>
           </div>
@@ -694,3 +705,29 @@ async function confirmInvest() {
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+/* Animated stripes over the UNFILLED part of the funding bar while the loan
+   still takes money — the free capacity literally moves («по-готино»,
+   2026-08-14). The solid green fill covers the funded part on top. */
+.funding-track--open {
+  background-image: repeating-linear-gradient(
+    -55deg,
+    rgba(34, 197, 94, 0.14) 0 6px,
+    rgba(34, 197, 94, 0.05) 6px 12px
+  );
+  background-size: 200% 100%;
+  animation: funding-stripes 18s linear infinite;
+}
+
+@keyframes funding-stripes {
+  0% { background-position: 0 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .funding-track--open {
+    animation: none;
+  }
+}
+</style>
