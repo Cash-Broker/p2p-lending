@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Notifications\VerifyEmailNotification;
+use App\Traits\Auditable;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
@@ -11,16 +12,16 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
-use App\Traits\Auditable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable implements FilamentUser, MustVerifyEmail
 {
     /** @use HasFactory<UserFactory> */
-    use HasApiTokens, HasFactory, Notifiable, Auditable;
+    use Auditable, HasApiTokens, HasFactory, Notifiable;
 
-    public const TYPE_INDIVIDUAL   = 'individual';
+    public const TYPE_INDIVIDUAL = 'individual';
+
     public const TYPE_LEGAL_ENTITY = 'legal_entity';
 
     protected $fillable = [
@@ -52,6 +53,7 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
     {
         return [
             'email_verified_at' => 'datetime',
+            'dashboard_seen_at' => 'datetime',
             'password' => 'hashed',
         ];
     }

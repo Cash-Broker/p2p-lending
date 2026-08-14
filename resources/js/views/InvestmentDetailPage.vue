@@ -1,9 +1,10 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import api from '../api/axios'
 import FreeCapacityBadge from '../components/FreeCapacityBadge.vue'
+import { formatRelativeBg } from '../utils/relativeTime'
 
 const route = useRoute()
 const router = useRouter()
@@ -171,6 +172,51 @@ onMounted(async () => {
 })
 
 const availableBalance = computed(() => auth.user?.wallet?.available ?? '0.00')
+
+// ── Live funding (engagement pack 2026-08-14): while the loan still takes
+// money, re-poll every 30 s so the bar/count/social line move under the
+// visitor's eyes; a funded jump briefly flashes the bar. Display-only. ──
+const nowMs = ref(Date.now())
+const fundingFlash = ref(false)
+let livePollTimer = null
+let liveClockTimer = null
+
+async function refreshLiveFunding() {
+  if (!loan.value || !['published', 'funding'].includes(loan.value.status)) return
+  try {
+    const { data } = await api.get(`/loans/${route.params.id}`)
+    const funded = parseFloat(data.funded_amount)
+    const current = parseFloat(loan.value.funded_amount)
+    // Monotonic guard: funding only grows — a stale/out-of-order response
+    // must never regress the bar (e.g. right after the viewer's own invest).
+    if (funded < current) return
+    if (funded > current) {
+      fundingFlash.value = true
+      setTimeout(() => { fundingFlash.value = false }, 1400)
+    }
+    // Merge only the live fields — never clobber offers/selection state.
+    for (const key of ['funded_amount', 'funded_percentage', 'investors_count', 'last_invested_at', 'status', 'investable_amount']) {
+      if (key in data) loan.value[key] = data[key]
+    }
+  } catch {
+    // Secondary UI — a failed poll must never break the page.
+  }
+}
+
+const lastInvestedAgo = computed(() => {
+  if (!loan.value?.last_invested_at) return null
+  return formatRelativeBg(loan.value.last_invested_at, nowMs.value)
+})
+
+onMounted(() => {
+  livePollTimer = setInterval(refreshLiveFunding, 30_000)
+  liveClockTimer = setInterval(() => { nowMs.value = Date.now() }, 30_000)
+})
+
+onBeforeUnmount(() => {
+  clearInterval(livePollTimer)
+  clearInterval(liveClockTimer)
+})
 
 const remaining = computed(() => {
   if (!loan.value) return '0.00'
@@ -354,11 +400,20 @@ async function confirmInvest() {
                 />
               </div>
               <div class="flex items-center gap-3">
-                <div class="funding-track flex-1 h-3 rounded-full bg-gray-100 overflow-hidden" :class="{ 'funding-track--open': ['published', 'funding'].includes(loan.status) }">
+                <div
+                  class="funding-track flex-1 h-3 rounded-full bg-gray-100 overflow-hidden"
+                  :class="{ 'funding-track--open': ['published', 'funding'].includes(loan.status), 'funding-track--flash': fundingFlash }"
+                >
                   <div class="h-full rounded-full bg-accent-400 transition-all duration-500" :style="{ width: loan.funded_percentage + '%' }"></div>
                 </div>
                 <span class="text-sm font-semibold text-navy-700 shrink-0">{{ loan.funded_percentage }}%</span>
               </div>
+              <!-- Social proof: живо, анонимно -->
+              <p v-if="lastInvestedAgo" class="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
+                <span class="live-dot" aria-hidden="true"></span>
+                {{ loan.investors_count ?? 0 }} {{ (loan.investors_count ?? 0) === 1 ? 'инвеститор' : 'инвеститори' }}
+                · последна инвестиция {{ lastInvestedAgo }}
+              </p>
             </div>
           </div>
 
@@ -725,8 +780,34 @@ async function confirmInvest() {
   100% { background-position: -200% 0; }
 }
 
+/* Someone just invested — the bar glows for a beat. */
+.funding-track--flash {
+  animation: funding-flash 1.4s ease-out;
+}
+
+@keyframes funding-flash {
+  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.6); }
+  100% { box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+}
+
+/* Live social-proof dot */
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #22c55e;
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45); }
+  70% { box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .funding-track--open {
+  .funding-track--open,
+  .funding-track--flash,
+  .live-dot {
     animation: none;
   }
 }

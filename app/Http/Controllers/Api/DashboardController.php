@@ -2,13 +2,18 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\PayoutType;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\LoanResource;
 use App\Http\Resources\TransactionResource;
 use App\Http\Resources\WalletResource;
 use App\Models\Investment;
+use App\Models\InvestmentSchedule;
 use App\Models\Loan;
+use App\Models\LoanOffer;
+use App\Models\LoanPromotion;
 use App\Models\Transaction;
+use App\Models\User;
 use App\Services\AccruedEarningsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -58,6 +63,18 @@ class DashboardController extends Controller
             ->where('type', Transaction::TYPE_WITHDRAWAL)
             ->sum('amount');
 
+        // ── Engagement pack (2026-08-14): every block below is display-only
+        //    honest math — no wallet/ledger involvement anywhere. ──
+
+        // «Докато те нямаше…»: deltas since the PREVIOUS dashboard visit.
+        // Read first, then stamp the new visit. Base-query update ON PURPOSE:
+        // a model save() would fire the Auditable trait (an immutable
+        // audit_logs row per page view — forensic noise that can never be
+        // purged) and rewrite users.updated_at on every visit.
+        $previousSeen = $user->dashboard_seen_at;
+        User::whereKey($user->id)->toBase()->update(['dashboard_seen_at' => now()]);
+        $sinceLastVisit = $this->sinceLastVisit($user, $previousSeen);
+
         return response()->json([
             'wallet' => new WalletResource($wallet),
             'active_investments_count' => $activeInvestmentsCount,
@@ -72,7 +89,173 @@ class DashboardController extends Controller
                 'earned_paid' => (string) $wallet->earned,
                 'withdrawn_total' => bcadd($withdrawnTotal ?: '0', '0', 2),
             ],
+            'since_last_visit' => $sinceLastVisit,
+            'next_payout' => $this->nextPayout($user->id),
+            'working_days' => $this->workingDays($user->id),
+            'market_rate_range' => $this->marketRateRange(),
         ]);
+    }
+
+    /**
+     * «Докато те нямаше…» — what happened between the previous dashboard
+     * visit and now. Null when this is the first visit or the gap is under
+     * 6 hours (a banner on every refresh would be noise, not delight).
+     *
+     * @return array<string, mixed>|null
+     */
+    private function sinceLastVisit(User $user, ?Carbon $previousSeen): ?array
+    {
+        if ($previousSeen === null || $previousSeen->gt(now()->subHours(6))) {
+            return null;
+        }
+
+        // Income received in the window — exact ledger truth: interest income
+        // paths + promo/admin bonuses.
+        $received = (string) Transaction::where('user_id', $user->id)
+            ->whereIn('type', [
+                Transaction::TYPE_REPAYMENT_INTEREST,
+                Transaction::TYPE_BUYBACK_INTEREST,
+                Transaction::TYPE_EARLY_REPAYMENT_INTEREST,
+                Transaction::TYPE_INTEREST_RELEASED,
+                Transaction::TYPE_BONUS,
+            ])
+            ->where('created_at', '>', $previousSeen)
+            ->sum('amount');
+        $received = bcadd($received ?: '0', '0', 2);
+
+        // Flash promos that started while they were away and still run.
+        $newPromos = LoanPromotion::query()
+            ->running()
+            ->where('starts_at', '>', $previousSeen)
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::FUNDABLE_STATUSES)
+                ->where('visibility', Loan::VISIBILITY_PUBLIC))
+            ->count();
+
+        // Public loans about to fill — «ако не побързаш, ще го изпуснеш».
+        // SQL pre-filter keeps the fundingCap() hydration to the handful of
+        // near-full candidates instead of every open loan on the platform.
+        $hotLoan = Loan::query()
+            ->whereIn('status', Loan::FUNDABLE_STATUSES)
+            ->where('visibility', Loan::VISIBILITY_PUBLIC)
+            ->whereRaw('funded_amount >= 0.85 * COALESCE(investable_amount, amount)')
+            ->limit(10)
+            ->get()
+            ->map(function (Loan $loan) {
+                $cap = (float) $loan->fundingCap();
+                $free = bcsub($loan->fundingCap(), (string) $loan->funded_amount, 2);
+                $pct = $cap > 0 ? (int) round(((float) $loan->funded_amount / $cap) * 100) : 0;
+
+                return ['id' => $loan->id, 'type' => $loan->type, 'funded_percentage' => $pct, 'free' => $free];
+            })
+            ->filter(fn (array $l) => $l['funded_percentage'] >= 85 && bccomp($l['free'], '0', 2) > 0)
+            ->sortByDesc('funded_percentage')
+            ->first();
+
+        $hasNews = bccomp($received, '0', 2) > 0 || $newPromos > 0 || $hotLoan !== null;
+        if (! $hasNews) {
+            return null;
+        }
+
+        return [
+            'previous_seen_at' => $previousSeen->toIso8601String(),
+            'received' => $received,
+            'new_promos' => $newPromos,
+            'hot_loan' => $hotLoan,
+        ];
+    }
+
+    /**
+     * The investor's NEXT scheduled payout across all offer investments in
+     * payout-eligible loans: the nearest unpaid due date + everything it pays
+     * that day. Display-only anticipation hook («след 12 дни · +13,33 €»).
+     *
+     * @return array<string, mixed>|null
+     */
+    private function nextPayout(int $userId): ?array
+    {
+        // NO lower date bound on purpose: an overdue-unpaid installment
+        // (manual-mode loan waiting for the admin button) must show as «днес»,
+        // not silently vanish from the promise (review 2026-08-14).
+        $nextDue = InvestmentSchedule::query()
+            ->whereIn('status', ['pending', 'late'])
+            ->whereHas('investment', fn ($q) => $q->where('user_id', $userId))
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES))
+            ->orderBy('due_date')
+            ->value('due_date');
+
+        if ($nextDue === null) {
+            return null;
+        }
+
+        $dueDate = Carbon::parse($nextDue)->startOfDay();
+
+        $rows = InvestmentSchedule::query()
+            ->whereIn('status', ['pending', 'late'])
+            ->whereDate('due_date', $dueDate->toDateString())
+            ->whereHas('investment', fn ($q) => $q->where('user_id', $userId))
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES))
+            ->get(['principal', 'interest']);
+
+        $amount = $rows->reduce(
+            fn (string $carry, $row) => bcadd($carry, bcadd((string) $row->principal, (string) $row->interest, 2), 2),
+            '0.00',
+        );
+
+        $daysLeft = max(0, (int) floor(now()->startOfDay()->diffInDays($dueDate, false)));
+
+        // Presentation-only ring fill: the standard 30-day cycle for monthly
+        // plans; far-out payouts (capitalized maturities) keep a small anchor
+        // fill instead of a dead-empty ring.
+        $progress = $daysLeft >= 30 ? 0.08 : round((30 - $daysLeft) / 30, 4);
+
+        return [
+            'due_date' => $dueDate->toDateString(),
+            'amount' => $amount,
+            'days_left' => $daysLeft,
+            'period_progress' => max(0.0, min(1.0, $progress)),
+        ];
+    }
+
+    /**
+     * «Парите ти работят от N дни» — days since the OLDEST investment still
+     * living in a payout-eligible loan. Honest streak: it is literally how
+     * long that money has been earning. Null when nothing is deployed.
+     */
+    private function workingDays(int $userId): ?int
+    {
+        $oldest = Investment::query()
+            ->where('user_id', $userId)
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES))
+            ->min('invested_at');
+
+        if ($oldest === null) {
+            return null;
+        }
+
+        return max(1, (int) floor(Carbon::parse($oldest)->diffInDays(now())));
+    }
+
+    /**
+     * Current «само лихва» offer rate range across open public loans — feeds
+     * the what-if slider's honest projection. Null when nothing is investable.
+     *
+     * @return array{min: string, max: string}|null
+     */
+    private function marketRateRange(): ?array
+    {
+        $rates = LoanOffer::query()
+            ->where('is_enabled', true)
+            ->where('payout_type', PayoutType::InterestOnly)
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::FUNDABLE_STATUSES)
+                ->where('visibility', Loan::VISIBILITY_PUBLIC))
+            ->pluck('interest_rate')
+            ->map(fn ($r) => (string) $r);
+
+        if ($rates->isEmpty()) {
+            return null;
+        }
+
+        return ['min' => $rates->min(), 'max' => $rates->max()];
     }
 
     // Aggregate principal + interest income by month for chart data.

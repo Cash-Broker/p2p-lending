@@ -100,7 +100,10 @@ class LoanController extends Controller
             'coBorrowerAnonymizedProfile',
             'amortizationSchedules',
             'offers' => fn ($q) => $q->where('is_enabled', true)->orderBy('position'),
-        ])->loadCount('investments');
+        ])->loadCount('investments')
+            // Social proof for the invest page: «последна инвестиция преди X
+            // мин» — anonymous timestamp only, no investor identity.
+            ->loadMax('investments', 'invested_at');
 
         return response()->json(new LoanResource($loan));
     }

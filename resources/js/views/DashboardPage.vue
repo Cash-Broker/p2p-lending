@@ -4,7 +4,10 @@ import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler } from 'chart.js'
 import api from '../api/axios'
 import EarnedTicker from '../components/EarnedTicker.vue'
+import NextPayoutRing from '../components/NextPayoutRing.vue'
 import PromoPanel from '../components/PromoPanel.vue'
+import WelcomeBackBanner from '../components/WelcomeBackBanner.vue'
+import WhatIfCard from '../components/WhatIfCard.vue'
 import { useAuthStore } from '../stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
@@ -162,6 +165,13 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
         <div>
           <h1 class="text-2xl font-bold text-navy-700">Добре дошъл, {{ auth.user?.name?.split(' ')[0] }}</h1>
           <p class="text-sm text-gray-500 mt-1">Ето обобщение на твоя акаунт</p>
+          <!-- Streak: honest «парите ти работят» counter -->
+          <p
+            v-if="dashboard?.working_days"
+            class="mt-2 inline-flex items-center gap-1.5 rounded-full bg-accent-400/10 border border-accent-400/25 px-3 py-1 text-xs font-bold text-accent-500"
+          >
+            ⚡ Парите ти работят за теб от {{ dashboard.working_days }} {{ dashboard.working_days === 1 ? 'ден' : 'дни' }}
+          </p>
         </div>
         <EarnedTicker
           v-if="dashboard?.earned_accrual"
@@ -169,6 +179,9 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
           :lifetime="dashboard.lifetime_totals"
         />
       </div>
+
+      <!-- «Докато те нямаше…» — only when the server found real news -->
+      <WelcomeBackBanner v-if="dashboard?.since_last_visit" :data="dashboard.since_last_visit" />
 
       <!-- Flash promo panel — renders only while a promo is running -->
       <PromoPanel />
@@ -228,12 +241,22 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
             </div>
           </div>
 
+          <!-- Anticipation: the next scheduled payout with a filling ring -->
+          <NextPayoutRing v-if="dashboard?.next_payout" :payout="dashboard.next_payout" />
+
           <div class="rounded-2xl border border-gray-100 bg-white p-6">
             <div class="flex items-center justify-between mb-1">
               <span class="text-sm text-gray-500">Активни инвестиции</span>
               <span class="text-2xl font-bold text-navy-700">{{ dashboard?.active_investments_count ?? 0 }}</span>
             </div>
           </div>
+
+          <!-- Goal visualization: the what-if slider -->
+          <WhatIfCard
+            v-if="dashboard?.market_rate_range"
+            :rate-range="dashboard.market_rate_range"
+            :available="dashboard?.wallet?.available ?? '0.00'"
+          />
         </div>
       </div>
 

@@ -5,6 +5,7 @@ namespace App\Http\Resources;
 use App\Models\PlatformSetting;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Carbon;
 
 class LoanResource extends JsonResource
 {
@@ -51,6 +52,18 @@ class LoanResource extends JsonResource
                 ? (int) bcmul(bcdiv($this->funded_amount, $this->investableAmount(), 4), '100')
                 : 0,
             'investors_count' => $this->whenCounted('investments', $this->investments_count),
+            // Social proof (2026-08-14): anonymous timestamp of the newest
+            // investment — «последна инвестиция преди X мин» on the invest page.
+            // ISO-8601 with offset ON PURPOSE: the loadMax aggregate carries no
+            // datetime cast, and a raw «Y-m-d H:i:s» string parses as VIEWER-
+            // local time in browsers (hours of skew) or Invalid Date on older
+            // Safari.
+            'last_invested_at' => $this->when(
+                array_key_exists('investments_max_invested_at', $this->getAttributes()),
+                fn () => $this->investments_max_invested_at !== null
+                    ? Carbon::parse($this->investments_max_invested_at)->toIso8601String()
+                    : null,
+            ),
             'amortization_schedule' => AmortizationScheduleResource::collection($this->whenLoaded('amortizationSchedules')),
             // Late tracking — only meaningful when the loan is currently late.
             // For active/repaid loans these are silently null, which the
