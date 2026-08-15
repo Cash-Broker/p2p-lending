@@ -58,10 +58,34 @@ class ActivityStats extends Page implements Tables\Contracts\HasTable
         $invested7d = (string) Investment::where('invested_at', '>=', now()->subDays(7))->sum('amount');
 
         return [
-            ['label' => 'Влизания днес', 'value' => "{$todayRow->entries} (от {$todayRow->users} инв.)"],
-            ['label' => 'Влизания вчера', 'value' => "{$yesterdayRow->entries} (от {$yesterdayRow->users} инв.)"],
-            ['label' => 'Влизания 7 дни', 'value' => "{$weekRow->entries} (от {$weekRow->users} инв.)"],
-            ['label' => 'Инвестирано 7 дни', 'value' => number_format((float) $invested7d, 2, ',', ' ').' €'],
+            [
+                'label' => 'Влизания днес',
+                'value' => (string) $todayRow->entries,
+                'sub' => "от {$todayRow->users} ".($todayRow->users == 1 ? 'инвеститор' : 'инвеститори'),
+                'icon' => 'bolt',
+                'accent' => '#22C55E',
+            ],
+            [
+                'label' => 'Влизания вчера',
+                'value' => (string) $yesterdayRow->entries,
+                'sub' => "от {$yesterdayRow->users} ".($yesterdayRow->users == 1 ? 'инвеститор' : 'инвеститори'),
+                'icon' => 'clock',
+                'accent' => '#3B82F6',
+            ],
+            [
+                'label' => 'Влизания 7 дни',
+                'value' => (string) $weekRow->entries,
+                'sub' => "от {$weekRow->users} ".($weekRow->users == 1 ? 'инвеститор' : 'инвеститори'),
+                'icon' => 'chart',
+                'accent' => '#8B5CF6',
+            ],
+            [
+                'label' => 'Инвестирано 7 дни',
+                'value' => number_format((float) $invested7d, 2, ',', ' ').' €',
+                'sub' => 'нови инвестиции',
+                'icon' => 'banknotes',
+                'accent' => '#1B2A4A',
+            ],
         ];
     }
 
