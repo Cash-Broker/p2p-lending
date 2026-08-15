@@ -77,3 +77,15 @@ a, button, [role="button"] {
   --color-accent-800: #14532d;
   --color-accent-900: #052e16;
 }
+
+/* ── iOS standalone (PWA) safe areas (2026-08-15) ──
+   Zeros in normal browsers; on an installed iPhone app they keep content
+   clear of the home indicator / notch. Pair with the `default` status-bar
+   style in app.blade.php — never black-translucent without these. */
+body {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-bottom {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+}

@@ -151,8 +151,8 @@ async function logout() {
         </router-link>
       </nav>
 
-      <!-- Logout -->
-      <div class="p-3 border-t border-gray-100 shrink-0">
+      <!-- Logout (safe-bottom: clears the iOS home indicator when installed) -->
+      <div class="p-3 border-t border-gray-100 shrink-0 safe-bottom">
         <button
           @click="logout"
           :disabled="loggingOut"

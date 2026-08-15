@@ -39,8 +39,12 @@
     <meta name="theme-color" content="#1B2A4A" media="(prefers-color-scheme: dark)">
     <meta name="color-scheme" content="light">
     <meta name="application-name" content="Vamaasset">
+    {{-- `default` ON PURPOSE (2026-08-15): black-translucent + viewport-fit=
+         cover slides the page UNDER the iOS status bar/notch in installed
+         (standalone) mode — the classic overlap bug. `default` gives the
+         status bar its own opaque strip and content starts below it. --}}
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Vamaasset">
     <meta name="format-detection" content="telephone=no">
 

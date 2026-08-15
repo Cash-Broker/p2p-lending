@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { Doughnut } from 'vue-chartjs'
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js'
 import api from '../api/axios'
+import InvestmentDetailModal from '../components/InvestmentDetailModal.vue'
 
 ChartJS.register(ArcElement, Tooltip, Legend)
 
@@ -10,6 +11,9 @@ const investments = ref([])
 const summary = ref(null)
 const meta = ref({ current_page: 1, last_page: 1, total: 0 })
 const loading = ref(true)
+// Row tap → detail modal (Reni 2026-08-15: on mobile there was no way to see
+// how you're doing in a loan — the actions column hid behind horizontal scroll).
+const selectedInvestment = ref(null)
 
 const typeLabels = { consumer: 'Потребителски', business: 'Бизнес', mortgage: 'Ипотечен', bridge: 'Мостов' }
 const statusLabels = {
@@ -201,28 +205,40 @@ onMounted(() => load())
           <table class="w-full text-sm">
             <thead>
               <tr class="text-left text-xs text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                <th class="px-6 py-3 font-medium">Кредит</th>
+                <!-- px-3 on mobile so Кредит/Сума/Статус/шеврон fit a 360px
+                     screen without horizontal scroll (the old layout hid the
+                     actions column behind it — Reni 2026-08-15). -->
+                <th class="px-3 sm:px-6 py-3 font-medium">Кредит</th>
                 <th class="px-6 py-3 font-medium hidden sm:table-cell">Оригинатор</th>
-                <th class="px-6 py-3 font-medium">Сума</th>
+                <th class="px-3 sm:px-6 py-3 font-medium">Сума</th>
                 <th class="px-6 py-3 font-medium hidden md:table-cell">Доходност</th>
                 <th class="px-6 py-3 font-medium hidden md:table-cell">Срок</th>
-                <th class="px-6 py-3 font-medium">Статус</th>
-                <th class="px-6 py-3 font-medium"></th>
+                <th class="px-3 sm:px-6 py-3 font-medium">Статус</th>
+                <th class="px-2 sm:px-6 py-3 font-medium"><span class="sr-only">Действия</span></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="inv in investments" :key="inv.id" class="border-t border-gray-50 hover:bg-gray-50/50">
-                <td class="px-6 py-3">
+              <!-- Row click is a pointer convenience only: the keyboard/AT
+                   paths are real elements — the «Детайли»/«Договор» links on
+                   sm+ and the ⓘ button on mobile. (A tabindex+keydown row
+                   hijacked Enter on the inner links — review 2026-08-15.) -->
+              <tr
+                v-for="inv in investments"
+                :key="inv.id"
+                class="border-t border-gray-50 hover:bg-gray-50/50 cursor-pointer"
+                @click="selectedInvestment = inv"
+              >
+                <td class="px-3 sm:px-6 py-3">
                   <p class="font-medium text-navy-700">{{ typeLabels[inv.loan?.type] || inv.loan?.type }}</p>
                   <p class="text-xs text-gray-400">#{{ inv.loan?.id }}</p>
                 </td>
                 <td class="px-6 py-3 text-gray-500 hidden sm:table-cell">{{ inv.loan?.originator?.name }}</td>
-                <td class="px-6 py-3 font-semibold text-navy-700">{{ formatAmount(inv.amount) }} €</td>
+                <td class="px-3 sm:px-6 py-3 font-semibold text-navy-700">{{ formatAmount(inv.amount) }} €</td>
                 <!-- The investment's own snapshotted rate is the truth for the
                      investor; the loan-level rate is a legacy fallback. -->
                 <td class="px-6 py-3 text-accent-500 font-medium hidden md:table-cell">{{ inv.interest_rate ? `${inv.interest_rate}%` : (inv.loan?.interest_rate ? `${inv.loan.interest_rate}%` : '—') }}</td>
                 <td class="px-6 py-3 text-gray-500 hidden md:table-cell">{{ inv.loan?.term_months }} мес.</td>
-                <td class="px-6 py-3">
+                <td class="px-3 sm:px-6 py-3">
                   <span class="px-2.5 py-1 rounded-full text-xs font-medium" :class="statusClasses[inv.loan?.status]">
                     {{ statusLabels[inv.loan?.status] || inv.loan?.status }}
                   </span>
@@ -237,12 +253,27 @@ onMounted(() => load())
                     {{ inv.loan.days_overdue_max }}д закъснение
                   </span>
                 </td>
-                <td class="px-6 py-3">
-                  <div class="flex items-center gap-3">
-                    <router-link :to="`/invest/${inv.loan?.id}`" class="text-xs text-accent-500 font-medium">Детайли</router-link>
+                <td class="px-2 sm:px-6 py-3">
+                  <!-- Desktop/tablet: direct links. Mobile: a chevron — the
+                       whole row opens the detail modal, which carries both
+                       actions (the links used to hide behind horizontal scroll). -->
+                  <div class="hidden sm:flex items-center gap-3">
+                    <router-link :to="`/invest/${inv.loan?.id}`" class="text-xs text-accent-500 font-medium" @click.stop>Детайли</router-link>
                     <a v-if="inv.has_contract" :href="`/api/investments/${inv.id}/contract`" target="_blank" rel="noopener"
-                       class="text-xs font-medium text-navy-700 underline hover:text-navy-900">Договор</a>
+                       class="text-xs font-medium text-navy-700 underline hover:text-navy-900" @click.stop>Договор</a>
                   </div>
+                  <!-- «информативна иконка, за да знаят какво да цъкат» —
+                       accent ⓘ beats a gray chevron as a tap affordance, and
+                       being a real button it is also the keyboard/AT path on
+                       mobile (the row click has no keyboard semantics). -->
+                  <button
+                    type="button"
+                    class="sm:hidden flex items-center justify-center p-1 -m-1"
+                    :aria-label="`Детайли за инвестицията в кредит #${inv.loan?.id}`"
+                    @click.stop="selectedInvestment = inv"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="size-5 text-accent-400" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg>
+                  </button>
                 </td>
               </tr>
             </tbody>
@@ -255,5 +286,7 @@ onMounted(() => load())
         </div>
       </div>
     </template>
+
+    <InvestmentDetailModal :investment="selectedInvestment" @close="selectedInvestment = null" />
   </div>
 </template>
