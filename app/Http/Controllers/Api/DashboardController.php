@@ -19,6 +19,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class DashboardController extends Controller
 {
@@ -73,6 +75,7 @@ class DashboardController extends Controller
         // purged) and rewrite users.updated_at on every visit.
         $previousSeen = $user->dashboard_seen_at;
         User::whereKey($user->id)->toBase()->update(['dashboard_seen_at' => now()]);
+        $this->recordVisit($user->id, $previousSeen);
 
         $accrual = $accruedEarnings->forUser($user->id);
         $sinceLastVisit = $this->sinceLastVisit($user, $previousSeen, $accrual, $accruedEarnings);
@@ -99,9 +102,33 @@ class DashboardController extends Controller
     }
 
     /**
+     * Admin-only visit analytics (2026-08-15): a new ENTRY is the first load
+     * ever or a load 30+ minutes after the previous one — refreshes inside a
+     * session don't count. One counter row per Sofia calendar day; failures
+     * are swallowed (analytics must never break the dashboard).
+     */
+    private function recordVisit(int $userId, ?Carbon $previousSeen): void
+    {
+        if ($previousSeen !== null && $previousSeen->gt(now()->subMinutes(30))) {
+            return;
+        }
+
+        try {
+            DB::insert(
+                'INSERT INTO user_visit_days (user_id, visit_date, entries, created_at, updated_at)
+                 VALUES (?, ?, 1, NOW(), NOW())
+                 ON DUPLICATE KEY UPDATE entries = entries + 1, updated_at = NOW()',
+                [$userId, now()->timezone('Europe/Sofia')->toDateString()],
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Visit tracking failed', ['user_id' => $userId, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
      * «Докато те нямаше…» — what happened between the previous dashboard
-     * visit and now. Null when this is the first visit or the gap is under
-     * 6 hours (a banner on every refresh would be noise, not delight).
+     * visit and now. Computed on every visit after the first; the SPA keeps
+     * one banner per tab session.
      *
      * @return array<string, mixed>|null
      */

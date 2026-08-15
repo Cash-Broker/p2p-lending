@@ -391,6 +391,26 @@ class UserResource extends Resource
                 Infolists\Components\TextEntry::make('wallet.invested')->label('Инвестирани')->money('EUR'),
                 Infolists\Components\TextEntry::make('wallet.earned')->label('Спечелени')->money('EUR'),
             ])->columns(3),
+
+            // Visit analytics (2026-08-15): «влизал ли е, колко често» —
+            // entries = отделни влизания (30+ мин пауза), не рефреши.
+            Section::make('Активност')->schema([
+                Infolists\Components\TextEntry::make('dashboard_seen_at')
+                    ->label('Последно в платформата')
+                    ->state(fn ($record) => $record->dashboard_seen_at
+                        ? $record->dashboard_seen_at->timezone('Europe/Sofia')->format('d.m.Y H:i').' ч.'
+                        : 'никога'),
+                Infolists\Components\TextEntry::make('visits_7d')
+                    ->label('Влизания (7 дни)')
+                    ->state(fn ($record) => $record->visitDays()
+                        ->where('visit_date', '>=', now()->timezone('Europe/Sofia')->subDays(6)->toDateString())
+                        ->sum('entries')),
+                Infolists\Components\TextEntry::make('visits_30d')
+                    ->label('Влизания (30 дни)')
+                    ->state(fn ($record) => $record->visitDays()
+                        ->where('visit_date', '>=', now()->timezone('Europe/Sofia')->subDays(29)->toDateString())
+                        ->sum('entries')),
+            ])->columns(3)->visible(fn ($record) => $record->isInvestor()),
             Section::make('KYC документ')->schema([
                 Infolists\Components\TextEntry::make('kyc_status')->label('Статус')->badge()
                     ->formatStateUsing(fn (string $state) => match ($state) {

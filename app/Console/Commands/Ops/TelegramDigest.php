@@ -77,8 +77,16 @@ class TelegramDigest extends Command
 
             $today = $runAt->format('d.m.Y');
 
+            // Visit analytics (2026-08-15): yesterday's Sofia-day entries.
+            $yesterday = $runAt->copy()->timezone('Europe/Sofia')->subDay()->toDateString();
+            $visitStats = DB::table('user_visit_days')
+                ->where('visit_date', $yesterday)
+                ->selectRaw('COALESCE(SUM(entries), 0) as entries, COUNT(DISTINCT user_id) as users')
+                ->first();
+
             $body = "📊 Сутрешно резюме ($today):\n"
                 ."• Нови регистрации (24ч): $newRegistrations\n"
+                ."• Влизания вчера: {$visitStats->entries} (от {$visitStats->users} инвеститори)\n"
                 ."• KYC чакащи преглед: $kycPending\n"
                 ."• Депозити чакащи потвърждение: $depositsPending\n"
                 ."• Тегления чакащи обработка: $withdrawalsPending\n"
