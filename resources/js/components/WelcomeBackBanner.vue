@@ -17,6 +17,14 @@ const typeLabels = { consumer: 'Потребителски', business: 'Бизн
 function formatAmount(val) {
   return (parseFloat(val) || 0).toLocaleString('bg-BG', { minimumFractionDigits: 2 })
 }
+
+// Self-evidencing window (Reni 2026-08-15): the figures always say WHICH
+// visit they are measured against, so a large delta never reads as a bug.
+const sinceLabel = (() => {
+  const d = new Date(props.data.previous_seen_at)
+  if (!Number.isFinite(d.getTime())) return null
+  return d.toLocaleString('bg-BG', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+})()
 </script>
 
 <template>
@@ -26,7 +34,9 @@ function formatAmount(val) {
 
       <div class="relative flex flex-col sm:flex-row sm:items-center gap-3">
         <div class="min-w-0">
-          <p class="text-[11px] font-bold uppercase tracking-[0.14em] text-accent-500 mb-1">👋 Докато те нямаше</p>
+          <p class="text-[11px] font-bold uppercase tracking-[0.14em] text-accent-500 mb-1">
+            👋 Докато те нямаше<span v-if="sinceLabel" class="normal-case font-medium tracking-normal text-gray-400"> · спрямо посещението ти на {{ sinceLabel }} ч.</span>
+          </p>
           <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-navy-700">
             <!-- Headline: the best TRUE news available, in priority order —
                  the banner always says something, never invents a number. -->

@@ -246,6 +246,27 @@ class EngagementDashboardTest extends TestCase
             ->assertJsonPath('working_days', 47);
     }
 
+    public function test_working_days_flip_at_bulgarian_midnight_not_at_the_invest_hour(): void
+    {
+        // Reni 2026-08-15: «след 12 през нощта вече трябва да пише 5 дена» —
+        // calendar days in Europe/Sofia, not a rolling 24h count. An
+        // investment made 25 hours ago late in the evening spans TWO Sofia
+        // midnights only if the calendar says so.
+        [, $user] = $this->investedUser();
+
+        // Invested «вчера» just after Sofia midnight → exactly 1 calendar day
+        // regardless of the current hour (a rolling count would show 0 until
+        // the invest hour comes around again).
+        $yesterdaySofia = now()->timezone('Europe/Sofia')->subDay()->setTime(0, 30);
+        $user->investments()->first()
+            ->forceFill(['invested_at' => $yesterdaySofia->clone()->timezone('UTC')])
+            ->save();
+
+        $this->actingAs($user)->getJson('/api/dashboard')
+            ->assertOk()
+            ->assertJsonPath('working_days', 1);
+    }
+
     public function test_working_days_null_without_live_investments(): void
     {
         $user = $this->verifiedInvestor();

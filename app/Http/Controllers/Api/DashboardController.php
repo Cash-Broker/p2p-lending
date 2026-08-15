@@ -253,7 +253,13 @@ class DashboardController extends Controller
             return null;
         }
 
-        return max(1, (int) floor(Carbon::parse($oldest)->diffInDays(now())));
+        // CALENDAR days in Europe/Sofia (Reni 2026-08-15): the counter flips
+        // at Bulgarian midnight — a rolling 24h count kept showing «4 дни»
+        // through the next morning because it incremented at the invest hour.
+        $investedDay = Carbon::parse($oldest)->timezone('Europe/Sofia')->startOfDay();
+        $today = now()->timezone('Europe/Sofia')->startOfDay();
+
+        return max(1, (int) $investedDay->diffInDays($today));
     }
 
     /**
