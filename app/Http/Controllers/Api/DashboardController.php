@@ -180,7 +180,6 @@ class DashboardController extends Controller
             'previous_seen_at' => $previousSeen->toIso8601String(),
             'received' => $received,
             'accrual_growth' => $accrualGrowth,
-            'accrued_now' => bcadd($accrualNow['amount_live'], '0', 2),
             'available' => (string) ($user->wallet->available ?? '0.00'),
             'new_promos' => $newPromos,
             'hot_loan' => $hotLoan,

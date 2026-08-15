@@ -153,7 +153,6 @@ class EngagementDashboardTest extends TestCase
 
         $this->assertNotNull($response->json('since_last_visit'));
         $this->assertSame('0.00', $response->json('since_last_visit.received'));
-        $this->assertSame('0.00', $response->json('since_last_visit.accrued_now'));
         $this->assertSame('0.00', $response->json('since_last_visit.available'));
     }
 
