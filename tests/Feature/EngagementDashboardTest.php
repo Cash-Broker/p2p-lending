@@ -142,18 +142,17 @@ class EngagementDashboardTest extends TestCase
             ->assertJsonPath('since_last_visit.received', '17.50');
     }
 
-    public function test_banner_always_returns_after_the_gap_even_without_news(): void
+    public function test_no_real_news_means_no_banner(): void
     {
-        // Reni: «винаги да има новини» — the block always comes back after the
-        // gap; the frontend picks a truthful fallback headline.
+        // Round 3 (Reni 2026-08-15): a «докато те нямаше» with a static fact
+        // as the headline reads broken — no genuine news, no banner. The
+        // idle-money nudge is its own permanent strip, not visit news.
         $user = $this->verifiedInvestor();
         $user->forceFill(['dashboard_seen_at' => now()->subHours(3)])->save();
 
-        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
-
-        $this->assertNotNull($response->json('since_last_visit'));
-        $this->assertSame('0.00', $response->json('since_last_visit.received'));
-        $this->assertSame('0.00', $response->json('since_last_visit.available'));
+        $this->actingAs($user)->getJson('/api/dashboard')
+            ->assertOk()
+            ->assertJsonPath('since_last_visit', null);
     }
 
     public function test_accrual_growth_carries_the_banner_when_no_payout_landed(): void

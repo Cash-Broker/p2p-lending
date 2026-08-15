@@ -4,6 +4,7 @@ import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler } from 'chart.js'
 import api from '../api/axios'
 import EarnedTicker from '../components/EarnedTicker.vue'
+import IdleMoneyStrip from '../components/IdleMoneyStrip.vue'
 import NextPayoutRing from '../components/NextPayoutRing.vue'
 import PromoPanel from '../components/PromoPanel.vue'
 import WelcomeBackBanner from '../components/WelcomeBackBanner.vue'
@@ -211,8 +212,15 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
         />
       </div>
 
-      <!-- «Докато те нямаше…» — stays for the whole session until dismissed -->
+      <!-- «Докато те нямаше…» — REAL news only, stays for the session -->
       <WelcomeBackBanner v-if="welcomeBack" :data="welcomeBack" @dismiss="dismissWelcomeBack" />
+
+      <!-- Idle money — permanent quiet nudge, independent of visits -->
+      <IdleMoneyStrip
+        v-if="dashboard?.wallet"
+        :available="dashboard.wallet.available"
+        :rate-range="dashboard.market_rate_range"
+      />
 
       <!-- Flash promo panel — renders only while a promo is running -->
       <PromoPanel />

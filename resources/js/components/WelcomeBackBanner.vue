@@ -50,17 +50,10 @@ const sinceLabel = (() => {
             <span v-if="parseFloat(data.received) > 0" class="font-bold text-accent-500 text-base">
               +{{ formatAmount(data.received) }} € постъпления
             </span>
-            <!-- NB: never repeat what is already on screen — the ticker above
-                 shows the current profit, so the banner only carries DELTAS
-                 and nudges (Reni 2026-08-15). -->
+            <!-- REAL news only (Reni 2026-08-15): deltas and events — never a
+                 static fact, never what the ticker above already shows. -->
             <span v-else-if="parseFloat(data.accrual_growth) >= 0.01" class="font-bold text-accent-500 text-base">
               печалбата ти порасна с +{{ formatAmount(data.accrual_growth) }} €
-            </span>
-            <span v-else-if="parseFloat(data.available) >= 50" class="font-semibold">
-              💤 {{ formatAmount(data.available) }} € свободни чакат да заработят за теб
-            </span>
-            <span v-else-if="!data.new_promos && !data.hot_loan" class="font-semibold">
-              Нови възможности за инвестиция те чакат
             </span>
             <span v-if="data.new_promos > 0" class="font-semibold">
               ⚡ {{ data.new_promos === 1 ? 'Нова промо оферта те чака' : `${data.new_promos} нови промо оферти те чакат` }}

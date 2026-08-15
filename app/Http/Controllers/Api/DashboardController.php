@@ -199,15 +199,23 @@ class DashboardController extends Controller
             $accrualGrowth = bccomp($growth, '0', 2) > 0 ? $growth : '0.00';
         }
 
-        // ALWAYS return the block after the gap (Reni via Yordan 2026-08-14:
-        // «винаги да има новини, да им е готино») — the frontend picks the
-        // best available headline down a priority chain, so the banner is
-        // never empty and never invents a number.
+        // REAL news only (Reni 2026-08-15, round 3: «нещо не го уцелваме» —
+        // a «докато те нямаше» against a 3-minute-old visit with a static
+        // fact as the headline reads broken). No news → no banner; the idle-
+        // money nudge lives as its own permanent strip on the dashboard.
+        $hasNews = bccomp($received, '0', 2) > 0
+            || bccomp($accrualGrowth, '0', 2) > 0
+            || $newPromos > 0
+            || $hotLoan !== null;
+
+        if (! $hasNews) {
+            return null;
+        }
+
         return [
             'previous_seen_at' => $previousSeen->toIso8601String(),
             'received' => $received,
             'accrual_growth' => $accrualGrowth,
-            'available' => (string) ($user->wallet->available ?? '0.00'),
             'new_promos' => $newPromos,
             'hot_loan' => $hotLoan,
         ];
