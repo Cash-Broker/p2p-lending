@@ -10,7 +10,14 @@ const props = defineProps({
   data: { type: Object, required: true },
 })
 
+const emit = defineEmits(['dismiss'])
+
 const dismissed = ref(false)
+
+function dismiss() {
+  dismissed.value = true
+  emit('dismiss')
+}
 
 const typeLabels = { consumer: 'Потребителски', business: 'Бизнес', mortgage: 'Ипотечен', bridge: 'Мостов' }
 
@@ -82,7 +89,7 @@ const sinceLabel = (() => {
 
         <button
           type="button"
-          @click="dismissed = true"
+          @click="dismiss"
           aria-label="Скрий"
           class="absolute -top-1 -right-1 sm:static sm:shrink-0 text-gray-400 hover:text-navy-700 transition-colors"
         >

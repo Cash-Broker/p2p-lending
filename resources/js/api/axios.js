@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { observeBuild } from '../utils/buildVersion'
 
 /**
  * Generate a UUID v4.
@@ -72,11 +73,17 @@ api.interceptors.request.use((config) => {
  * time any request runs.
  */
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Deploy detection — a changed X-Build marks this tab stale; the router
+    // silently reloads it on the next navigation (see utils/buildVersion).
+    observeBuild(response.headers?.['x-build'])
+    return response
+  },
   (error) => {
     if (error.response?.status === 403 && error.response.data?.error === 'consent_required') {
       import('../stores/consent').then(({ useConsentStore }) => useConsentStore().forcePrompt())
     }
+    observeBuild(error.response?.headers?.['x-build'])
     return Promise.reject(error)
   },
 )

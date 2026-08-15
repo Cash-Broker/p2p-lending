@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\AttachBuildVersion;
 use App\Http\Middleware\EnsureConsentsCurrent;
 use App\Http\Middleware\EnsureIsInvestor;
 use App\Http\Middleware\EnsureKycApproved;
@@ -93,6 +94,9 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->statefulApi();
         $middleware->append(SecurityHeaders::class);
+        // Every response carries the frontend build fingerprint so stale SPA
+        // tabs self-reload after a deploy (see AttachBuildVersion).
+        $middleware->append(AttachBuildVersion::class);
         // Spatie CSP — currently emits Report-Only header (config/csp.php).
         // Promote App\Support\CspPolicy to `presets` for enforcement once
         // production violations are clean.

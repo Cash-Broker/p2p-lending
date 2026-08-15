@@ -157,4 +157,14 @@ router.beforeEach(async (to) => {
   }
 })
 
+// Deploy self-refresh (2026-08-15): when the API reported a NEWER frontend
+// build than this tab booted with, reload at the next navigation — the one
+// moment a full refresh is guaranteed not to interrupt anything.
+router.afterEach(async () => {
+  const { isStale } = await import('../utils/buildVersion')
+  if (isStale()) {
+    window.location.reload()
+  }
+})
+
 export default router

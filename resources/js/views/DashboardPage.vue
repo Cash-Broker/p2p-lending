@@ -17,12 +17,39 @@ const dashboard = ref(null)
 const loading = ref(true)
 const error = ref(null)
 
+// «Докато те нямаше» stays for the WHOLE session (Reni 2026-08-15: «докато
+// са вътре да им стои») — the server sends the block once per return-gap,
+// so we keep the last one in sessionStorage until the user dismisses it or
+// the tab closes. 24h expiry guards ancient blocks in immortal tabs.
+const WB_KEY = 'vama_welcome_back'
+const welcomeBack = ref(null)
+
+function restoreWelcomeBack() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(WB_KEY))
+    if (stored && Date.now() - (stored._stored_at || 0) < 24 * 3600_000) {
+      welcomeBack.value = stored
+    }
+  } catch { /* corrupt storage — ignore */ }
+}
+
+function dismissWelcomeBack() {
+  welcomeBack.value = null
+  sessionStorage.removeItem(WB_KEY)
+}
+
 async function loadDashboard() {
   loading.value = true
   error.value = null
   try {
     const { data } = await api.get('/dashboard')
     dashboard.value = data
+    if (data.since_last_visit) {
+      welcomeBack.value = { ...data.since_last_visit, _stored_at: Date.now() }
+      try { sessionStorage.setItem(WB_KEY, JSON.stringify(welcomeBack.value)) } catch { /* quota — ignore */ }
+    } else {
+      restoreWelcomeBack()
+    }
   } catch (e) {
     error.value = e.response?.status === 403 && e.response?.data?.requires_verification
       ? 'verification'
@@ -180,8 +207,8 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
         />
       </div>
 
-      <!-- «Докато те нямаше…» — only when the server found real news -->
-      <WelcomeBackBanner v-if="dashboard?.since_last_visit" :data="dashboard.since_last_visit" />
+      <!-- «Докато те нямаше…» — stays for the whole session until dismissed -->
+      <WelcomeBackBanner v-if="welcomeBack" :data="welcomeBack" @dismiss="dismissWelcomeBack" />
 
       <!-- Flash promo panel — renders only while a promo is running -->
       <PromoPanel />
