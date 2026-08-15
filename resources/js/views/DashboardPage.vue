@@ -29,8 +29,10 @@ function restoreWelcomeBack() {
     const stored = JSON.parse(sessionStorage.getItem(WB_KEY))
     if (stored && Date.now() - (stored._stored_at || 0) < 24 * 3600_000) {
       welcomeBack.value = stored
+      return true
     }
   } catch { /* corrupt storage — ignore */ }
+  return false
 }
 
 function dismissWelcomeBack() {
@@ -44,11 +46,13 @@ async function loadDashboard() {
   try {
     const { data } = await api.get('/dashboard')
     dashboard.value = data
-    if (data.since_last_visit) {
+    // The banner of THIS tab session wins — a refresh must not shrink the
+    // window to «преди 2 минути». A fresh tab adopts the server's block,
+    // which measures back to the previous visit — the greet-on-entry Reni
+    // wants (2026-08-15).
+    if (!restoreWelcomeBack() && data.since_last_visit) {
       welcomeBack.value = { ...data.since_last_visit, _stored_at: Date.now() }
       try { sessionStorage.setItem(WB_KEY, JSON.stringify(welcomeBack.value)) } catch { /* quota — ignore */ }
-    } else {
-      restoreWelcomeBack()
     }
   } catch (e) {
     error.value = e.response?.status === 403 && e.response?.data?.requires_verification

@@ -81,10 +81,10 @@ class EngagementDashboardTest extends TestCase
         $this->assertNotNull($user->fresh()->dashboard_seen_at);
     }
 
-    public function test_short_gap_shows_no_banner(): void
+    public function test_even_a_short_gap_returns_the_block(): void
     {
-        // Under the 1-hour gap (lowered from 6 h, Yordan 2026-08-14) the
-        // banner stays quiet — ordinary same-session browsing must not fire it.
+        // Reni 2026-08-15: «сега влязох и никъде го няма» — no minimum gap;
+        // the SPA (sessionStorage) is the per-tab dedupe, not the server.
         $user = $this->verifiedInvestor();
         $user->forceFill(['dashboard_seen_at' => now()->subMinutes(20)])->save();
 
@@ -95,7 +95,7 @@ class EngagementDashboardTest extends TestCase
 
         $this->actingAs($user)->getJson('/api/dashboard')
             ->assertOk()
-            ->assertJsonPath('since_last_visit', null);
+            ->assertJsonPath('since_last_visit.received', '10.00');
     }
 
     public function test_ninety_minute_gap_with_income_shows_the_banner(): void

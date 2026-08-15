@@ -107,9 +107,11 @@ class DashboardController extends Controller
      */
     private function sinceLastVisit(User $user, ?Carbon $previousSeen, array $accrualNow, AccruedEarningsService $accruedEarnings): ?array
     {
-        // 1 hour (was 6, Yordan 2026-08-14): step out for lunch, come back —
-        // the platform greets you. Shorter would fire on ordinary browsing.
-        if ($previousSeen === null || $previousSeen->gt(now()->subHour())) {
+        // NO minimum gap (Reni 2026-08-15: «сега влязох и никъде го няма») —
+        // the block is computed on EVERY visit after the first; the SPA keeps
+        // one banner per tab session (sessionStorage) so it greets every new
+        // entry without duplicating inside a session.
+        if ($previousSeen === null) {
             return null;
         }
 
