@@ -290,10 +290,10 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
             </div>
           </div>
 
-          <!-- Goal visualization: the what-if slider -->
+          <!-- Goal visualization: the what-if slider + 3-plan picker -->
           <WhatIfCard
-            v-if="dashboard?.market_rate_range"
-            :rate-range="dashboard.market_rate_range"
+            v-if="dashboard?.market_rate_ranges"
+            :rate-ranges="dashboard.market_rate_ranges"
             :available="dashboard?.wallet?.available ?? '0.00'"
           />
         </div>

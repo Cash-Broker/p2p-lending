@@ -323,6 +323,84 @@ class EngagementDashboardTest extends TestCase
         $this->assertSame('16.00', $response->json('market_rate_range.max'));
     }
 
+    // ── Планов избор в what-if картата (Рени 2026-08-15) ──
+
+    public function test_market_rate_ranges_expose_all_three_payout_structures(): void
+    {
+        $loan = Loan::factory()->published()->create([
+            'amount' => 5000, 'investable_amount' => 5000, 'funded_amount' => 0,
+            'interest_rate' => '12.00', 'term_months' => 12,
+        ]);
+        $loan->offers()->where('payout_type', PayoutType::Amortizing)->update(['interest_rate' => '14.00']);
+        $loan->offers()->where('payout_type', PayoutType::Capitalized)->update(['interest_rate' => '22.00']);
+
+        $user = $this->verifiedInvestor();
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
+
+        $this->assertSame('14.00', $response->json('market_rate_ranges.amortizing.min'));
+        $this->assertSame('14.00', $response->json('market_rate_ranges.amortizing.max'));
+        $this->assertSame('16.00', $response->json('market_rate_ranges.interest_only.max'));
+        $this->assertSame('22.00', $response->json('market_rate_ranges.capitalized.max'));
+
+        // The legacy single-range key stays the interest-only slice.
+        $this->assertSame(
+            $response->json('market_rate_ranges.interest_only'),
+            $response->json('market_rate_range'),
+        );
+    }
+
+    public function test_market_rate_ranges_span_min_and_max_across_loans(): void
+    {
+        foreach (['18.00', '26.00'] as $capitalizedRate) {
+            $loan = Loan::factory()->published()->create([
+                'amount' => 5000, 'investable_amount' => 5000, 'funded_amount' => 0,
+                'interest_rate' => '12.00', 'term_months' => 12,
+            ]);
+            $loan->offers()->where('payout_type', PayoutType::Capitalized)->update(['interest_rate' => $capitalizedRate]);
+        }
+
+        $user = $this->verifiedInvestor();
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
+
+        $this->assertSame('18.00', $response->json('market_rate_ranges.capitalized.min'));
+        $this->assertSame('26.00', $response->json('market_rate_ranges.capitalized.max'));
+    }
+
+    public function test_market_rate_ranges_fall_back_per_structure_without_open_loans(): void
+    {
+        $user = $this->verifiedInvestor();
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
+
+        foreach (PayoutType::cases() as $type) {
+            $this->assertSame(
+                ['min' => $type->defaultRate(), 'max' => $type->defaultRate()],
+                $response->json("market_rate_ranges.{$type->value}"),
+                "fallback range for {$type->value}",
+            );
+        }
+    }
+
+    public function test_market_rate_ranges_ignore_disabled_offers(): void
+    {
+        $loan = Loan::factory()->published()->create([
+            'amount' => 5000, 'investable_amount' => 5000, 'funded_amount' => 0,
+            'interest_rate' => '12.00', 'term_months' => 12,
+        ]);
+        // A disabled 99% amortizing offer must not leak into the picker.
+        $loan->offers()->where('payout_type', PayoutType::Amortizing)
+            ->update(['interest_rate' => '99.00', 'is_enabled' => false]);
+
+        $user = $this->verifiedInvestor();
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
+
+        // Falls back to the seeded default because no ENABLED amortizing offer exists.
+        $this->assertSame('12.00', $response->json('market_rate_ranges.amortizing.max'));
+    }
+
     // ── Социално доказателство ──
 
     public function test_loan_show_exposes_anonymous_last_invested_at(): void

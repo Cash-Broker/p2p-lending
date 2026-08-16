@@ -97,7 +97,10 @@ class DashboardController extends Controller
             'since_last_visit' => $sinceLastVisit,
             'next_payout' => $this->nextPayout($user->id),
             'working_days' => $this->workingDays($user->id),
-            'market_rate_range' => $this->marketRateRange(),
+            // Legacy single range (IdleMoneyStrip) is the interest-only slice
+            // of the per-plan ranges — one query feeds both keys.
+            'market_rate_range' => ($marketRateRanges = $this->marketRateRanges())[PayoutType::InterestOnly->value],
+            'market_rate_ranges' => $marketRateRanges,
         ]);
     }
 
@@ -299,31 +302,35 @@ class DashboardController extends Controller
     }
 
     /**
-     * Current «само лихва» offer rate range across ALL open loans — feeds the
-     * what-if slider's honest projection. Private loans deliberately included
-     * (Yordan 2026-08-14: the platform currently sells by private link only,
-     * and the slider must not die) — only the bare percentage flows out, no
-     * loan identity/amount/count. With no open loans at all, falls back to
-     * the standard seeded «само лихва» rate so the dream never goes dark.
+     * Live min/max annual rate per payout structure across enabled offers on
+     * fundable loans — feeds the what-if picker's honest projections. Private
+     * loans deliberately included (Yordan 2026-08-14: the platform currently
+     * sells by private link only, and the card must not die) — only the bare
+     * percentage flows out, no loan identity/amount/count. A structure with no
+     * live offers falls back to its seeded default so the dream never goes dark.
      *
-     * @return array{min: string, max: string}
+     * @return array<string, array{min: string, max: string}> keyed by PayoutType value
      */
-    private function marketRateRange(): array
+    private function marketRateRanges(): array
     {
-        $rates = LoanOffer::query()
+        $byType = LoanOffer::query()
             ->where('is_enabled', true)
-            ->where('payout_type', PayoutType::InterestOnly)
             ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::FUNDABLE_STATUSES))
-            ->pluck('interest_rate')
-            ->map(fn ($r) => (string) $r);
+            ->get(['payout_type', 'interest_rate'])
+            ->groupBy(fn (LoanOffer $offer) => $offer->payout_type->value);
 
-        if ($rates->isEmpty()) {
-            $default = PayoutType::InterestOnly->defaultRate();
+        $ranges = [];
+        foreach (PayoutType::cases() as $type) {
+            $rates = $byType->get($type->value, collect())
+                ->pluck('interest_rate')
+                ->map(fn ($r) => (string) $r);
 
-            return ['min' => $default, 'max' => $default];
+            $ranges[$type->value] = $rates->isEmpty()
+                ? ['min' => $type->defaultRate(), 'max' => $type->defaultRate()]
+                : ['min' => $rates->min(), 'max' => $rates->max()];
         }
 
-        return ['min' => $rates->min(), 'max' => $rates->max()];
+        return $ranges;
     }
 
     // Aggregate principal + interest income by month for chart data.

@@ -1,15 +1,35 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { projectYearlyInterest, sliderMax } from '../utils/whatIf'
+import { projectTwelveMonthProfit, sliderMax } from '../utils/whatIf'
 
 // «Какво-ако» слайдер (engagement pack 2026-08-14): drag an amount, watch
 // the yearly profit projection redraw live — goal visualization. Honest
-// math: simple yearly interest at the CURRENT «само лихва» offer range,
-// labeled as such. Hidden entirely when nothing is investable.
+// math at the CURRENT offer ranges, mirroring OfferProjectionService per
+// structure. Plan picker (Reni 2026-08-15): «човек сам да избира от трите
+// варианта и да види как ще му пораснат парите».
 const props = defineProps({
-  rateRange: { type: Object, required: true }, // { min, max } — «само лихва» годишно
+  // Keyed by payout type: { amortizing: {min,max}, interest_only: {…}, capitalized: {…} }
+  rateRanges: { type: Object, required: true },
   available: { type: String, default: '0.00' },
 })
+
+const plans = [
+  { value: 'amortizing', label: 'Анюитет', hint: 'вноска с главница и лихва всеки месец' },
+  { value: 'interest_only', label: 'Само лихва', hint: 'лихва всеки месец, главницата в края' },
+  { value: 'capitalized', label: 'Капитализация', hint: 'лихва върху лихвата, всичко на падежа' },
+]
+// Interest-only was the card's original (and only) projection — stays default.
+const selectedPlan = ref('interest_only')
+const activePlan = computed(() => plans.find((p) => p.value === selectedPlan.value))
+const rateRange = computed(() => props.rateRanges[selectedPlan.value] ?? { min: '0', max: '0' })
+
+function planRateBadge(value) {
+  const r = props.rateRanges[value]
+  if (!r) return '—'
+  return parseFloat(r.min) === parseFloat(r.max)
+    ? `${parseFloat(r.max)}%`
+    : `${parseFloat(r.min)}–${parseFloat(r.max)}%`
+}
 
 const amount = ref(Math.min(Math.max(500, Math.round((parseFloat(props.available) || 0) / 50) * 50), sliderMax(props.available)))
 
@@ -32,9 +52,9 @@ function onAmountBlur() {
   if ((parseFloat(amount.value) || 0) < 50) amount.value = 50
 }
 
-const low = computed(() => projectYearlyInterest(amount.value, props.rateRange.min))
-const high = computed(() => projectYearlyInterest(amount.value, props.rateRange.max))
-const sameRate = computed(() => props.rateRange.min === props.rateRange.max)
+const low = computed(() => projectTwelveMonthProfit(amount.value, rateRange.value.min, selectedPlan.value))
+const high = computed(() => projectTwelveMonthProfit(amount.value, rateRange.value.max, selectedPlan.value))
+const sameRate = computed(() => parseFloat(rateRange.value.min) === parseFloat(rateRange.value.max))
 
 function fmt(v) {
   return v.toLocaleString('bg-BG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -71,7 +91,32 @@ const fillPercent = computed(() =>
       aria-label="Сума за проекция"
     />
 
-    <div class="mt-4 rounded-xl bg-accent-400/10 border border-accent-400/25 px-4 py-3">
+    <!-- The three payout structures — pick one, watch the number redraw.
+         aria-pressed toggle buttons, NOT role=radio: buttons already honor
+         Tab+Enter/Space natively, while radio semantics would promise an
+         arrow-key roving-tabindex contract this widget doesn't implement. -->
+    <div class="mt-4 grid grid-cols-3 gap-1.5" role="group" aria-label="План на изплащане">
+      <button
+        v-for="p in plans"
+        :key="p.value"
+        type="button"
+        :aria-pressed="selectedPlan === p.value"
+        @click="selectedPlan = p.value"
+        class="rounded-xl border px-1 py-2 text-center transition-colors overflow-hidden"
+        :class="selectedPlan === p.value
+          ? 'border-accent-400 bg-accent-50 text-navy-700'
+          : 'border-gray-200 text-gray-500 hover:border-accent-300'"
+      >
+        <!-- «Капитализация» is ~77px at 10px / 92px at 12px (real Inter
+             metrics). The card is NARROWEST on lg–2xl laptops (right 1/3
+             dashboard column ⇒ ~42–88px of pill text box at 1024–1440px), so
+             the 12px upsize is safe only from 2xl; phones ≥360px fit 10px. -->
+        <span class="block text-[10px] sm:text-xs lg:text-[10px] 2xl:text-xs font-semibold leading-tight">{{ p.label }}</span>
+        <span class="block text-[11px] font-bold mt-0.5" :class="selectedPlan === p.value ? 'text-accent-500' : 'text-gray-400'">{{ planRateBadge(p.value) }}</span>
+      </button>
+    </div>
+
+    <div class="mt-3 rounded-xl bg-accent-400/10 border border-accent-400/25 px-4 py-3">
       <p class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Печалба за 12 месеца</p>
       <p class="text-xl font-extrabold text-accent-500 tabular-nums">
         <template v-if="sameRate">+{{ fmt(high) }} €</template>
@@ -81,7 +126,7 @@ const fillPercent = computed(() =>
         при годишна доходност
         <template v-if="sameRate">{{ parseFloat(rateRange.max) }}%</template>
         <template v-else>{{ parseFloat(rateRange.min) }}–{{ parseFloat(rateRange.max) }}%</template>
-        («само лихва») — проекция; реалният срок зависи от избрания кредит
+        («{{ activePlan.label }}» — {{ activePlan.hint }}) — проекция; реалният срок зависи от избрания кредит
       </p>
     </div>
 
