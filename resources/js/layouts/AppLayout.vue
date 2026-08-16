@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useConsentStore } from '../stores/consent'
@@ -70,6 +70,32 @@ onMounted(() => {
   consent.check()
 })
 
+// ── PWA resume re-validation (Reni 2026-08-16) ──
+// The installed app resumes the SAME page after hours in the background — no
+// page load, no router navigation, so nothing notices the session died until
+// a tap dead-ends in «Опитай отново». After being HIDDEN for 5+ minutes,
+// becoming visible probes /user: if the session expired, the axios 401
+// interceptor hard-redirects to /login BEFORE Reni taps anything; if it is
+// alive, the header wallet figures get a free refresh. (fetchUser ignores
+// transient network errors — a probe with the radio still down is harmless.)
+const RESUME_PROBE_AFTER_MS = 5 * 60_000
+let hiddenAt = null
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now()
+    return
+  }
+  const wasHiddenFor = hiddenAt ? Date.now() - hiddenAt : 0
+  hiddenAt = null
+  if (wasHiddenFor >= RESUME_PROBE_AFTER_MS) {
+    auth.fetchUser()
+  }
+}
+
+onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisibilityChange))
+
 const navigation = [
   { name: 'Начало', path: '/dashboard', icon: 'home' },
   { name: 'Инвестиране', path: '/invest', icon: 'search' },
@@ -96,14 +122,21 @@ const displayName = computed(() =>
 const displayRole = computed(() => (isLegalEntity.value ? 'Юридическо лице' : 'Инвеститор'))
 
 const loggingOut = ref(false)
+const logoutError = ref(false)
 
 async function logout() {
   loggingOut.value = true
+  logoutError.value = false
   try {
     await auth.logout()
+    router.push('/login')
+  } catch {
+    // Network/5xx — the server session may still be ALIVE. Navigating to
+    // /login anyway would fake a successful logout on a financial app;
+    // stay put and say it didn't work.
+    logoutError.value = true
   } finally {
     loggingOut.value = false
-    router.push('/login')
   }
 }
 </script>
@@ -162,6 +195,9 @@ async function logout() {
           <svg v-else xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 shrink-0"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" /></svg>
           {{ loggingOut ? 'Излизане...' : 'Изход' }}
         </button>
+        <p v-if="logoutError" role="alert" class="mt-1.5 px-3 text-xs text-red-500">
+          Изходът не се изпълни — проверете връзката и опитайте пак.
+        </p>
       </div>
     </aside>
 

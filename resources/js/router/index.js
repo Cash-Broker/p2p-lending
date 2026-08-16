@@ -119,6 +119,14 @@ const routes = [
       },
     ],
   },
+
+  // Unknown paths must never dead-end in a blank screen — the installed PWA
+  // has no address bar to recover from one. Land on the dashboard; its auth
+  // guard bounces guests on to /login.
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/dashboard',
+  },
 ]
 
 const router = createRouter({

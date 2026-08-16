@@ -14,6 +14,11 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
+// Arrived here via the session-expiry hard redirect (axios 401/419
+// interceptor) — tell her WHY she is at the login screen instead of leaving
+// the impression the app broke (PWA fix, Reni 2026-08-16).
+const sessionExpired = ref(route.query.expired === '1')
+
 const form = ref({
   email: '',
   password: '',
@@ -26,7 +31,13 @@ async function submit() {
   loading.value = true
   try {
     await auth.login(form.value)
-    router.push(route.query.redirect || '/dashboard')
+    // Only a plain in-app path may steer the post-login landing: a repeated
+    // ?redirect= arrives as an ARRAY (router.push would throw inside this try
+    // and fake a login failure), and '//host' shapes are hostile-link fodder.
+    const target = route.query.redirect
+    router.push(typeof target === 'string' && target.startsWith('/') && !target.startsWith('//')
+      ? target
+      : '/dashboard')
   } catch (e) {
     if (e.response?.status === 422) {
       errors.value = e.response.data.errors || {}
@@ -53,6 +64,14 @@ async function submit() {
       <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
         <h1 class="text-2xl font-bold text-navy-700 mb-1">Вход</h1>
         <p class="text-sm text-gray-500 mb-6">Влез в своя акаунт</p>
+
+        <div
+          v-if="sessionExpired"
+          class="mb-4 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700"
+          role="status"
+        >
+          Сесията ви изтече след период на неактивност. Влезте отново — ще ви върнем там, откъдето спряхте.
+        </div>
 
         <form @submit.prevent="submit" class="space-y-4">
           <div>

@@ -1,5 +1,12 @@
 import axios from 'axios'
 import { observeBuild } from '../utils/buildVersion'
+import { shouldForceRelogin, expiredLoginUrl } from '../utils/sessionGuard'
+// Static on purpose (auth.js also imports this module — the cycle is safe:
+// both sides only touch the other's export inside runtime functions). The
+// expiry check below must run SYNCHRONOUSLY in the rejection chain: a lazy
+// import() resolves in a later microtask, by which time fetchUser()'s catch
+// may already have nulled the user and the redirect would never fire.
+import { useAuthStore } from '../stores/auth'
 
 /**
  * Generate a UUID v4.
@@ -83,6 +90,33 @@ api.interceptors.response.use(
     if (error.response?.status === 403 && error.response.data?.error === 'consent_required') {
       import('../stores/consent').then(({ useConsentStore }) => useConsentStore().forcePrompt())
     }
+
+    // Session expiry (401) / CSRF-cookie expiry (419) while the SPA still
+    // thinks it is logged in ⇒ hard re-boot into /login. Critical for the
+    // installed PWA (Reni 2026-08-16): the standalone window survives far past
+    // SESSION_LIFETIME and has NO address bar to hard-refresh, so without this
+    // every screen dead-ends in «Опитай отново» → 401 → «Опитай отново».
+    // location.assign (not router.push) on purpose: a full page load also
+    // reboots a stale bundle and re-runs the auth guard from zero.
+    try {
+      const auth = useAuthStore()
+      if (shouldForceRelogin(error.response?.status, window.location.pathname, !!auth.user, error.config?.url ?? '')) {
+        auth.user = null
+        // The hard redirect is a same-tab navigation — sessionStorage
+        // survives it. Drop the welcome-back block so the post-relogin
+        // dashboard adopts the SERVER's fresh since-last-visit figures
+        // (they cover exactly the absence that expired the session).
+        try { sessionStorage.removeItem('vama_welcome_back') } catch { /* storage off */ }
+        window.location.assign(expiredLoginUrl(window.location.pathname, window.location.search))
+        // Never settle: the page is unloading. Rejecting here would paint the
+        // callers' «Опитай отново» error states for a beat before /login lands
+        // — the exact screen this redirect exists to kill.
+        return new Promise(() => {})
+      }
+    } catch {
+      // Pinia not active yet (request fired before app boot) — nothing to do.
+    }
+
     observeBuild(error.response?.headers?.['x-build'])
     return Promise.reject(error)
   },
