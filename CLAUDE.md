@@ -391,8 +391,15 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
     window, **only payout-engine references** (`loan:%:investment:%`) — legacy repayment/buyback/
     early-repayment push instantly on their own, so counting them here double-announced euros.
   - GDPR: `AccountDeletionService` deletes push subscriptions (endpoint = personal data).
+  - ⚠ **NEVER trigger the browser permission prompt without a user click** — permission is
+    per-ORIGIN and a reflexive «Блокирай» is permanent (no API can reset it; only the user via
+    site settings). An auto-prompt in the admin panel blocked vamaasset.bg for Yordan's whole
+    browser, investor SPA included (2026-08-17). Both surfaces now ask only behind a click, and
+    the `denied` state explains how to unblock instead of hiding.
   - Investor opt-in: `PushOptInBanner` on the dashboard ASKS (Reni/Yordan 2026-08-17 — the
-    Профил card alone is passive); «Не сега» snoozes 30 days (`utils/pushPrompt.js`). A newly
+    Профил card alone is passive); it is a deliberately UNDERSTATED one-line strip (small gray
+    text + inline «включи» link + ✕), not a boxed CTA. «Не сега» snoozes 30 days
+    (`utils/pushPrompt.js`, which also drives the `denied` and iOS-install hints). A newly
     registered device gets a push-only `PushEnabledNotification` («здравей») so the person sees
     delivery works; re-asserts don't re-send it.
   - `DeliverWebPushNotification` deletes a subscription ONLY on `InvalidArgumentException` (that
