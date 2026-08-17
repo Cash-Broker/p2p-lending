@@ -338,6 +338,26 @@ class PushNotificationTest extends TestCase
         Queue::assertPushed(DeliverWebPushNotification::class, 1);
     }
 
+    public function test_opting_in_confirms_even_when_the_device_was_already_registered(): void
+    {
+        // The SPA auto-registers the device on load, so a person's actual
+        // click almost always lands on an EXISTING row. Requiring a brand-new
+        // row swallowed the «здравей» exactly then (2026-08-17).
+        Queue::fake();
+
+        $user = $this->investor();
+        $endpoint = 'https://fcm.googleapis.com/fcm/send/already-known';
+        $this->subscribe($user, $endpoint);
+
+        $this->actingAs($user)->postJson('/api/push/subscribe', [
+            'endpoint' => $endpoint,
+            'keys' => $this->validKeys(),
+            'confirm' => true,
+        ])->assertCreated();
+
+        Queue::assertPushed(DeliverWebPushNotification::class, 1);
+    }
+
     public function test_a_brand_new_device_stays_silent_without_the_confirm_flag(): void
     {
         // An ownership handover creates a NEW row but is a silent re-assert —

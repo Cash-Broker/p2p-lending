@@ -87,12 +87,18 @@ class PushSubscriptionController extends Controller
 
         $this->pruneOldestDevices($user->id);
 
-        // «Здравей» — confirm on THIS device that delivery works. Two guards:
-        // only a user-initiated enrolment (`confirm`) and only a freshly
-        // created row; and it is dispatched to the ONE new subscription, not
-        // via notify() which would fan out to every device the person owns
-        // (review 2026-08-17).
-        if ($subscription->wasRecentlyCreated && ($validated['confirm'] ?? false)) {
+        // «Здравей» — confirm on THIS device that delivery works.
+        //
+        // The ONLY guard is `confirm`, i.e. an explicit user opt-in; the silent
+        // re-asserts both UIs perform send false and stay quiet. An earlier
+        // extra "only a brand-new row" condition swallowed the confirmation in
+        // the most common case: the SPA had already auto-registered the device
+        // moments earlier, so the person's actual click found an existing row
+        // and got nothing back (2026-08-17 — Yordan hit exactly this).
+        //
+        // Dispatched to the ONE device in hand, never via notify() which would
+        // fan out to every device the person owns.
+        if ($validated['confirm'] ?? false) {
             $this->confirmOnDevice($user, $subscription);
         }
 
