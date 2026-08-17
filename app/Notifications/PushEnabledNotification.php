@@ -40,7 +40,10 @@ class PushEnabledNotification extends Notification implements ShouldQueue
                 ? 'Ще получавате известия при нови инвестиции, KYC заявки и тегления.'
                 : 'Ще получавате известия при изплатени лихви, депозити и тегления.',
             config('app.url').($isAdmin ? '/admin' : '/dashboard'),
-            'push-enabled',
+            // Role-scoped tag: Reni holds an admin AND an investor account on
+            // one phone, and a shared tag made the second confirmation REPLACE
+            // the first in the tray (2026-08-17).
+            $isAdmin ? 'push-enabled-admin' : 'push-enabled-investor',
         );
     }
 }

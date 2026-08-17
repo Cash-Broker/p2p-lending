@@ -367,6 +367,9 @@ class PushNotificationTest extends TestCase
 
         $this->assertStringContainsString('инвестиции', $adminPayload['body']);
         $this->assertStringContainsString('лихви', $investorPayload['body']);
+        // Distinct tags: both accounts may live on ONE device, and a shared
+        // tag would make the second confirmation replace the first.
+        $this->assertNotSame($adminPayload['tag'], $investorPayload['tag']);
         // Push-only: nothing to store in the bell or by mail.
         $this->assertSame([QueuedWebPushChannel::class], (new PushEnabledNotification)->via($investor));
     }
