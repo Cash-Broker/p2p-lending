@@ -100,9 +100,11 @@
                     confirm: Boolean(gesture),
                 }),
             }).then(function (res) {
-                // Server refused to store it ⇒ drop the orphan browser
-                // subscription; this device would never receive anything.
-                if (!res.ok) return sub.unsubscribe().then(function () { throw new Error('registration failed'); });
+                // Report, but NEVER unsubscribe: the browser subscription is
+                // shared by every account on this origin, and revoking it here
+                // killed the investor's registration on the same browser
+                // (2026-08-17).
+                if (!res.ok) throw new Error('registration failed');
             });
         });
     }

@@ -69,15 +69,11 @@ export async function enablePush({ confirm = true } = {}) {
       confirm,
     })
   } catch (e) {
-    // The browser subscription exists but the SERVER never stored it — this
-    // device would never receive anything. Drop the orphan so the UI can't
-    // claim «включени» for a capability the backend can't deliver
-    // (review 2026-08-17).
-    try {
-      await subscription.unsubscribe()
-    } catch {
-      // Nothing more to do — the send path prunes dead endpoints anyway.
-    }
+    // Report the failure — but NEVER unsubscribe. The browser subscription is
+    // shared by every account on this origin: revoking it here also killed the
+    // OTHER account's registration (2026-08-17 — a failed admin enrolment
+    // silently broke the investor's push on the same browser). The caller
+    // shows an error; a stale row, if any, is pruned on the next send.
     throw new Error('server-registration-failed')
   }
 
