@@ -2,14 +2,12 @@
      акаунт е логнат, да му идват известия»). Injected at panels::body.end for
      AUTHENTICATED admin pages only (gated in AdminPanelProvider).
 
-     Two paths, because browsers do not allow a fully silent enrolment:
-       1. ONE automatic permission prompt per browser (Chrome honours prompts
-          without a user gesture) — remembered in localStorage so repeated
-          dismissals can never spam it into Chrome's abusive-prompt penalty box.
-       2. A persistent «Включи известията» pill for every other case — Safari
-          (macOS + iOS PWA) requires transient user activation and Firefox
-          hides gesture-less prompts, so without this the auto path is
-          silently dead there (review 2026-08-17).
+     Enrolment is ALWAYS behind a click: a «Включи известията» pill, never a
+     timed browser prompt. An unexpected permission dialog earns a reflexive
+     «Блокирай», and that verdict is permanent — a site cannot reset its own
+     notification permission, only the user can (2026-08-17: the earlier 2s
+     auto-prompt blocked Yordan's own Chrome). Safari and Firefox require a
+     user gesture for the prompt anyway.
      While permission is granted, every panel load re-asserts the subscription
      so a new device starts flowing after a single click. --}}
 @if (config('webpush.vapid.public_key'))
@@ -19,16 +17,6 @@
     if (Notification.permission === 'denied') return;
 
     var VAPID = @js(config('webpush.vapid.public_key'));
-    var PROMPTED_KEY = 'vama_admin_push_prompted';
-
-    function remembered(key) {
-        try { return localStorage.getItem(key) === '1'; } catch (e) { return false; }
-    }
-
-    function remember(key) {
-        try { localStorage.setItem(key, '1'); } catch (e) { /* private mode */ }
-    }
-
     function b64ToU8(s) {
         var pad = '='.repeat((4 - (s.length % 4)) % 4);
         var raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
@@ -128,17 +116,12 @@
         return;
     }
 
-    // permission === 'default'
-    if (!remembered(PROMPTED_KEY)) {
-        remember(PROMPTED_KEY);
-        setTimeout(function () {
-            ask().then(function () {
-                if (Notification.permission !== 'granted') showPill();
-            }).catch(showPill);
-        }, 2000);
-    } else {
-        showPill();
-    }
+    // permission === 'default' — ALWAYS via the pill, never a timed prompt.
+    // The old 2s auto-prompt is why Yordan ended up blocked on 2026-08-17: an
+    // unexpected browser dialog gets a reflexive «Блокирай», and that verdict
+    // is permanent — a site cannot reset its own permission, only the user can
+    // (catinarche → Известия). Our own UI must always come first.
+    showPill();
 })();
 </script>
 @endif
