@@ -44,7 +44,7 @@ export async function isSubscribed() {
  * register it with the backend for the LOGGED-IN user. Throws on refusal so
  * the caller can show honest UI.
  */
-export async function enablePush() {
+export async function enablePush({ confirm = true } = {}) {
   if (!pushSupported()) throw new Error('unsupported')
 
   const permission = await Notification.requestPermission()
@@ -64,6 +64,9 @@ export async function enablePush() {
     await api.post('/push/subscribe', {
       endpoint: json.endpoint,
       keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+      // Only a user-initiated enrolment earns the «здравей» confirmation;
+      // a silent re-enrolment after logout passes confirm: false.
+      confirm,
     })
   } catch (e) {
     // The browser subscription exists but the SERVER never stored it — this
@@ -82,24 +85,38 @@ export async function enablePush() {
 }
 
 /**
- * Re-claim this device's existing subscription for the CURRENTLY logged-in
- * user. A subscription row is owned by exactly one account (unique endpoint),
- * so on a shared browser the last session to assert wins — the admin panel
- * re-asserts on every page load, and this is the SPA's symmetric claim.
- * Without it an investor session on a device Reni once used for /admin would
- * keep receiving ADMIN pushes (review 2026-08-17). Silent by design.
+ * Make sure THIS account has a subscription row for this device.
+ *
+ * Uniqueness is (endpoint + account), so one browser can serve several
+ * accounts at once — Reni's phone runs both the admin panel and her investor
+ * profile and both streams must arrive (2026-08-17). Nothing is stolen from
+ * another account here; this only registers/refreshes the current one's row.
+ * Silent by design.
  */
 export async function assertOwnership() {
   try {
     if (!pushSupported() || Notification.permission !== 'granted') return
+
     const reg = await navigator.serviceWorker.getRegistration('/sw.js')
-    const subscription = await reg?.pushManager.getSubscription()
-    if (!subscription) return
+    let subscription = await reg?.pushManager.getSubscription()
+
+    // Permission granted but no subscription = this device was unsubscribed
+    // (a previous logout revokes it). Re-enrol SILENTLY — no browser prompt is
+    // needed once permission is granted, and without this the device stayed
+    // permanently unnotified while both the banner and the Профил card
+    // believed it was already on (review 2026-08-17).
+    if (!subscription) {
+      await enablePush({ confirm: false })
+
+      return
+    }
 
     const json = subscription.toJSON()
     await api.post('/push/subscribe', {
       endpoint: json.endpoint,
       keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+      // Silent re-assert: never fires the «здравей» confirmation.
+      confirm: false,
     })
   } catch {
     // Best-effort: a failed claim just leaves the previous owner in place.

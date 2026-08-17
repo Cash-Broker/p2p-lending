@@ -48,7 +48,9 @@
         if (event.data && event.data.type === 'vama-push-refresh') window.location.reload();
     });
 
-    function subscribe() {
+    // gesture = the admin just clicked/allowed → earns the «здравей» push.
+    // The per-page-load re-assert passes false so it stays silent.
+    function subscribe(gesture) {
         return navigator.serviceWorker.register('/sw.js').then(function () {
             // subscribe() needs an ACTIVE worker — `ready` guarantees one,
             // register() alone rejects with InvalidStateError on a first-ever
@@ -73,6 +75,7 @@
                 body: JSON.stringify({
                     endpoint: json.endpoint,
                     keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+                    confirm: Boolean(gesture),
                 }),
             }).then(function (res) {
                 // Server refused to store it ⇒ drop the orphan browser
@@ -84,7 +87,7 @@
 
     function ask() {
         return Notification.requestPermission().then(function (p) {
-            if (p === 'granted') return subscribe();
+            if (p === 'granted') return subscribe(true);
         });
     }
 
@@ -120,7 +123,7 @@
     }
 
     if (Notification.permission === 'granted') {
-        subscribe().catch(function () { /* transient — next panel load retries */ });
+        subscribe(false).catch(function () { /* transient — next panel load retries */ });
 
         return;
     }

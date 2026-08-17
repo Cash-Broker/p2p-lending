@@ -11,6 +11,7 @@ use App\Notifications\DepositApprovedNotification;
 use App\Notifications\InvestmentMadeAdminNotification;
 use App\Notifications\InvestorPayoutDigestNotification;
 use App\Notifications\KycStatusNotification;
+use App\Notifications\PushEnabledNotification;
 use App\Services\WalletService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
@@ -38,12 +39,13 @@ class PushNotificationTest extends TestCase
     private function subscribe(User $user, string $endpoint = 'https://fcm.googleapis.com/fcm/send/device-1'): void
     {
         $keys = $this->validKeys();
-        $user->updatePushSubscription($endpoint, $keys['p256dh'], $keys['auth'], 'aes128gcm');
+        $user->registerPushSubscription($endpoint, $keys['p256dh'], $keys['auth']);
     }
 
     /**
-     * Shape-valid crypto keys: p256dh is a 65-byte uncompressed P-256 point,
-     * auth a 16-byte secret — both base64url, exactly as a browser sends them.
+     * REAL browser-shaped crypto keys: p256dh is an actual point ON the P-256
+     * curve (a fabricated 0x04 + 64 arbitrary bytes passes a length check but
+     * explodes in the push crypto — review 2026-08-17), auth a 16-byte secret.
      *
      * @return array{p256dh: string, auth: string}
      */
@@ -51,9 +53,15 @@ class PushNotificationTest extends TestCase
     {
         $b64url = fn (string $raw) => rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
 
+        // A genuine point on P-256 — the user-agent public key from the
+        // RFC 8291 §5 web-push example. Generating one here is not portable:
+        // this dev box's OpenSSL cannot create EC keys (the same reason
+        // `artisan webpush:vapid` fails on it).
+        $p256dh = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
+
         return [
-            'p256dh' => $b64url("\x04".str_repeat("\x11", 64)),
-            'auth' => $b64url(str_repeat("\x22", 16)),
+            'p256dh' => $p256dh,
+            'auth' => $b64url(random_bytes(16)),
         ];
     }
 
@@ -128,11 +136,16 @@ class PushNotificationTest extends TestCase
         $user = $this->investor();
         $endpoint = 'https://fcm.googleapis.com/fcm/send/keys-test';
 
+        $b64url = fn (string $raw) => rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
+
         $cases = [
             ['p256dh' => 'not base64!!', 'auth' => $this->validKeys()['auth']],
             // Valid base64url but the wrong decoded length (3 bytes, not 65).
             ['p256dh' => 'AAAA', 'auth' => $this->validKeys()['auth']],
             ['p256dh' => $this->validKeys()['p256dh'], 'auth' => 'AAAA'],
+            // Right length, right 0x04 prefix — but NOT a point on P-256.
+            // This is the shape that used to pass and then retry forever.
+            ['p256dh' => $b64url("\x04".str_repeat("\x11", 64)), 'auth' => $this->validKeys()['auth']],
         ];
 
         foreach ($cases as $keys) {
@@ -202,24 +215,49 @@ class PushNotificationTest extends TestCase
         $this->assertDatabaseMissing('push_subscriptions', ['endpoint' => 'https://fcm.googleapis.com/fcm/send/shared-endpoint']);
     }
 
-    public function test_resubscribing_an_endpoint_moves_it_to_the_new_account(): void
+    public function test_one_device_serves_both_an_admin_and_an_investor_account(): void
     {
-        // Reni's phone: investor PWA and admin browser share the device.
-        // The endpoint follows whoever subscribed LAST — never both.
+        // Reni's phone (2026-08-17): the admin panel AND her investor profile
+        // live in the same browser. Both accounts must keep receiving — the
+        // package's global endpoint uniqueness used to make the last login
+        // steal the device and silently kill the other stream.
         $investor = $this->investor();
         $admin = User::factory()->admin()->create();
-        $this->subscribe($investor, 'https://fcm.googleapis.com/fcm/send/phone');
+        $phone = 'https://fcm.googleapis.com/fcm/send/renis-phone';
 
+        $this->subscribe($investor, $phone);
         $this->actingAs($admin)->postJson('/api/push/subscribe', [
-            'endpoint' => 'https://fcm.googleapis.com/fcm/send/phone',
+            'endpoint' => $phone,
             'keys' => $this->validKeys(),
         ])->assertCreated();
 
-        $this->assertSame(1, \DB::table('push_subscriptions')->where('endpoint', 'https://fcm.googleapis.com/fcm/send/phone')->count());
-        $this->assertDatabaseHas('push_subscriptions', [
-            'endpoint' => 'https://fcm.googleapis.com/fcm/send/phone',
-            'subscribable_id' => $admin->id,
-        ]);
+        // Two rows for one endpoint — one per account.
+        $this->assertSame(2, \DB::table('push_subscriptions')->where('endpoint', $phone)->count());
+        $this->assertDatabaseHas('push_subscriptions', ['endpoint' => $phone, 'subscribable_id' => $admin->id]);
+        $this->assertDatabaseHas('push_subscriptions', ['endpoint' => $phone, 'subscribable_id' => $investor->id]);
+
+        // Re-registering the SAME account refreshes its row, never duplicates.
+        $this->actingAs($admin)->postJson('/api/push/subscribe', [
+            'endpoint' => $phone,
+            'keys' => $this->validKeys(),
+        ])->assertCreated();
+        $this->assertSame(2, \DB::table('push_subscriptions')->where('endpoint', $phone)->count());
+    }
+
+    public function test_logging_out_one_account_leaves_the_other_accounts_subscription(): void
+    {
+        // The investor logging out of the SPA must not silence Reni's admin
+        // notifications on the same phone.
+        $investor = $this->investor();
+        $admin = User::factory()->admin()->create();
+        $phone = 'https://fcm.googleapis.com/fcm/send/renis-phone';
+        $this->subscribe($investor, $phone);
+        $this->subscribe($admin, $phone);
+
+        $this->actingAs($investor)->deleteJson('/api/push/subscribe', ['endpoint' => $phone])->assertOk();
+
+        $this->assertDatabaseMissing('push_subscriptions', ['endpoint' => $phone, 'subscribable_id' => $investor->id]);
+        $this->assertDatabaseHas('push_subscriptions', ['endpoint' => $phone, 'subscribable_id' => $admin->id]);
     }
 
     // ── Channel wiring ──
@@ -263,6 +301,76 @@ class PushNotificationTest extends TestCase
         Queue::assertPushed(DeliverWebPushNotification::class, 2);
     }
 
+    public function test_confirmation_push_targets_only_the_new_device_and_only_on_a_real_opt_in(): void
+    {
+        // «Здравей» (Yordan 2026-08-17): proof of delivery on the device that
+        // just enrolled — NOT a fan-out to every device the person owns, and
+        // never on the silent ownership re-asserts both UIs perform.
+        Queue::fake();
+
+        $user = $this->investor();
+        $this->subscribe($user, 'https://fcm.googleapis.com/fcm/send/older-device');
+
+        $payload = [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/new-device',
+            'keys' => $this->validKeys(),
+            'confirm' => true,
+        ];
+
+        $this->actingAs($user)->postJson('/api/push/subscribe', $payload)->assertCreated();
+
+        $newId = \DB::table('push_subscriptions')
+            ->where('endpoint', 'https://fcm.googleapis.com/fcm/send/new-device')->value('id');
+
+        // Exactly one delivery, aimed at the new subscription only.
+        Queue::assertPushed(DeliverWebPushNotification::class, 1);
+        Queue::assertPushed(
+            DeliverWebPushNotification::class,
+            fn (DeliverWebPushNotification $job) => (new \ReflectionProperty($job, 'subscriptionId'))
+                ->getValue($job) === (int) $newId,
+        );
+
+        // Same device again (re-assert, confirm defaults to false) — silence.
+        $this->actingAs($user)->postJson('/api/push/subscribe', [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/new-device',
+            'keys' => $this->validKeys(),
+        ])->assertCreated();
+        Queue::assertPushed(DeliverWebPushNotification::class, 1);
+    }
+
+    public function test_a_brand_new_device_stays_silent_without_the_confirm_flag(): void
+    {
+        // An ownership handover creates a NEW row but is a silent re-assert —
+        // it must not fire a visible «здравей» (review 2026-08-17).
+        Queue::fake();
+
+        $investor = $this->investor();
+        $admin = User::factory()->admin()->create();
+        $this->subscribe($investor, 'https://fcm.googleapis.com/fcm/send/shared-browser');
+
+        $this->actingAs($admin)->postJson('/api/push/subscribe', [
+            'endpoint' => 'https://fcm.googleapis.com/fcm/send/shared-browser',
+            'keys' => $this->validKeys(),
+            'confirm' => false,
+        ])->assertCreated();
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_confirmation_push_is_role_aware_and_leaves_no_record(): void
+    {
+        $admin = User::factory()->admin()->create();
+        $investor = $this->investor();
+
+        $adminPayload = (new PushEnabledNotification)->toWebPush($admin)->toArray();
+        $investorPayload = (new PushEnabledNotification)->toWebPush($investor)->toArray();
+
+        $this->assertStringContainsString('инвестиции', $adminPayload['body']);
+        $this->assertStringContainsString('лихви', $investorPayload['body']);
+        // Push-only: nothing to store in the bell or by mail.
+        $this->assertSame([QueuedWebPushChannel::class], (new PushEnabledNotification)->via($investor));
+    }
+
     public function test_kyc_approval_survives_a_broken_push_subscription(): void
     {
         // Regression (review 2026-08-17): the synchronous channel ran push
@@ -272,7 +380,7 @@ class PushNotificationTest extends TestCase
         $user = $this->investor();
         $user->forceFill(['kyc_status' => 'submitted'])->save();
         // A row the crypto layer cannot use (valid base64url, wrong length).
-        $user->updatePushSubscription('https://fcm.googleapis.com/fcm/send/poisoned', 'AAAA', 'AAAA', 'aes128gcm');
+        $user->registerPushSubscription('https://fcm.googleapis.com/fcm/send/poisoned', 'AAAA', 'AAAA');
 
         $user->notify(new KycStatusNotification('approved'));
 

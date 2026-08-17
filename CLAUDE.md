@@ -377,17 +377,34 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
     is deliberately strict: endpoint host must be a KNOWN push service (the server later POSTs
     there — otherwise it's an outbound-request primitive), max 500 = column size, p256dh/auth
     must be base64url decoding to 65/16 bytes, max 10 devices/user.
-  - Enrolment: SPA Профил card; admin auto-prompt render hook (one prompt per browser remembered
-    in localStorage + a persistent pill for Safari/Firefox which need a gesture). Ownership
-    follows the last session to assert (`assertOwnership()` on SPA load, admin re-asserts per
-    panel load) — a shared browser must not keep receiving the other role's pushes.
+  - Enrolment: SPA Профил card + dashboard banner; admin auto-prompt render hook (one prompt per
+    browser remembered in localStorage + a persistent pill for Safari/Firefox which need a
+    gesture). **One device can serve SEVERAL accounts**: uniqueness is (endpoint + owner), not the
+    package's global `endpoint` unique — Reni runs the admin panel AND her investor profile in the
+    same browser and both streams must arrive. Use `User::registerPushSubscription()`, never the
+    package's `updatePushSubscription()` (it DELETES the other account's row). Each side
+    re-registers its own row on load (`assertOwnership()` in the SPA, per-panel-load in Filament);
+    logout revokes only that account's row.
   - Lockscreen hygiene: NO investor names in admin pushes, no IBANs, and NO admin free-text
     (`reason`) anywhere — details live behind auth.
   - Morning digest `push:payout-digest` 09:05 (kill switch `push_payout_digest_enabled`), 24h
     window, **only payout-engine references** (`loan:%:investment:%`) — legacy repayment/buyback/
     early-repayment push instantly on their own, so counting them here double-announced euros.
   - GDPR: `AccountDeletionService` deletes push subscriptions (endpoint = personal data).
-  - Deploy: migrate + VAPID keys on prod + **`queue:restart`** (delivery now needs the worker).
+  - Investor opt-in: `PushOptInBanner` on the dashboard ASKS (Reni/Yordan 2026-08-17 — the
+    Профил card alone is passive); «Не сега» snoozes 30 days (`utils/pushPrompt.js`). A newly
+    registered device gets a push-only `PushEnabledNotification` («здравей») so the person sees
+    delivery works; re-asserts don't re-send it.
+  - `DeliverWebPushNotification` deletes a subscription ONLY on `InvalidArgumentException` (that
+    device's keys are unusable). Every other failure RETHROWS — a bad VAPID pair used to mass-
+    unsubscribe everyone (caught by tests 2026-08-17). Do not widen that catch.
+  - **Deploy order (prod has 3 caches — burned us twice on 2026-08-17: empty table name, then
+    405 on the new routes)**:
+    `git pull && composer install --no-dev --optimize-autoloader && npm run build &&
+     php artisan config:clear && php artisan route:clear && php artisan migrate &&
+     php artisan config:cache && php artisan route:cache && php artisan queue:restart`
+    ⚠ `.env` from `webpush:vapid` ends WITHOUT a newline — never `echo X >> .env` after it
+    (it glues onto VAPID_PRIVATE_KEY and silently corrupts the key).
 - Prod: Hetzner, NGINX (`.htaccess` inert — vhost must carry Permissions-Policy & body limits;
   bit us with `camera=()` + 1M body limit). Unattended-upgrades restarts MySQL ⇒ short blips.
 - Email: `.env.example` ships `MAIL_MAILER=log` (this dev machine currently runs smtp);

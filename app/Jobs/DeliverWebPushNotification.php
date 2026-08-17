@@ -8,6 +8,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use Minishlink\WebPush\ContentEncoding;
 use Minishlink\WebPush\Subscription;
 use Minishlink\WebPush\WebPush;
@@ -48,7 +49,7 @@ class DeliverWebPushNotification implements ShouldQueue
         private array $options = [],
     ) {}
 
-    public function handle(WebPush $webPush): void
+    public function handle(): void
     {
         $subscription = PushSubscription::find($this->subscriptionId);
 
@@ -56,6 +57,14 @@ class DeliverWebPushNotification implements ShouldQueue
         if (! $subscription) {
             return;
         }
+
+        // ⚠ The client is built HERE, not injected: the package binds VAPID
+        // only CONTEXTUALLY for its own channel
+        // (`$app->when(WebPushChannel::class)->needs(WebPush::class)`), so
+        // container injection into this job yields a client with NO VAPID —
+        // every push then goes out unsigned and the push services reject it
+        // silently (review 2026-08-17: nothing was being delivered at all).
+        $webPush = $this->client();
 
         try {
             $webPush->queueNotification(
@@ -86,22 +95,74 @@ class DeliverWebPushNotification implements ShouldQueue
                     'reason' => $report->getReason(),
                 ]);
             }
+        } catch (InvalidArgumentException $e) {
+            // THIS subscription's own credentials are unusable (malformed
+            // p256dh/auth): retrying can never help, so drop the row.
+            $this->discard($subscription, $e);
         } catch (Throwable $e) {
-            // Unusable credentials (malformed p256dh/auth) can never succeed —
-            // retrying would burn the queue forever, so drop the row instead.
-            $subscription->delete();
+            // OUR breakage — a misconfigured VAPID pair, a transport failure.
+            // Never punish the device for the server's fault: deleting here
+            // would mass-unsubscribe every user on one bad config value
+            // (caught by tests, 2026-08-17). Let the queue retry instead…
+            //
+            // …but a shape-valid-yet-unusable key (an off-curve p256dh throws
+            // RuntimeException from the agreement-key step, not
+            // InvalidArgumentException) would retry forever. On the LAST
+            // attempt, drop such a device rather than keep it immortal.
+            if ($this->attempts() >= $this->tries) {
+                $this->discard($subscription, $e);
 
-            Log::warning('Web push subscription discarded as unusable', [
-                'subscription_id' => $this->subscriptionId,
-                'error' => $e->getMessage(),
-            ]);
+                return;
+            }
+
+            throw $e;
         }
+    }
+
+    private function discard(PushSubscription $subscription, Throwable $e): void
+    {
+        $subscription->delete();
+
+        Log::warning('Web push subscription discarded as unusable', [
+            'subscription_id' => $this->subscriptionId,
+            'endpoint_host' => parse_url((string) $subscription->endpoint, PHP_URL_HOST),
+            'exception' => $e::class,
+            'error' => $e->getMessage(),
+        ]);
+    }
+
+    /**
+     * A WebPush client carrying our VAPID identity — mirrors the package's
+     * own contextual binding (WebPushServiceProvider::boot).
+     */
+    private function client(): WebPush
+    {
+        $vapid = config('webpush.vapid');
+        $auth = [];
+
+        if (! empty($vapid['public_key']) && ! empty($vapid['private_key'])) {
+            $auth['VAPID'] = [
+                'publicKey' => $vapid['public_key'],
+                'privateKey' => $vapid['private_key'],
+                'subject' => $vapid['subject'] ?: url('/'),
+            ];
+        } else {
+            // Sending unsigned would be silently rejected by every push
+            // service — fail loudly so the misconfiguration is visible.
+            Log::error('Web push VAPID keys are not configured — push cannot be delivered');
+        }
+
+        return (new WebPush($auth, [], 30, config('webpush.client_options', [])))
+            ->setReuseVAPIDHeaders(true)
+            ->setAutomaticPadding(config('webpush.automatic_padding'));
     }
 
     public function failed(?Throwable $e): void
     {
         Log::warning('Web push job failed', [
             'subscription_id' => $this->subscriptionId,
+            'attempts' => $this->attempts(),
+            'exception' => $e ? $e::class : null,
             'error' => $e?->getMessage(),
         ]);
     }

@@ -7,6 +7,7 @@ import EarnedTicker from '../components/EarnedTicker.vue'
 import IdleMoneyStrip from '../components/IdleMoneyStrip.vue'
 import NextPayoutRing from '../components/NextPayoutRing.vue'
 import PromoPanel from '../components/PromoPanel.vue'
+import PushOptInBanner from '../components/PushOptInBanner.vue'
 import WelcomeBackBanner from '../components/WelcomeBackBanner.vue'
 import WhatIfCard from '../components/WhatIfCard.vue'
 import { useAuthStore } from '../stores/auth'
@@ -214,6 +215,10 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
 
       <!-- «Докато те нямаше…» — REAL news only, stays for the session -->
       <WelcomeBackBanner v-if="welcomeBack" :data="welcomeBack" @dismiss="dismissWelcomeBack" />
+
+      <!-- Notification invitation — asks ONCE, «Не сега» silences it for 30
+           days. Self-hiding when the browser can't push or already granted. -->
+      <PushOptInBanner />
 
       <!-- Idle money — permanent quiet nudge, independent of visits -->
       <IdleMoneyStrip

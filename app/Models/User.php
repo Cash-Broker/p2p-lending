@@ -15,6 +15,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use NotificationChannels\WebPush\HasPushSubscriptions;
+use NotificationChannels\WebPush\PushSubscription;
 
 class User extends Authenticatable implements FilamentUser, MustVerifyEmail
 {
@@ -67,6 +68,32 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
     public function sendEmailVerificationNotification(): void
     {
         $this->notify(new VerifyEmailNotification);
+    }
+
+    /**
+     * Register (or refresh) THIS account's push subscription for a device.
+     *
+     * Deliberately NOT the package's `updatePushSubscription()`: that one
+     * treats `endpoint` as globally unique and DELETES another account's row
+     * for the same browser. Reni uses one phone for both the admin panel and
+     * her investor profile (2026-08-17) and needs BOTH streams — uniqueness is
+     * (endpoint + owner), so each account keeps its own row and a logout
+     * revokes only that one.
+     */
+    public function registerPushSubscription(
+        string $endpoint,
+        string $publicKey,
+        string $authToken,
+        string $contentEncoding = 'aes128gcm',
+    ): PushSubscription {
+        return $this->pushSubscriptions()->updateOrCreate(
+            ['endpoint' => $endpoint],
+            [
+                'public_key' => $publicKey,
+                'auth_token' => $authToken,
+                'content_encoding' => $contentEncoding,
+            ],
+        );
     }
 
     public function isAdmin(): bool

@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\DeliverWebPushNotification;
 use App\Models\User;
+use App\Notifications\PushEnabledNotification;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use NotificationChannels\WebPush\PushSubscription;
@@ -60,22 +62,39 @@ class PushSubscriptionController extends Controller
                 fn (string $attribute, mixed $value, callable $fail) => $this->assertKnownPushService($value, $fail),
             ],
             'keys' => ['required', 'array'],
-            // 65 raw bytes → 87 base64url chars (unpadded) / 88 with padding.
-            'keys.p256dh' => ['required', 'string', 'max:255', $this->base64UrlBytes(65)],
+            // 65 raw bytes → 87 base64url chars (unpadded) / 88 with padding,
+            // AND the point must lie on P-256: a shape-valid but off-curve key
+            // is accepted by the length check yet breaks the crypto layer at
+            // send time (review 2026-08-17).
+            'keys.p256dh' => ['required', 'string', 'max:255', $this->base64UrlBytes(65), $this->onCurveP256()],
             // 16 raw bytes → 22 base64url chars (unpadded) / 24 with padding.
             'keys.auth' => ['required', 'string', 'max:255', $this->base64UrlBytes(16)],
+            // True only for a user-initiated enrolment (banner / pill /
+            // Профил). The silent ownership re-asserts pass false so a
+            // handover never fires a visible «здравей».
+            'confirm' => ['sometimes', 'boolean'],
         ]);
 
         $user = $request->user();
 
-        $user->updatePushSubscription(
+        // Own upsert, NOT the package's updatePushSubscription() — that one
+        // steals the device from any other account (see the model docblock).
+        $subscription = $user->registerPushSubscription(
             $validated['endpoint'],
             $validated['keys']['p256dh'],
             $validated['keys']['auth'],
-            'aes128gcm',
         );
 
         $this->pruneOldestDevices($user->id);
+
+        // «Здравей» — confirm on THIS device that delivery works. Two guards:
+        // only a user-initiated enrolment (`confirm`) and only a freshly
+        // created row; and it is dispatched to the ONE new subscription, not
+        // via notify() which would fan out to every device the person owns
+        // (review 2026-08-17).
+        if ($subscription->wasRecentlyCreated && ($validated['confirm'] ?? false)) {
+            $this->confirmOnDevice($user, $subscription);
+        }
 
         return response()->json(['subscribed' => true], 201);
     }
@@ -113,6 +132,45 @@ class PushSubscriptionController extends Controller
         }
 
         $fail('The :attribute is not a supported push service.');
+    }
+
+    /** Send the «здравей» to exactly the device that just enrolled. */
+    private function confirmOnDevice(User $user, PushSubscription $subscription): void
+    {
+        $message = (new PushEnabledNotification)->toWebPush($user);
+
+        DeliverWebPushNotification::dispatch(
+            $subscription->id,
+            json_encode($message->toArray(), JSON_UNESCAPED_UNICODE),
+            $message->getOptions(),
+        );
+    }
+
+    /**
+     * The p256dh must be a point that actually lies on the P-256 curve.
+     * Wrapping the raw point in a SubjectPublicKeyInfo DER and asking OpenSSL
+     * to import it is the cheapest real check — an off-curve blob fails here
+     * instead of exploding later in the push crypto.
+     */
+    private function onCurveP256(): callable
+    {
+        return function (string $attribute, mixed $value, callable $fail): void {
+            $point = base64_decode(strtr((string) $value, '-_', '+/'), true);
+
+            if ($point === false || strlen($point) !== 65 || $point[0] !== "\x04") {
+                $fail('The :attribute is not an uncompressed P-256 point.');
+
+                return;
+            }
+
+            // Fixed ASN.1 prefix for id-ecPublicKey + prime256v1, 65-byte point.
+            $der = hex2bin('3059301306072a8648ce3d020106082a8648ce3d030107034200').$point;
+            $pem = "-----BEGIN PUBLIC KEY-----\n".chunk_split(base64_encode($der), 64, "\n")."-----END PUBLIC KEY-----\n";
+
+            if (openssl_pkey_get_public($pem) === false) {
+                $fail('The :attribute is not a valid P-256 public key.');
+            }
+        };
     }
 
     /** base64url string decoding to exactly $bytes raw bytes. */
