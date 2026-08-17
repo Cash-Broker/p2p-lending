@@ -24,7 +24,7 @@ export function formatEuro(value, decimals = 2) {
 
 /**
  * Split a ticker amount into whole EUROS («1 060») and the two stotinki
- * digits («82») per Reni's final spec (2026-08-18, след реален misread на
+ * digits («82») per Reni's final spec (2026-08-17, след реален misread на
  * Катя — «106,0035» прочетено като 106 хиляди): euros big, a DOT, стотинки
  * small — and NO extra micro-digits beyond the stotinki («махни стотните
  * след 1.82»). The decimal COMMA is dropped here — the template joins the

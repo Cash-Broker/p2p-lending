@@ -351,7 +351,7 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 | 09:00                                                                                                 | `telegram:digest`                 | BG morning digest (INFO tier, silent) + admin ACTION-ITEMS EMAIL (`AdminActionItemsNotification`, queued, only when KYC/deposits/withdrawals/buyback > 0, only to role=admin; independent of Telegram config). Since 2026-08-07 the digest email is a REMINDER backstop — the primary admin alerting is event-driven (see KYC section) |
 
 - Health: `GET /api/health/scheduler` (public, 60/min) — F1 flat fields + nested `buyback`
-  + nested `payouts` (2026-08-19: the 04:00 money cron writes `last_payouts_*` metrics and
+  + nested `payouts` (2026-08-17: the 04:00 money cron writes `last_payouts_*` metrics and
   is ALWAYS in the worst-of — no kill switch; deploy of that release must run
   `php artisan loans:process-payouts` once or the missing metric reads critical);
   worst-of excluding disabled toggles; 503 iff critical (>48h).

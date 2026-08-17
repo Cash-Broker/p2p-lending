@@ -233,7 +233,7 @@ class SchedulerHealthEndpointTest extends TestCase
     }
 
     // ═════════════════════════════════════════════════════════════════
-    // PAYOUTS EXTENSION (2026-08-19) — the cron that PAYS investors is now
+    // PAYOUTS EXTENSION (2026-08-17) — the cron that PAYS investors is now
     // part of the worst-of, unconditionally (no kill switch exists for it).
     // ═════════════════════════════════════════════════════════════════
 

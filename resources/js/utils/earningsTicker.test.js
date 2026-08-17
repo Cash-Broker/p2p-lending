@@ -4,7 +4,7 @@ import { animatedRateText, countUpProgress, formatEuro, splitEuroParts, tickerVa
 describe('splitEuroParts', () => {
   const bare = (s) => s.replace(/\s/g, '') // bg-BG groups thousands with a space
 
-  it('splits whole euros from the two stotinki digits (Reni final spec 2026-08-18)', () => {
+  it('splits whole euros from the two stotinki digits (Reni final spec 2026-08-17)', () => {
     // Катя read «1,8227» as хиляди → euros big, dot, стотинки small, and
     // NOTHING beyond the stotinki («махни стотните след 1.82»).
     const parts = splitEuroParts(1.8227)

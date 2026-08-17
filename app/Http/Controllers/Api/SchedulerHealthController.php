@@ -13,7 +13,7 @@ use Illuminate\Http\JsonResponse;
  * on their 24-hour cadence:
  *   1. loans:process-late                  (F1, 03:30 daily)
  *   2. loans:detect-buyback-eligible       (F2, 03:45 daily)
- *   3. loans:process-payouts               (04:00 daily — added 2026-08-19;
+ *   3. loans:process-payouts               (04:00 daily — added 2026-08-17;
  *      this is the cron that PAYS investors, its silent death was the one
  *      failure nobody would see until an investor complained)
  *

@@ -61,7 +61,7 @@ onBeforeUnmount(() => {
 const liveValue = computed(() =>
   tickerValue(props.accrual.amount_live, props.accrual.per_second_rate, nowMs.value - anchorMs))
 
-// Reni's final spec (2026-08-18, three iterations after Катя read «1,8227»
+// Reni's final spec (2026-08-17, three iterations after Катя read «1,8227»
 // as хиляди): euros + DOT + стотинки, nothing beyond the стотинки («махни
 // стотните след 1.82»), and ALL digits full size — the small-стотинки
 // variant «намалява печалбата визуално». splitEuroParts still does the
