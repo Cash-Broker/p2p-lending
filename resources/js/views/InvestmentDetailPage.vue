@@ -21,6 +21,18 @@ const error = ref(null)
 const events = ref([])
 const eventsLoading = ref(false)
 
+// «Вашата инвестиция» (Reni 2026-08-17): the viewer's own positions in THIS
+// loan — chosen plan, snapshotted rate, personal schedule. The loan header
+// shows what is OFFERED; this card shows what SHE picked. Empty for
+// non-investors — the card simply doesn't render.
+const myInvestments = ref([])
+
+const myTotalInvested = computed(() => {
+  const cents = myInvestments.value
+    .reduce((sum, inv) => sum + Math.round(parseFloat(inv.amount || 0) * 100), 0)
+  return (cents / 100).toFixed(2)
+})
+
 // Invest form
 const investAmount = ref('')
 const investLoading = ref(false)
@@ -169,6 +181,14 @@ onMounted(async () => {
   } finally {
     eventsLoading.value = false
   }
+
+  // Own positions in this loan — secondary card, failures stay silent.
+  try {
+    const { data } = await api.get(`/loans/${route.params.id}/my-investments`)
+    myInvestments.value = data.data
+  } catch {
+    myInvestments.value = []
+  }
 })
 
 const availableBalance = computed(() => auth.user?.wallet?.available ?? '0.00')
@@ -288,6 +308,11 @@ async function confirmInvest() {
     const { data } = await api.get(`/loans/${loan.value.id}`)
     loan.value = data
     await auth.fetchUser()
+    // The fresh position must appear in «Вашата инвестиция» immediately.
+    try {
+      const { data: mine } = await api.get(`/loans/${loan.value.id}/my-investments`)
+      myInvestments.value = mine.data
+    } catch { /* secondary card — ignore */ }
   } catch (e) {
     showConfirmModal.value = false
     if (e.response?.status === 422) {
@@ -413,6 +438,80 @@ async function confirmInvest() {
                 <span class="live-dot" aria-hidden="true"></span>
                 {{ loan.investors_count ?? 0 }} {{ (loan.investors_count ?? 0) === 1 ? 'инвеститор' : 'инвеститори' }}
                 · последна инвестиция {{ lastInvestedAgo }}
+              </p>
+            </div>
+          </div>
+
+          <!-- «Вашата инвестиция» — the viewer's own terms in this loan
+               (Reni 2026-08-17): chosen plan, snapshotted rate, personal
+               schedule with monthly installments. Accent border — this is
+               HER money, the most important card on the page. -->
+          <div v-if="myInvestments.length" class="rounded-2xl border-2 border-accent-400/50 bg-white p-6">
+            <div class="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+              <h3 class="text-base font-bold text-navy-700">{{ myInvestments.length === 1 ? 'Вашата инвестиция' : 'Вашите инвестиции' }}</h3>
+              <span v-if="myInvestments.length > 1" class="text-sm text-gray-500">Общо <strong class="text-navy-700">{{ formatAmount(myTotalInvested) }} €</strong></span>
+            </div>
+            <p class="text-xs text-gray-400 mb-4">Вашите условия по този кредит — избрана оферта, доходност и погасителен план.</p>
+
+            <div v-for="(inv, idx) in myInvestments" :key="inv.id" :class="idx > 0 ? 'mt-5 pt-5 border-t border-gray-100' : ''">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3">
+                <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-accent-50 text-accent-600 ring-1 ring-accent-400/40">{{ inv.payout_label || 'Без оферта' }}</span>
+                <span class="text-lg font-bold text-navy-700">{{ formatAmount(inv.amount) }} €</span>
+                <span class="text-lg font-bold text-accent-500" title="Вашата годишна доходност — фиксирана при инвестирането">
+                  {{ inv.interest_rate ? `${inv.interest_rate}%` : (loan.interest_rate ? `${loan.interest_rate}%` : '—') }}
+                </span>
+                <span class="text-xs text-gray-400">от {{ new Date(inv.invested_at).toLocaleDateString('bg-BG') }}</span>
+                <a v-if="inv.has_contract" :href="`/api/investments/${inv.id}/contract`" target="_blank" rel="noopener"
+                   class="ml-auto text-xs font-medium text-navy-700 underline hover:text-navy-900">Договор (PDF)</a>
+              </div>
+
+              <!-- Buyback settlement flips rows to 'paid' as a settlement
+                   marker, not cash truth — never render them as received. -->
+              <p v-if="loan.status === 'bought_back'" class="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+                Кредитът е изкупен от оригинатора — вашата част е върната в портфейла.
+              </p>
+              <div v-else-if="inv.schedule?.length" class="rounded-xl border border-gray-100 overflow-hidden">
+                <p class="px-4 py-2 text-xs font-semibold text-navy-700 bg-gray-50/60 border-b border-gray-100">
+                  Вашият погасителен план · {{ inv.schedule.length }} {{ inv.schedule.length === 1 ? 'вноска' : 'вноски' }}
+                </p>
+                <div class="max-h-56 overflow-y-auto overflow-x-auto overscroll-contain">
+                  <table class="w-full text-xs">
+                    <thead class="sticky top-0 bg-gray-50">
+                      <tr class="text-left text-gray-400">
+                        <th class="px-3 py-2 font-medium">Дата</th>
+                        <th class="px-3 py-2 font-medium text-right">Главница</th>
+                        <th class="px-3 py-2 font-medium text-right">Лихва</th>
+                        <th class="px-3 py-2 font-medium text-right">Общо</th>
+                        <th class="px-3 py-2 font-medium text-right">Статус</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, i) in inv.schedule" :key="i" class="border-t border-gray-50">
+                        <td class="px-3 py-2 text-gray-600 whitespace-nowrap">{{ new Date(row.due_date).toLocaleDateString('bg-BG') }}</td>
+                        <td class="px-3 py-2 text-right text-navy-700 whitespace-nowrap">{{ formatAmount(row.principal) }}</td>
+                        <td class="px-3 py-2 text-right text-accent-500 whitespace-nowrap">{{ formatAmount(row.interest) }}</td>
+                        <td class="px-3 py-2 text-right font-semibold text-navy-700 whitespace-nowrap">{{ formatAmount(row.total) }}</td>
+                        <td class="px-3 py-2 text-right">
+                          <span class="px-1.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap"
+                            :class="{
+                              'bg-gray-100 text-gray-500': row.status === 'pending',
+                              'bg-green-50 text-green-600': row.status === 'paid',
+                              'bg-amber-50 text-amber-600': row.status === 'late',
+                              'bg-red-50 text-red-600': row.status === 'default',
+                            }">
+                            {{ scheduleStatusLabels[row.status] || row.status }}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <p v-else-if="inv.loan_offer_id" class="text-xs text-gray-400">
+                Персоналният погасителен план се генерира при активиране на кредита.
+              </p>
+              <p v-else class="text-xs text-gray-400">
+                Погасителният план е общ за кредита — вижте таблицата по-долу.
               </p>
             </div>
           </div>

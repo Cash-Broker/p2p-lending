@@ -96,6 +96,18 @@ class PortfolioController extends Controller
             ->select('originators.name', DB::raw('SUM(investments.amount) as amount'))
             ->get();
 
+        // «По план» wheel (Reni 2026-08-17): «колко КРЕДИТА са ми в еди коя си
+        // оферта» — DISTINCT loan_id per plan (the same convention as the
+        // late/default counters above: multiple positions in one loan must
+        // not double-count), plus the money. payout_type is the invest-time
+        // SNAPSHOT; legacy pre-offer positions land in the null bucket.
+        $byPlan = Investment::where('user_id', $userId)
+            ->groupBy('payout_type')
+            ->select('payout_type', DB::raw('COUNT(DISTINCT loan_id) as loans'), DB::raw('SUM(amount) as amount'))
+            ->get()
+            ->sortBy(fn ($row) => $row->payout_type?->position() ?? 99)
+            ->values();
+
         return response()->json([
             'total_invested' => number_format((float) ($investments->total_invested ?? 0), 2, '.', ''),
             'total_earned' => number_format((float) $totalEarned, 2, '.', ''),
@@ -121,6 +133,12 @@ class PortfolioController extends Controller
             'breakdown_by_originator' => $byOriginator->map(fn ($o) => [
                 'name' => $o->name,
                 'amount' => number_format((float) $o->amount, 2, '.', ''),
+            ]),
+            'breakdown_by_plan' => $byPlan->map(fn ($row) => [
+                'payout_type' => $row->payout_type?->value,
+                'label' => $row->payout_type?->label() ?? 'Без оферта',
+                'count' => (int) $row->loans,
+                'amount' => number_format((float) $row->amount, 2, '.', ''),
             ]),
         ]);
     }

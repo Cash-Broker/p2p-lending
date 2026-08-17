@@ -355,6 +355,31 @@ class LoanController extends Controller
     }
 
     /**
+     * The authenticated investor's OWN positions in this loan — chosen offer
+     * snapshot (plan + rate), per-installment schedule, contract flag. Feeds
+     * the «Вашата инвестиция» card on the loan page (Reni 2026-08-17): the
+     * loan view shows what is OFFERED, this shows what SHE picked.
+     *
+     * Authorization: LoanPolicy::view — the same gate as the page itself.
+     * A user with no position simply gets an empty list (no existence oracle).
+     */
+    public function myInvestments(Request $request, Loan $loan): JsonResponse
+    {
+        $this->authorize('view', $loan);
+
+        $investments = $loan->investments()
+            ->where('user_id', $request->user()->id)
+            ->with(['schedules' => fn ($q) => $q->orderBy('due_date')])
+            ->withExists('contract')
+            ->latest('invested_at')
+            ->get();
+
+        return response()->json([
+            'data' => InvestmentResource::collection($investments),
+        ]);
+    }
+
+    /**
      * Investor-facing loan-event timeline. Returns paginated, anonymised
      * lifecycle events for a loan the user has at least one investment in.
      *

@@ -82,6 +82,42 @@ const chartOptions = {
   },
 }
 
+// «По план» wheel (Reni 2026-08-17): «колко кредита са ми в еди коя си
+// оферта». Segments are DISTINCT-LOAN counts (backend convention — multiple
+// positions in one loan count once); the tooltip carries the money too.
+const planColors = { amortizing: '#3B82F6', interest_only: '#22C55E', capitalized: '#8B5CF6' }
+const planRows = computed(() => summary.value?.breakdown_by_plan ?? [])
+
+const planChartData = computed(() => {
+  if (!planRows.value.length) return null
+  return {
+    labels: planRows.value.map((r) => r.label),
+    datasets: [{
+      data: planRows.value.map((r) => r.count),
+      backgroundColor: planRows.value.map((r) => planColors[r.payout_type] ?? '#9CA3AF'),
+      borderWidth: 0,
+    }],
+  }
+})
+
+const planChartOptions = {
+  ...chartOptions,
+  plugins: {
+    ...chartOptions.plugins,
+    tooltip: {
+      ...chartOptions.plugins.tooltip,
+      callbacks: {
+        label: (ctx) => {
+          const row = planRows.value[ctx.dataIndex]
+          if (!row) return ctx.label
+          const noun = row.count === 1 ? 'кредит' : 'кредита'
+          return `${ctx.label}: ${row.count} ${noun} · ${formatAmount(row.amount)} €`
+        },
+      },
+    },
+  },
+}
+
 function formatAmount(val) {
   return parseFloat(val).toLocaleString('bg-BG', { minimumFractionDigits: 2 })
 }
@@ -175,7 +211,7 @@ onMounted(() => load())
       </div>
 
       <!-- Charts -->
-      <div class="grid md:grid-cols-2 gap-6 mb-8" v-if="summary">
+      <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-6 mb-8" v-if="summary">
         <!-- Status breakdown -->
         <div class="rounded-2xl border border-gray-100 bg-white p-6">
           <h2 class="text-sm font-bold text-navy-700 mb-4">По статус</h2>
@@ -183,8 +219,16 @@ onMounted(() => load())
             <Doughnut :data="statusChartData" :options="chartOptions" />
           </div>
         </div>
-        <!-- Originator breakdown -->
+        <!-- Plan/offer breakdown — «колко инвестиции в коя оферта» -->
         <div class="rounded-2xl border border-gray-100 bg-white p-6">
+          <h2 class="text-sm font-bold text-navy-700 mb-4">По план</h2>
+          <div class="h-56" v-if="planChartData">
+            <Doughnut :data="planChartData" :options="planChartOptions" />
+          </div>
+          <p v-else class="text-sm text-gray-400 text-center py-8">Няма данни</p>
+        </div>
+        <!-- Originator breakdown -->
+        <div class="rounded-2xl border border-gray-100 bg-white p-6 md:col-span-2 xl:col-span-1">
           <h2 class="text-sm font-bold text-navy-700 mb-4">По оригинатор</h2>
           <div v-if="summary.breakdown_by_originator?.length" class="space-y-3">
             <div v-for="orig in summary.breakdown_by_originator" :key="orig.name" class="flex items-center justify-between">
@@ -212,6 +256,7 @@ onMounted(() => load())
                 <th class="px-6 py-3 font-medium hidden sm:table-cell">Оригинатор</th>
                 <th class="px-3 sm:px-6 py-3 font-medium">Сума</th>
                 <th class="px-6 py-3 font-medium hidden md:table-cell">Доходност</th>
+                <th class="px-6 py-3 font-medium hidden lg:table-cell">План</th>
                 <th class="px-6 py-3 font-medium hidden md:table-cell">Срок</th>
                 <th class="px-3 sm:px-6 py-3 font-medium">Статус</th>
                 <th class="px-2 sm:px-6 py-3 font-medium"><span class="sr-only">Действия</span></th>
@@ -237,6 +282,8 @@ onMounted(() => load())
                 <!-- The investment's own snapshotted rate is the truth for the
                      investor; the loan-level rate is a legacy fallback. -->
                 <td class="px-6 py-3 text-accent-500 font-medium hidden md:table-cell">{{ inv.interest_rate ? `${inv.interest_rate}%` : (inv.loan?.interest_rate ? `${inv.loan.interest_rate}%` : '—') }}</td>
+                <!-- The chosen offer structure — snapshotted at invest time -->
+                <td class="px-6 py-3 text-gray-500 hidden lg:table-cell">{{ inv.payout_label || '—' }}</td>
                 <td class="px-6 py-3 text-gray-500 hidden md:table-cell">{{ inv.loan?.term_months }} мес.</td>
                 <td class="px-3 sm:px-6 py-3">
                   <span class="px-2.5 py-1 rounded-full text-xs font-medium" :class="statusClasses[inv.loan?.status]">

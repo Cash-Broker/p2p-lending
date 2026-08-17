@@ -76,6 +76,9 @@ Route::middleware('auth:sanctum')->group(function () {
         // Lifecycle event timeline — gated by LoanPolicy::viewEvents
         // (investor must hold a position in the loan).
         Route::get('/loans/{loan}/events', [LoanController::class, 'events']);
+        // The viewer's own positions in the loan ([]-empty without one) —
+        // «Вашата инвестиция» card on the loan page.
+        Route::get('/loans/{loan}/my-investments', [LoanController::class, 'myInvestments']);
         Route::post('/loans/{loan}/favorite', [LoanController::class, 'toggleFavorite']);
 
         // Browse deposit info (no KYC — user needs to see bank details)
