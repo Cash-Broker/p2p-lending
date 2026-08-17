@@ -23,6 +23,24 @@ export function formatEuro(value, decimals = 2) {
 }
 
 /**
+ * Split a ticker amount into whole EUROS («1 060») and the two stotinki
+ * digits («82») per Reni's final spec (2026-08-18, след реален misread на
+ * Катя — «106,0035» прочетено като 106 хиляди): euros big, a DOT, стотинки
+ * small — and NO extra micro-digits beyond the stotinki («махни стотните
+ * след 1.82»). The decimal COMMA is dropped here — the template joins the
+ * parts with a DOT, deliberately overriding the bg-BG comma for this ticker
+ * only (client's word). The per-second movement went with the micro-digits;
+ * the daily/hourly badges are the liveness signal now.
+ */
+export function splitEuroParts(value, decimals = 2) {
+  const full = formatEuro(value, decimals)
+  return {
+    main: full.slice(0, -(decimals + 1)),
+    micro: full.slice(-decimals),
+  }
+}
+
+/**
  * Badge text for a pace figure («+0,44» / «< 0,01»), or null when nothing is
  * accruing (or the intro animation hasn't reached the badges yet). The sign
  * lives HERE: prefixing '+' in a template would garble the sub-stotinka

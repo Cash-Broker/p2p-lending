@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { animatedRateText, countUpProgress, formatEuro, tickerValue } from '../utils/earningsTicker'
+import { animatedRateText, countUpProgress, formatEuro, splitEuroParts, tickerValue } from '../utils/earningsTicker'
 
 // «Текуща печалба» (client decisions 2026-08-13/14, Reni): the green
 // stock-ticker of schedule-accrued interest not yet paid out. Always live —
@@ -61,9 +61,11 @@ onBeforeUnmount(() => {
 const liveValue = computed(() =>
   tickerValue(props.accrual.amount_live, props.accrual.per_second_rate, nowMs.value - anchorMs))
 
-// 4 decimals so the per-second pace is actually visible (2 would move once
-// per ~15 minutes on a realistic portfolio — an inert "live" ticker).
-const displayValue = computed(() => formatEuro(liveValue.value * introProgress.value, 4))
+// Reni's final spec (2026-08-18, Катя-случаят — «106,0035» прочетено като
+// 106 хиляди): whole euros big, a DOT, стотинки small — «махни стотните
+// след 1.82», no micro-digits. The number now moves only when a real
+// стотинка accrues; the daily/hourly badges carry the "alive" feel.
+const displayParts = computed(() => splitEuroParts(liveValue.value * introProgress.value))
 
 const dailyBadge = computed(() => animatedRateText(props.accrual.daily_rate, badgeProgress.value))
 const hourlyBadge = computed(() => animatedRateText(props.accrual.hourly_rate, badgeProgress.value))
@@ -82,7 +84,7 @@ const lifetimeEarned = computed(() => {
   <div class="rounded-2xl border border-gray-100 bg-white px-5 py-4 sm:min-w-[260px]">
     <span class="text-xs font-medium text-gray-400 uppercase tracking-wider">Текуща печалба</span>
     <p class="mt-1 text-3xl font-bold text-accent-500 tabular-nums">
-      {{ displayValue }} <span class="text-sm font-medium text-accent-500/70">€</span>
+      {{ displayParts.main }}<span class="text-base font-semibold text-accent-500/50 tabular-nums">.{{ displayParts.micro }}</span> <span class="text-sm font-medium text-accent-500/70">€</span>
     </p>
     <div class="mt-1 flex items-center gap-3 min-h-4">
       <span v-if="dailyBadge" class="text-xs font-semibold text-accent-500 tabular-nums">{{ dailyBadge }} € / ден</span>

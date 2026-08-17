@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { animatedRateText, countUpProgress, formatEuro, tickerValue } from './earningsTicker'
+import { animatedRateText, countUpProgress, formatEuro, splitEuroParts, tickerValue } from './earningsTicker'
+
+describe('splitEuroParts', () => {
+  const bare = (s) => s.replace(/\s/g, '') // bg-BG groups thousands with a space
+
+  it('splits whole euros from the two stotinki digits (Reni final spec 2026-08-18)', () => {
+    // Катя read «1,8227» as хиляди → euros big, dot, стотинки small, and
+    // NOTHING beyond the stotinki («махни стотните след 1.82»).
+    const parts = splitEuroParts(1.8227)
+    expect(parts.main).toBe('1')
+    expect(parts.micro).toBe('82')
+  })
+
+  it('recomposes exactly to the 2-decimal formatting (no digit lost)', () => {
+    for (const v of [0, 5.9999999, 106.003456, 1234.5678, 0.0001]) {
+      const parts = splitEuroParts(v)
+      expect(`${parts.main},${parts.micro}`).toBe(formatEuro(v, 2))
+      expect(parts.micro).toHaveLength(2)
+    }
+  })
+
+  it('keeps the thousands grouping inside the euro part', () => {
+    const parts = splitEuroParts(1060.82)
+    expect(bare(parts.main)).toBe('1060')
+    expect(parts.micro).toBe('82')
+  })
+
+  it('handles zero and rounding across the euro boundary', () => {
+    expect(splitEuroParts(0)).toEqual({ main: '0', micro: '00' })
+    // 5.999 → formatEuro(…, 2) = 6,00 — the euro part must round WITH it.
+    expect(splitEuroParts(5.999)).toEqual({ main: '6', micro: '00' })
+  })
+})
 
 describe('tickerValue', () => {
   it('returns the base amount at zero elapsed time', () => {
