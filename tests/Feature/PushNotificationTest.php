@@ -28,6 +28,20 @@ class PushNotificationTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * Delivery jobs are faked class-wide: without it the sync queue would run
+     * DeliverWebPushNotification inline and fire REAL HTTPS requests at
+     * fcm.googleapis.com (slow, flaky, and it deleted rows when the test env's
+     * empty VAPID config made the crypto throw). Tests that care about
+     * delivery assert on the queued job instead.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Queue::fake();
+    }
+
     private function investor(): User
     {
         $user = User::factory()->kycApproved()->create(['email_verified_at' => now()]);
@@ -358,23 +372,31 @@ class PushNotificationTest extends TestCase
         Queue::assertPushed(DeliverWebPushNotification::class, 1);
     }
 
-    public function test_a_brand_new_device_stays_silent_without_the_confirm_flag(): void
+    public function test_a_second_account_on_the_same_browser_is_confirmed_once_then_stays_quiet(): void
     {
-        // An ownership handover creates a NEW row but is a silent re-assert —
-        // it must not fire a visible «здравей» (review 2026-08-17).
+        // Reni's phone: the admin panel enrols silently (permission already
+        // granted, no button to press). That FIRST registration deserves one
+        // «здравей» — every later page load must be silent (2026-08-17).
         Queue::fake();
 
         $investor = $this->investor();
         $admin = User::factory()->admin()->create();
-        $this->subscribe($investor, 'https://fcm.googleapis.com/fcm/send/shared-browser');
+        $browser = 'https://fcm.googleapis.com/fcm/send/shared-browser';
+        $this->subscribe($investor, $browser);
 
-        $this->actingAs($admin)->postJson('/api/push/subscribe', [
-            'endpoint' => 'https://fcm.googleapis.com/fcm/send/shared-browser',
+        $silentRegistration = [
+            'endpoint' => $browser,
             'keys' => $this->validKeys(),
             'confirm' => false,
-        ])->assertCreated();
+        ];
 
-        Queue::assertNothingPushed();
+        $this->actingAs($admin)->postJson('/api/push/subscribe', $silentRegistration)->assertCreated();
+        Queue::assertPushed(DeliverWebPushNotification::class, 1);
+
+        // Every subsequent panel load re-asserts the same row — no repeats.
+        $this->actingAs($admin)->postJson('/api/push/subscribe', $silentRegistration)->assertCreated();
+        $this->actingAs($admin)->postJson('/api/push/subscribe', $silentRegistration)->assertCreated();
+        Queue::assertPushed(DeliverWebPushNotification::class, 1);
     }
 
     public function test_confirmation_push_is_role_aware_and_leaves_no_record(): void
