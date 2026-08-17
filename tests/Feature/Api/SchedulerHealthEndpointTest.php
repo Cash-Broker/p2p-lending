@@ -4,6 +4,7 @@ namespace Tests\Feature\Api;
 
 use App\Models\PlatformMetric;
 use App\Models\PlatformSetting;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -15,7 +16,7 @@ class SchedulerHealthEndpointTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function recordRunAt(\Carbon\Carbon $when): void
+    private function recordRunAt(Carbon $when): void
     {
         // --- Late-check metrics (F1) ---
         // PlatformMetric::record stamps measured_at = now(), so for the
@@ -41,6 +42,19 @@ class SchedulerHealthEndpointTest extends TestCase
         PlatformMetric::record('last_buyback_check_notifications_queued', '0');
         PlatformMetric::record('last_buyback_check_enabled', 'true');
         PlatformMetric::where('key', 'last_buyback_check_run_at')->update(['measured_at' => $when]);
+
+        // --- Payouts metrics (always in the worst-of; no kill switch) ---
+        $this->recordPayoutsOnly($when);
+    }
+
+    /** Helper — record only the payouts metrics at a specific time. */
+    private function recordPayoutsOnly(Carbon $when): void
+    {
+        PlatformMetric::record('last_payouts_run_at', $when->toIso8601String());
+        PlatformMetric::record('last_payouts_status', 'success');
+        PlatformMetric::record('last_payouts_loans_processed', '0');
+        PlatformMetric::record('last_payouts_loans_failed', '0');
+        PlatformMetric::where('key', 'last_payouts_run_at')->update(['measured_at' => $when]);
     }
 
     public function test_healthy_when_run_within_last_26_hours(): void
@@ -108,7 +122,7 @@ class SchedulerHealthEndpointTest extends TestCase
     // ═════════════════════════════════════════════════════════════════
 
     /** Helper — record only the late-check metrics at a specific time. */
-    private function recordLateOnly(\Carbon\Carbon $when): void
+    private function recordLateOnly(Carbon $when): void
     {
         PlatformMetric::record('last_late_check_run_at', $when->toIso8601String());
         PlatformMetric::record('last_late_check_status', 'success');
@@ -116,7 +130,7 @@ class SchedulerHealthEndpointTest extends TestCase
     }
 
     /** Helper — record only the buyback-check metrics at a specific time. */
-    private function recordBuybackOnly(\Carbon\Carbon $when): void
+    private function recordBuybackOnly(Carbon $when): void
     {
         PlatformMetric::record('last_buyback_check_run_at', $when->toIso8601String());
         PlatformMetric::record('last_buyback_check_status', 'success');
@@ -164,11 +178,12 @@ class SchedulerHealthEndpointTest extends TestCase
 
     public function test_late_disabled_and_buyback_healthy_returns_overall_healthy_200(): void
     {
-        // Late disabled via platform_settings. Buyback ran 1 h ago.
-        // Per ops rule, disabled schedulers are EXCLUDED from worst-of-two
-        // — overall = buyback status = healthy.
+        // Late disabled via platform_settings. Buyback + payouts ran 1 h ago.
+        // Per ops rule, disabled schedulers are EXCLUDED from the worst-of
+        // — overall = healthy.
         PlatformSetting::where('key', 'late_check_enabled')->update(['value' => 'false']);
         $this->recordBuybackOnly(now()->subHours(1));
+        $this->recordPayoutsOnly(now()->subHours(1));
         // Intentionally NO late metric — scheduler off.
 
         $this->getJson('/api/health/scheduler')
@@ -178,12 +193,14 @@ class SchedulerHealthEndpointTest extends TestCase
             ->assertJsonPath('buyback.enabled', true);
     }
 
-    public function test_both_disabled_returns_overall_healthy_ops_decision(): void
+    public function test_both_toggleable_disabled_payouts_alone_decides_overall(): void
     {
-        // Both schedulers toggled off deliberately. No metric rows at all.
-        // Ops rule: no active schedulers = nothing to fail = healthy.
+        // Late + buyback toggled off deliberately — excluded from worst-of.
+        // Payouts has NO kill switch, so it alone carries the overall status:
+        // healthy when fresh…
         PlatformSetting::where('key', 'late_check_enabled')->update(['value' => 'false']);
         PlatformSetting::where('key', 'buyback_check_enabled')->update(['value' => 'false']);
+        $this->recordPayoutsOnly(now()->subHours(1));
 
         $this->getJson('/api/health/scheduler')
             ->assertOk()
@@ -213,6 +230,75 @@ class SchedulerHealthEndpointTest extends TestCase
                     ],
                 ],
             ]);
+    }
+
+    // ═════════════════════════════════════════════════════════════════
+    // PAYOUTS EXTENSION (2026-08-19) — the cron that PAYS investors is now
+    // part of the worst-of, unconditionally (no kill switch exists for it).
+    // ═════════════════════════════════════════════════════════════════
+
+    public function test_payouts_never_run_is_critical_even_when_other_schedulers_are_healthy(): void
+    {
+        $this->recordLateOnly(now()->subHours(1));
+        $this->recordBuybackOnly(now()->subHours(1));
+        // NO payouts metric → the money cron is invisible → critical.
+
+        $this->getJson('/api/health/scheduler')
+            ->assertStatus(503)
+            ->assertJsonPath('status', 'critical')
+            ->assertJsonPath('payouts.status', 'critical')
+            ->assertJsonPath('payouts.last_run_at', null);
+    }
+
+    public function test_payouts_stale_between_26_and_48_hours_degrades_overall_to_warning(): void
+    {
+        $this->recordLateOnly(now()->subHours(1));
+        $this->recordBuybackOnly(now()->subHours(1));
+        $this->recordPayoutsOnly(now()->subHours(30));
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonPath('status', 'warning')
+            ->assertJsonPath('payouts.status', 'warning');
+    }
+
+    public function test_payouts_block_structure_present_without_enabled_toggle(): void
+    {
+        $this->recordRunAt(now()->subHours(1));
+
+        $response = $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonStructure([
+                'payouts' => [
+                    'status',
+                    'last_run_at',
+                    'minutes_since_last_run',
+                    'expected_interval_minutes',
+                    'last_run_stats' => ['status', 'loans_processed', 'loans_failed'],
+                ],
+            ]);
+
+        // Deliberately NO `enabled` field — there is no payouts kill switch.
+        $this->assertArrayNotHasKey('enabled', $response->json('payouts'));
+    }
+
+    public function test_process_payouts_command_writes_the_health_metrics(): void
+    {
+        // End-to-end: run the real command (no automatic loans in this test
+        // DB — it processes nothing but MUST still stamp the metrics), then
+        // the endpoint reads them back as a healthy payouts scheduler.
+        $this->recordLateOnly(now()->subHours(1));
+        $this->recordBuybackOnly(now()->subHours(1));
+
+        $this->artisan('loans:process-payouts')->assertSuccessful();
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonPath('status', 'healthy')
+            ->assertJsonPath('payouts.status', 'healthy')
+            ->assertJsonPath('payouts.last_run_stats.status', 'success')
+            ->assertJsonPath('payouts.last_run_stats.loans_processed', 0)
+            ->assertJsonPath('payouts.last_run_stats.loans_failed', 0);
     }
 
     public function test_backwards_compat_legacy_flat_fields_still_populated(): void

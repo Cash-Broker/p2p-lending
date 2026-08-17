@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Loans;
 
+use App\Models\PlatformMetric;
 use App\Services\ScheduledPayoutService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -15,6 +16,17 @@ use Illuminate\Support\Facades\Log;
  * Accrues/releases on schedule regardless of whether the borrower has paid —
  * the boss's "по график" model; the platform carries the gap in the `accrued`
  * bucket / exposure report.
+ *
+ * Health: writes to `platform_metrics` (read via /api/health/scheduler —
+ * this is the cron that PAYS investors; a silent death here surfaces as
+ * angry investors, so it must be as visible as the late/buyback crons):
+ *   last_payouts_run_at          — Iso-8601 timestamp
+ *   last_payouts_status          — success | failure (failure = some loans errored)
+ *   last_payouts_loans_processed — int
+ *   last_payouts_loans_failed    — int
+ * The metrics are written whenever a run COMPLETES (even with per-loan
+ * failures — the machinery ran; `last_payouts_status` carries the outcome).
+ * An uncaught crash writes nothing and the staleness alarm fires instead.
  */
 class ProcessScheduledPayouts extends Command
 {
@@ -39,6 +51,8 @@ class ProcessScheduledPayouts extends Command
 
             $result = $service->runAllAutomatic($asOf);
 
+            $this->writeMetrics($result);
+
             $this->info(sprintf(
                 'Scheduled payouts: %d loan(s) processed, %d failed (as of %s).',
                 $result['loans_processed'],
@@ -55,6 +69,21 @@ class ProcessScheduledPayouts extends Command
             return self::SUCCESS;
         } finally {
             $lock->release();
+        }
+    }
+
+    /** Upsert the health metrics; measured_at is stamped by PlatformMetric::record. */
+    private function writeMetrics(array $result): void
+    {
+        $metrics = [
+            'last_payouts_run_at' => now()->toIso8601String(),
+            'last_payouts_status' => $result['loans_failed'] > 0 ? 'failure' : 'success',
+            'last_payouts_loans_processed' => (string) $result['loans_processed'],
+            'last_payouts_loans_failed' => (string) $result['loans_failed'],
+        ];
+
+        foreach ($metrics as $key => $value) {
+            PlatformMetric::record($key, $value);
         }
     }
 }
