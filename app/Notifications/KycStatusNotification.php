@@ -2,19 +2,22 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 class KycStatusNotification extends Notification
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     public function __construct(private string $status) {}
 
     public function via(object $notifiable): array
     {
-        return ['mail', 'database'];
+        return ['mail', 'database', QueuedWebPushChannel::class];
     }
 
     public function toMail(object $notifiable): MailMessage
@@ -41,5 +44,19 @@ class KycStatusNotification extends Notification
     public function toArray(object $notifiable): array
     {
         return ['type' => 'kyc_'.$this->status];
+    }
+
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        $approved = $this->status === 'approved';
+
+        return $this->webPushMessage(
+            $approved ? 'Верификацията е одобрена' : 'Верификацията е отхвърлена',
+            $approved
+                ? 'Вече можете да инвестирате.'
+                : 'Вижте детайлите в профила си.',
+            config('app.url').($approved ? '/invest' : '/profile'),
+            'kyc-status',
+        );
     }
 }

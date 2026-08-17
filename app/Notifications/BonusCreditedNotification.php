@@ -2,9 +2,12 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 /**
  * Investor-facing alert for an admin-granted promotional bonus.
@@ -13,13 +16,13 @@ use Illuminate\Notifications\Notification;
  */
 class BonusCreditedNotification extends Notification
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     public function __construct(private string $amount, private string $reason) {}
 
     public function via(object $notifiable): array
     {
-        return ['mail', 'database'];
+        return ['mail', 'database', QueuedWebPushChannel::class];
     }
 
     public function toMail(object $notifiable): MailMessage
@@ -37,5 +40,15 @@ class BonusCreditedNotification extends Notification
     public function toArray(object $notifiable): array
     {
         return ['type' => 'bonus_credited', 'amount' => $this->amount, 'reason' => $this->reason];
+    }
+
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        return $this->webPushMessage(
+            "Получихте бонус: {$this->amount} €",
+            // Admin free text stays OUT of the lockscreen — it is in the app.
+            'Отворете приложението за детайли.',
+            config('app.url').'/dashboard',
+        );
     }
 }

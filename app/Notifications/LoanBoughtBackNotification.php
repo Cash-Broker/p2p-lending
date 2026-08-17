@@ -3,11 +3,14 @@
 namespace App\Notifications;
 
 use App\Models\Loan;
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Carbon\CarbonInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 /**
  * Investor-facing notification: "your loan was bought back by the originator".
@@ -41,7 +44,7 @@ use Illuminate\Notifications\Notification;
  */
 class LoanBoughtBackNotification extends Notification implements ShouldQueue
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     /**
      * @param  Loan  $loan  the loan that was bought back
@@ -77,7 +80,7 @@ class LoanBoughtBackNotification extends Notification implements ShouldQueue
             return [];
         }
 
-        return ['mail', 'database'];
+        return ['mail', 'database', QueuedWebPushChannel::class];
     }
 
     /**
@@ -155,5 +158,15 @@ class LoanBoughtBackNotification extends Notification implements ShouldQueue
             'principal_plus_interest' => 'Главница + лихва',
             default => $this->coverageType,
         };
+    }
+
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        return $this->webPushMessage(
+            "Кредит #{$this->loan->id} беше изкупен",
+            "Получихте {$this->totalReceived} € обратно в портфейла.",
+            config('app.url').'/portfolio',
+            "buyback-{$this->loan->id}",
+        );
     }
 }

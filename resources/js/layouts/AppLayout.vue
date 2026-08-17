@@ -6,6 +6,10 @@ import { useConsentStore } from '../stores/consent'
 import ChatbotWidget from '../components/ChatbotWidget.vue'
 import ReConsentModal from '../components/ReConsentModal.vue'
 import api from '../api/axios'
+// Static import on purpose: a dynamic import() on the logout path can REJECT
+// after a deploy rotates chunk hashes, and that would abort logout before the
+// session call ever runs (review 2026-08-17). disablePush itself never throws.
+import { assertOwnership, disablePush } from '../utils/push'
 
 const route = useRoute()
 const router = useRouter()
@@ -68,6 +72,10 @@ async function deleteAllNotifications() {
 onMounted(() => {
   loadNotifications()
   consent.check()
+  // Claim this device's push subscription for the investor now using it —
+  // the admin panel does the same on its pages, so ownership follows the
+  // active session on a shared browser.
+  assertOwnership()
 })
 
 // ── PWA resume re-validation (Reni 2026-08-16) ──
@@ -95,6 +103,26 @@ function onVisibilityChange() {
 
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisibilityChange))
+
+// A push tapped while this exact screen is already open: the service worker
+// focuses the window and asks for a refresh, so the figures the notification
+// announced are the ones actually shown (review 2026-08-17).
+function onServiceWorkerMessage(event) {
+  if (event.data?.type === 'vama-push-refresh') {
+    window.location.reload()
+  }
+}
+
+onMounted(() => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', onServiceWorkerMessage)
+  }
+})
+onBeforeUnmount(() => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.removeEventListener('message', onServiceWorkerMessage)
+  }
+})
 
 const navigation = [
   { name: 'Начало', path: '/dashboard', icon: 'home' },
@@ -127,6 +155,10 @@ const logoutError = ref(false)
 async function logout() {
   loggingOut.value = true
   logoutError.value = false
+  // Forget this device's push subscription BEFORE the session dies — a
+  // logged-out (possibly shared) device must not keep receiving pushes.
+  // Best-effort by design: never blocks leaving.
+  await disablePush()
   try {
     await auth.logout()
     router.push('/login')

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Filament\Resources\UserResource\Pages\ViewUser;
+use App\Models\ConsentRecord;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -36,11 +37,11 @@ class AdminKycReviewTest extends TestCase
         $admin = $this->admin();
         $investor = User::factory()->create(['email_verified_at' => now(), 'kyc_status' => 'pending']);
         $investor->consentRecords()->create([
-            'type' => 'terms', 'version' => \App\Models\ConsentRecord::CURRENT_TERMS_VERSION,
+            'type' => 'terms', 'version' => ConsentRecord::CURRENT_TERMS_VERSION,
             'ip_address' => '127.0.0.1', 'user_agent' => 'test', 'accepted_at' => now(),
         ]);
         $investor->consentRecords()->create([
-            'type' => 'privacy', 'version' => \App\Models\ConsentRecord::CURRENT_PRIVACY_VERSION,
+            'type' => 'privacy', 'version' => ConsentRecord::CURRENT_PRIVACY_VERSION,
             'ip_address' => '127.0.0.1', 'user_agent' => 'test', 'accepted_at' => now(),
         ]);
 
@@ -54,7 +55,9 @@ class AdminKycReviewTest extends TestCase
         $this->assertSame(1, $admin->notifications()->count());
         $data = $admin->notifications()->first()->data;
         $this->assertSame('Нова KYC заявка', $data['title']);
-        $this->assertStringContainsString($investor->name, $data['body']);
+        // e()-escaped, like ProfileController writes it — a faker name with
+        // an apostrophe («O'Brien» → «O&#039;Brien») made this assertion flake.
+        $this->assertStringContainsString(e($investor->name), $data['body']);
         // Filament's inbox only renders its own format.
         $this->assertSame('filament', $data['format']);
 

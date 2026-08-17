@@ -84,6 +84,16 @@ return Application::configure(basePath: dirname(__DIR__))
             ->withoutOverlapping(30)
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/investors-weekly-earnings.log'));
+
+        // Morning Web Push digest (2026-08-17): the night's 04:00 payout run
+        // batched into one «получихте X € лихва» push per subscribed
+        // investor — pushing at 04:00 would wake people. Kill switch:
+        // push_payout_digest_enabled platform setting.
+        $schedule->command('push:payout-digest')
+            ->dailyAt('09:05')
+            ->withoutOverlapping(15)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/push-payout-digest.log'));
     })
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

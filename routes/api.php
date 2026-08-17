@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PortfolioController;
 use App\Http\Controllers\Api\ProfileController;
 use App\Http\Controllers\Api\PromotionController;
+use App\Http\Controllers\Api\PushSubscriptionController;
 use App\Http\Controllers\Api\SchedulerHealthController;
 use App\Http\Controllers\Api\TransactionController;
 use App\Http\Controllers\Api\WithdrawalController;
@@ -48,6 +49,16 @@ Route::middleware('auth:sanctum')->group(function () {
     // Re-consent flow — must NOT be gated by consent.current (that would deadlock).
     Route::get('/consents/pending', [ConsentController::class, 'pending']);
     Route::post('/consents/accept', [ConsentController::class, 'accept']);
+
+    // Web Push subscriptions (2026-08-17) — deliberately at plain
+    // auth:sanctum level, NOT in the investor group: the Filament ADMIN
+    // session registers its devices through the same endpoints, and the
+    // investor middleware would 403 admins. Throttled: every call writes a
+    // row, and the admin panel re-asserts on each page load.
+    Route::middleware('throttle:30,1')->group(function () {
+        Route::post('/push/subscribe', [PushSubscriptionController::class, 'store']);
+        Route::delete('/push/subscribe', [PushSubscriptionController::class, 'destroy']);
+    });
 
     // Investor-only routes (verified email required)
     Route::middleware('investor')->group(function () {

@@ -114,6 +114,10 @@ class AccountDeletionService
             $user->savedIbans()->delete();
             $user->consentRecords()->delete();
             $user->notifications()->delete();
+            // An erased account must stop being a push TARGET — a leftover
+            // subscription would keep delivering to that person's device
+            // (review 2026-08-17). The endpoint itself is personal data.
+            $user->pushSubscriptions()->delete();
             $user->wallet()->delete();
 
             Log::info('Account anonymized successfully', ['user_id' => $userId]);

@@ -25,9 +25,13 @@ describe('shouldForceRelogin', () => {
     expect(shouldForceRelogin(419, '/reset-password/abc123', true)).toBe(false)
   })
 
-  it('never fires for the logout call itself — «Изход» must end banner-free', () => {
+  it('never fires for housekeeping calls — logout and push cleanup', () => {
     expect(shouldForceRelogin(401, '/dashboard', true, '/logout')).toBe(false)
     expect(shouldForceRelogin(419, '/portfolio', true, '/api/logout')).toBe(false)
+    // Push cleanup runs ON the logout path: bouncing there swallowed the
+    // whole logout (the interceptor never settles its promise).
+    expect(shouldForceRelogin(401, '/dashboard', true, '/push/subscribe')).toBe(false)
+    expect(shouldForceRelogin(419, '/profile', true, '/push/subscribe')).toBe(false)
     // …but the same page and status DO fire for any other endpoint
     expect(shouldForceRelogin(401, '/dashboard', true, '/dashboard')).toBe(true)
     expect(shouldForceRelogin(401, '/dashboard', true, '/user')).toBe(true)

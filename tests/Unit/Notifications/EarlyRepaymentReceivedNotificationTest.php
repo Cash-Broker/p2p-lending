@@ -7,8 +7,10 @@ use App\Models\BorrowerAnonymizedProfile;
 use App\Models\Loan;
 use App\Models\Originator;
 use App\Models\User;
+use App\Notifications\Channels\QueuedWebPushChannel;
 use App\Notifications\EarlyRepaymentReceivedNotification;
 use Carbon\Carbon;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
@@ -54,6 +56,7 @@ class EarlyRepaymentReceivedNotificationTest extends TestCase
         ]);
         $loan->setRelation('originator', $orig);
         $user = User::factory()->create(['email_verified_at' => now()]);
+
         return [$loan, $user];
     }
 
@@ -90,7 +93,7 @@ class EarlyRepaymentReceivedNotificationTest extends TestCase
     {
         $this->markTestSkipped(
             'executedAt is non-nullable by constructor type hint in F3 — '
-            . 'no null-serialisation path to guard. Placeholder for F1/F2 symmetry.'
+            .'no null-serialisation path to guard. Placeholder for F1/F2 symmetry.'
         );
     }
 
@@ -158,7 +161,7 @@ class EarlyRepaymentReceivedNotificationTest extends TestCase
             totalReceived: '55.00',
         );
 
-        $this->assertSame(['mail', 'database'], $notification->via($user),
+        $this->assertSame(['mail', 'database', QueuedWebPushChannel::class], $notification->via($user),
             'different early_repaid_at → fresh event → must SEND');
     }
 
@@ -166,7 +169,7 @@ class EarlyRepaymentReceivedNotificationTest extends TestCase
     {
         $this->markTestSkipped(
             'null executedAt is unreachable via the typed constructor. '
-            . 'Fallback code kept for symmetry with F1/F2 and ops-backfill defense.'
+            .'Fallback code kept for symmetry with F1/F2 and ops-backfill defense.'
         );
     }
 
@@ -254,7 +257,7 @@ class EarlyRepaymentReceivedNotificationTest extends TestCase
     {
         [$loan] = $this->makeLoanAndInvestor();
         $this->assertInstanceOf(
-            \Illuminate\Contracts\Queue\ShouldQueue::class,
+            ShouldQueue::class,
             new EarlyRepaymentReceivedNotification(
                 loan: $loan,
                 executedAt: now(),

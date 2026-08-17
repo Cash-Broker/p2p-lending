@@ -2,11 +2,14 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Carbon\CarbonInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 /**
  * Admin-facing EVENT alert: an investor just submitted KYC documents —
@@ -42,7 +45,7 @@ use Illuminate\Notifications\Notification;
  */
 class KycSubmittedAdminNotification extends Notification implements ShouldQueue
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     /**
      * @param  int  $applicantId  users.id of the submitter (builds the review URL)
@@ -61,7 +64,7 @@ class KycSubmittedAdminNotification extends Notification implements ShouldQueue
 
     public function via(object $notifiable): array
     {
-        return ['mail'];
+        return ['mail', QueuedWebPushChannel::class];
     }
 
     public function toMail(object $notifiable): MailMessage
@@ -78,5 +81,16 @@ class KycSubmittedAdminNotification extends Notification implements ShouldQueue
                 'submittedAtFormatted' => $this->submittedAt->format('d.m.Y H:i'),
                 'reviewUrl' => config('app.url').'/admin/users/'.$this->applicantId,
             ]);
+    }
+
+    /** Lockscreen hygiene: no applicant name — details behind admin auth. */
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        return $this->webPushMessage(
+            'Ново KYC за преглед',
+            'Инвеститор чака верификация.',
+            config('app.url').'/admin/users/'.$this->applicantId,
+            "kyc-{$this->applicantId}",
+        );
     }
 }

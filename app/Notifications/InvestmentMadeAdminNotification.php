@@ -2,10 +2,13 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 /**
  * Admin alert for every NEW investment (boss 2026-08-10: «когато някой
@@ -18,7 +21,7 @@ use Illuminate\Notifications\Notification;
  */
 class InvestmentMadeAdminNotification extends Notification implements ShouldQueue
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     public function __construct(
         private int $investmentId,
@@ -31,7 +34,23 @@ class InvestmentMadeAdminNotification extends Notification implements ShouldQueu
 
     public function via(object $notifiable): array
     {
-        return ['mail'];
+        // WebPush no-ops for admins without registered devices.
+        return ['mail', QueuedWebPushChannel::class];
+    }
+
+    /**
+     * The «машинката дрънна» push (2026-08-17). Lockscreen hygiene: amount,
+     * loan and plan only — the investor's NAME deliberately stays out of the
+     * notification; it is one tap away behind admin auth.
+     */
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        return $this->webPushMessage(
+            "Нова инвестиция: {$this->amount} €",
+            "Кредит #{$this->loanId} · {$this->planLabel} ({$this->interestRate}%)",
+            url('/admin/investments'),
+            "investment-{$this->investmentId}",
+        );
     }
 
     public function toMail(object $notifiable): MailMessage

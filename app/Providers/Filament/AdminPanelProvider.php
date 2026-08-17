@@ -10,11 +10,13 @@ use Filament\Pages;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminPanelProvider extends PanelProvider
@@ -36,6 +38,17 @@ class AdminPanelProvider extends PanelProvider
             // In-panel inbox (bell icon): new-KYC alerts for the reviewer, with
             // built-in mark-as-read / clear controls.
             ->databaseNotifications()
+            // Web Push auto-enrolment (2026-08-17): an authenticated admin's
+            // browser is offered the notification permission once; after
+            // «Разреши» the device receives инвестиции/KYC/тегления pushes
+            // even with the panel closed. Auth-gated so the login screen
+            // never prompts anonymous visitors.
+            ->renderHook(
+                PanelsRenderHook::BODY_END,
+                fn (): string => Auth::user()?->isAdmin() ?? false
+                    ? view('filament.push-subscribe')->render()
+                    : '',
+            )
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([

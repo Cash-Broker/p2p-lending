@@ -2,19 +2,22 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 class WithdrawalRejectedNotification extends Notification
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     public function __construct(private string $amount, private ?string $reason = null) {}
 
     public function via(object $notifiable): array
     {
-        return ['mail', 'database'];
+        return ['mail', 'database', QueuedWebPushChannel::class];
     }
 
     public function toMail(object $notifiable): MailMessage
@@ -34,5 +37,15 @@ class WithdrawalRejectedNotification extends Notification
     public function toArray(object $notifiable): array
     {
         return ['type' => 'withdrawal_rejected', 'amount' => $this->amount, 'reason' => $this->reason];
+    }
+
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        return $this->webPushMessage(
+            'Тегленето е отказано',
+            // Admin free text stays OUT of the lockscreen — it is in the app.
+            'Вижте детайлите в приложението.',
+            config('app.url').'/withdraw',
+        );
     }
 }

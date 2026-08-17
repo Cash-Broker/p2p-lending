@@ -3,11 +3,14 @@
 namespace App\Notifications;
 
 use App\Models\Loan;
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Carbon\CarbonInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 /**
  * Investor-facing notification: "your loan was closed early by the
@@ -42,7 +45,7 @@ use Illuminate\Notifications\Notification;
  */
 class EarlyRepaymentReceivedNotification extends Notification implements ShouldQueue
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     /**
      * @param  Loan  $loan  the loan that was early-repaid
@@ -76,7 +79,7 @@ class EarlyRepaymentReceivedNotification extends Notification implements ShouldQ
             return [];
         }
 
-        return ['mail', 'database'];
+        return ['mail', 'database', QueuedWebPushChannel::class];
     }
 
     /**
@@ -141,5 +144,15 @@ class EarlyRepaymentReceivedNotification extends Notification implements ShouldQ
             'investor_interest' => $this->investorInterest,
             'total_received' => $this->totalReceived,
         ];
+    }
+
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        return $this->webPushMessage(
+            "Кредит #{$this->loan->id} е изплатен предсрочно",
+            "Получихте {$this->totalReceived} € обратно в портфейла.",
+            config('app.url').'/portfolio',
+            "early-repay-{$this->loan->id}",
+        );
     }
 }

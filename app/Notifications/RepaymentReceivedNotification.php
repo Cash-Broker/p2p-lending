@@ -2,13 +2,16 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 class RepaymentReceivedNotification extends Notification
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     public function __construct(
         private int $loanId,
@@ -18,7 +21,7 @@ class RepaymentReceivedNotification extends Notification
 
     public function via(object $notifiable): array
     {
-        return ['mail', 'database'];
+        return ['mail', 'database', QueuedWebPushChannel::class];
     }
 
     public function toMail(object $notifiable): MailMessage
@@ -44,5 +47,15 @@ class RepaymentReceivedNotification extends Notification
             'interest' => $this->interestAmount,
             'total' => bcadd($this->principalAmount, $this->interestAmount, 2),
         ];
+    }
+
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        return $this->webPushMessage(
+            "Получихте вноска от кредит #{$this->loanId}",
+            "Главница {$this->principalAmount} € · лихва {$this->interestAmount} €",
+            config('app.url').'/portfolio',
+            "repayment-{$this->loanId}",
+        );
     }
 }

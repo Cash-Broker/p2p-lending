@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import api from '../api/axios'
 import { useAuthStore } from '../stores/auth'
 import { validateKycFile } from '../utils/kycFile'
+import { permissionState, isSubscribed, enablePush, disablePush } from '../utils/push'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -28,6 +29,47 @@ const company = ref({
 const companyErrors = ref({})
 const companyLoading = ref(false)
 const companySuccess = ref(false)
+
+// Push notifications (2026-08-17) — state of THIS device/browser.
+const pushState = ref(permissionState()) // granted | denied | default | unsupported
+const pushEnabled = ref(false)
+const pushBusy = ref(false)
+const pushError = ref(null)
+
+async function refreshPushState() {
+  pushState.value = permissionState()
+  pushEnabled.value = await isSubscribed()
+}
+
+async function enableNotifications() {
+  pushBusy.value = true
+  pushError.value = null
+  try {
+    await enablePush()
+    await refreshPushState()
+  } catch (e) {
+    // «denied» renders its own explanatory branch; every OTHER failure must
+    // say so out loud instead of silently doing nothing (review 2026-08-17).
+    if (e?.message !== 'denied') {
+      pushError.value = 'Известията не можаха да се включат. Проверете връзката и опитайте отново.'
+    }
+    await refreshPushState()
+  } finally {
+    pushBusy.value = false
+  }
+}
+
+async function disableNotifications() {
+  pushBusy.value = true
+  try {
+    await disablePush()
+  } finally {
+    await refreshPushState()
+    pushBusy.value = false
+  }
+}
+
+onMounted(refreshPushState)
 const legalForms = { EOOD: 'ЕООД', OOD: 'ООД', AD: 'АД', EAD: 'ЕАД', ADSITZ: 'АДСИЦ', ET: 'ЕТ', KOOPERATSIYA: 'Кооперация', DRUGO: 'Друго' }
 
 // Password form
@@ -474,6 +516,48 @@ onMounted(() => loadData())
               {{ !kycLoading ? 'Изпрати за верификация' : kycUploadProgress < 100 ? `Качване… ${kycUploadProgress}%` : 'Обработка на снимките…' }}
             </button>
           </div>
+        </div>
+
+        <!-- Push notifications (2026-08-17) — per-device opt-in -->
+        <div class="rounded-2xl border border-gray-100 bg-white p-6">
+          <h2 class="text-base font-bold text-navy-700 mb-1">Известия на това устройство</h2>
+          <p class="text-xs text-gray-400 mb-4">
+            Получавайте известия за вашите пари — изплатени лихви, потвърдени депозити,
+            изпълнени тегления — дори когато приложението е затворено.
+          </p>
+
+          <div v-if="pushState === 'unsupported'" class="rounded-xl bg-gray-50 p-3 text-sm text-gray-500">
+            Този браузър не поддържа известия.
+          </div>
+          <div v-else-if="pushState === 'denied'" class="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700">
+            Известията са блокирани от браузъра. Разрешете ги от настройките на сайта
+            (катинарчето до адреса), после опитайте отново.
+          </div>
+          <template v-else>
+            <p v-if="pushError" role="alert" class="mb-3 rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+              {{ pushError }}
+            </p>
+            <button
+              v-if="!pushEnabled"
+              @click="enableNotifications"
+              :disabled="pushBusy"
+              class="w-full py-2.5 bg-accent-400 hover:bg-accent-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+            >
+              {{ pushBusy ? 'Включване…' : '🔔 Включи известията' }}
+            </button>
+            <div v-else class="flex items-center justify-between">
+              <span class="inline-flex items-center gap-2 text-sm font-medium text-green-700">
+                <span class="size-2 rounded-full bg-green-500"></span> Известията са включени
+              </span>
+              <button
+                @click="disableNotifications"
+                :disabled="pushBusy"
+                class="px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Изключи
+              </button>
+            </div>
+          </template>
         </div>
 
         <!-- Change password -->

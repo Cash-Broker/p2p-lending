@@ -7,8 +7,10 @@ use App\Models\BorrowerAnonymizedProfile;
 use App\Models\Loan;
 use App\Models\Originator;
 use App\Models\User;
+use App\Notifications\Channels\QueuedWebPushChannel;
 use App\Notifications\LoanBoughtBackNotification;
 use Carbon\Carbon;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
@@ -55,6 +57,7 @@ class LoanBoughtBackNotificationTest extends TestCase
         ]);
         $loan->setRelation('originator', $orig);
         $user = User::factory()->create(['email_verified_at' => now()]);
+
         return [$loan, $user];
     }
 
@@ -106,7 +109,7 @@ class LoanBoughtBackNotificationTest extends TestCase
         // serialisation contract here.
         $this->markTestSkipped(
             'bought_back_at is non-nullable by constructor type hint in F2 — '
-            . 'no null-serialisation path to guard. Placeholder for F1 symmetry.'
+            .'no null-serialisation path to guard. Placeholder for F1 symmetry.'
         );
     }
 
@@ -176,7 +179,7 @@ class LoanBoughtBackNotificationTest extends TestCase
             coverageType: 'principal_plus_interest',
         );
 
-        $this->assertSame(['mail', 'database'], $notification->via($user),
+        $this->assertSame(['mail', 'database', QueuedWebPushChannel::class], $notification->via($user),
             'different bought_back_at → fresh buyback event → must SEND');
     }
 
@@ -190,7 +193,7 @@ class LoanBoughtBackNotificationTest extends TestCase
         // with a proper reflection-based null assignment + assertion.
         $this->markTestSkipped(
             'null bought_back_at is unreachable via the typed constructor. '
-            . 'Fallback code kept for symmetry with F1 and ops-backfill defense.'
+            .'Fallback code kept for symmetry with F1 and ops-backfill defense.'
         );
     }
 
@@ -285,7 +288,7 @@ class LoanBoughtBackNotificationTest extends TestCase
     {
         [$loan] = $this->makeLoanAndInvestor();
         $this->assertInstanceOf(
-            \Illuminate\Contracts\Queue\ShouldQueue::class,
+            ShouldQueue::class,
             new LoanBoughtBackNotification(
                 loan: $loan,
                 boughtBackAt: now(),

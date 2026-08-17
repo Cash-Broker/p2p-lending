@@ -10,6 +10,7 @@
         "barryvdh/laravel-dompdf": "^3.1",
         "filament/filament": "^5.4",
         "jschaedl/iban-validation": "^2.7",
+        "laravel-notification-channels/webpush": "*",
         "laravel/framework": "^13.0",
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^3.0",

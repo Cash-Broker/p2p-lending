@@ -2,11 +2,14 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Channels\QueuedWebPushChannel;
+use App\Notifications\Concerns\SendsWebPush;
 use Carbon\CarbonInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use NotificationChannels\WebPush\WebPushMessage;
 
 /**
  * Admin-facing EVENT alert: an investor just requested a withdrawal —
@@ -35,7 +38,7 @@ use Illuminate\Notifications\Notification;
  */
 class WithdrawalRequestedAdminNotification extends Notification implements ShouldQueue
 {
-    use Queueable;
+    use Queueable, SendsWebPush;
 
     /**
      * @param  int  $withdrawalId  withdrawal_requests.id
@@ -52,7 +55,7 @@ class WithdrawalRequestedAdminNotification extends Notification implements Shoul
 
     public function via(object $notifiable): array
     {
-        return ['mail'];
+        return ['mail', QueuedWebPushChannel::class];
     }
 
     public function toMail(object $notifiable): MailMessage
@@ -67,5 +70,16 @@ class WithdrawalRequestedAdminNotification extends Notification implements Shoul
                 'requestedAtFormatted' => $this->requestedAt->format('d.m.Y H:i'),
                 'reviewUrl' => config('app.url').'/admin/withdrawal-requests',
             ]);
+    }
+
+    /** Lockscreen hygiene: amount only — name and IBAN stay in the panel. */
+    public function toWebPush(object $notifiable): WebPushMessage
+    {
+        return $this->webPushMessage(
+            "Заявка за теглене: {$this->amount} €",
+            'Изчаква одобрение.',
+            config('app.url').'/admin/withdrawal-requests',
+            "withdrawal-{$this->withdrawalId}",
+        );
     }
 }

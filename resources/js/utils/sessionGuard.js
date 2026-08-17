@@ -7,21 +7,29 @@
 const GUEST_SAFE_PATHS = ['/login', '/register', '/forgot-password', '/reset-password']
 
 /**
+ * Requests whose 401 must NOT trigger the expiry bounce. `/logout` is an
+ * explicit exit — it must land on a banner-free /login. `/push/subscribe` is
+ * device housekeeping that runs ON the logout path: bouncing there swallowed
+ * the whole logout (the interceptor returns a never-settling promise, so
+ * auth.logout() was never reached — review 2026-08-17).
+ */
+const HOUSEKEEPING_ENDPOINTS = ['/logout', '/push/subscribe']
+
+/**
  * Should this API failure force a hard redirect to /login?
  *
  * True only when ALL hold:
  * - status is 401 (session gone) or 419 (CSRF token gone — same root cause);
  * - the SPA still BELIEVES it is authenticated (hasUser) — a guest getting a
  *   401 from the boot-time /user probe is normal, not an expiry;
- * - the failing call is not the logout POST itself — an explicit «Изход» that
- *   401s must end on a banner-free /login (the store clears state and
- *   AppLayout navigates), not on «сесията изтече, ще ви върнем обратно»;
+ * - the failing call is not housekeeping (logout / push cleanup) — those must
+ *   never hijack the flow they are part of;
  * - we are not already on an auth screen (no redirect loops).
  */
 export function shouldForceRelogin(status, currentPath, hasUser, requestUrl = '') {
   if (status !== 401 && status !== 419) return false
   if (!hasUser) return false
-  if (String(requestUrl).endsWith('/logout')) return false
+  if (HOUSEKEEPING_ENDPOINTS.some((p) => String(requestUrl).endsWith(p))) return false
   return !GUEST_SAFE_PATHS.some((p) => String(currentPath).startsWith(p))
 }
 

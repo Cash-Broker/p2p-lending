@@ -362,6 +362,32 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 - Queue: `database` connection, Supervisor `p2p-worker:*` on prod. Queued: password-reset job,
   admin-login-alert mail, the 4 loan-event notifications (with per-event dedupe in `via()`).
   Deposit/withdrawal/KYC/repayment notifications are synchronous.
+- **Web Push (2026-08-17)**: `laravel-notification-channels/webpush`, VAPID keys in .env
+  (Windows dev: `webpush:vapid` fails on EC keygen — use `npx web-push generate-vapid-keys`).
+  `public/sw.js` is push-ONLY (⚠ never add fetch/caching — stale-bundle hazard).
+  - **Delivery is QUEUED, never inline**: notifications list
+    `App\Notifications\Channels\QueuedWebPushChannel` (NOT the package's channel) which renders
+    the payload and dispatches `Jobs\DeliverWebPushNotification` per device. Reason: senders run
+    inside DB transactions holding row locks (`UserResource::transitionKycStatus` under a `users`
+    `lockForUpdate`) — a synchronous push held the lock across a Google round-trip AND a throw
+    from the push lib rolled the KYC approval back after the investor's email had gone out. The
+    channel NEVER throws; the job prunes dead (404/410) and unusable subscriptions.
+  - Subscriptions per user via `POST/DELETE /api/push/subscribe` (plain auth:sanctum, throttle
+    30/1 — NOT in the investor group; Filament admin sessions use the same endpoints). Validation
+    is deliberately strict: endpoint host must be a KNOWN push service (the server later POSTs
+    there — otherwise it's an outbound-request primitive), max 500 = column size, p256dh/auth
+    must be base64url decoding to 65/16 bytes, max 10 devices/user.
+  - Enrolment: SPA Профил card; admin auto-prompt render hook (one prompt per browser remembered
+    in localStorage + a persistent pill for Safari/Firefox which need a gesture). Ownership
+    follows the last session to assert (`assertOwnership()` on SPA load, admin re-asserts per
+    panel load) — a shared browser must not keep receiving the other role's pushes.
+  - Lockscreen hygiene: NO investor names in admin pushes, no IBANs, and NO admin free-text
+    (`reason`) anywhere — details live behind auth.
+  - Morning digest `push:payout-digest` 09:05 (kill switch `push_payout_digest_enabled`), 24h
+    window, **only payout-engine references** (`loan:%:investment:%`) — legacy repayment/buyback/
+    early-repayment push instantly on their own, so counting them here double-announced euros.
+  - GDPR: `AccountDeletionService` deletes push subscriptions (endpoint = personal data).
+  - Deploy: migrate + VAPID keys on prod + **`queue:restart`** (delivery now needs the worker).
 - Prod: Hetzner, NGINX (`.htaccess` inert — vhost must carry Permissions-Policy & body limits;
   bit us with `camera=()` + 1M body limit). Unattended-upgrades restarts MySQL ⇒ short blips.
 - Email: `.env.example` ships `MAIL_MAILER=log` (this dev machine currently runs smtp);
