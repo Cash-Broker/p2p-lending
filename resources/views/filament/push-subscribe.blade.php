@@ -36,6 +36,40 @@
         if (event.data && event.data.type === 'vama-push-refresh') window.location.reload();
     });
 
+    // Panel logout must revoke THIS admin account's device, mirroring the SPA
+    // (2026-08-17): otherwise the admin stream — «Заявка за теглене: X €» and
+    // friends — kept flowing to a browser nobody is logged into. Only this
+    // account's row is dropped; other accounts on the same browser keep theirs.
+    function revokeOnLogout() {
+        navigator.serviceWorker.getRegistration('/sw.js').then(function (reg) {
+            return reg && reg.pushManager.getSubscription();
+        }).then(function (sub) {
+            if (!sub) return;
+            // keepalive: the request must outlive the page it started on.
+            return fetch('/api/push/subscribe', {
+                method: 'DELETE',
+                credentials: 'same-origin',
+                keepalive: true,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-XSRF-TOKEN': xsrfToken() || '',
+                },
+                body: JSON.stringify({ endpoint: sub.endpoint }),
+            });
+        }).catch(function () { /* best-effort */ });
+    }
+
+    document.addEventListener('submit', function (e) {
+        var action = e.target && e.target.action ? String(e.target.action) : '';
+        if (action.indexOf('/logout') !== -1) revokeOnLogout();
+    }, true);
+    document.addEventListener('click', function (e) {
+        var el = e.target.closest && e.target.closest('a[href*="logout"], [data-logout]');
+        if (el) revokeOnLogout();
+    }, true);
+
     // gesture = the admin just clicked/allowed → earns the «здравей» push.
     // The per-page-load re-assert passes false so it stays silent.
     function subscribe(gesture) {

@@ -100,11 +100,11 @@ export async function assertOwnership() {
     const reg = await navigator.serviceWorker.getRegistration('/sw.js')
     let subscription = await reg?.pushManager.getSubscription()
 
-    // Permission granted but no subscription = this device was unsubscribed
-    // (a previous logout revokes it). Re-enrol SILENTLY — no browser prompt is
+    // Permission granted but no subscription — e.g. the browser dropped it, or
+    // an older build's logout unsubscribed it. Re-enrol SILENTLY: no prompt is
     // needed once permission is granted, and without this the device stayed
-    // permanently unnotified while both the banner and the Профил card
-    // believed it was already on (review 2026-08-17).
+    // permanently unnotified while both the card and the banner believed it was
+    // already on (review 2026-08-17).
     if (!subscription) {
       await enablePush({ confirm: false })
 
@@ -134,20 +134,15 @@ export async function disablePush() {
     const subscription = await reg?.pushManager.getSubscription()
     if (!subscription) return
 
-    const { endpoint } = subscription
-
-    // Revoke LOCALLY first: this is the step that actually stops the device
-    // receiving pushes, and it needs no network. Doing the server call first
-    // meant a dead session could skip it entirely (review 2026-08-17).
-    await subscription.unsubscribe()
-
-    try {
-      await api.delete('/push/subscribe', { data: { endpoint } })
-    } catch {
-      // Session already dead / offline — the row is pruned on the next send
-      // when the push service reports the endpoint gone (404/410).
-    }
+    // Drop only THIS account's row. The browser subscription itself is shared
+    // infrastructure for the whole origin: unsubscribing it on logout also
+    // killed the OTHER account registered on the same browser — Reni holds an
+    // admin and an investor account and her investor logout silenced the admin
+    // stream until she reopened /admin (2026-08-17). No server row ⇒ no pushes
+    // for the account that left, which is all the logout has to guarantee.
+    await api.delete('/push/subscribe', { data: { endpoint: subscription.endpoint } })
   } catch {
-    // Push cleanup is best-effort by design.
+    // Session already dead / offline — the row is pruned on the next send
+    // when the push service reports the endpoint gone (404/410).
   }
 }
