@@ -115,8 +115,11 @@ class UserResource extends Resource
                     ->placeholder('—')
                     ->sortable()
                     ->summarize(Sum::make('total')->label('Общо')->money('EUR')),
-                Tables\Columns\TextColumn::make('created_at')->label('Регистрация')->date('d.m.Y'),
+                Tables\Columns\TextColumn::make('created_at')->label('Регистрация')->date('d.m.Y')->sortable(),
             ])
+            // Без изричен defaultSort Filament подрежда по `id` ВЪЗХОДЯЩО —
+            // най-новата регистрация оставаше на последната страница.
+            ->defaultSort('created_at', 'desc')
             ->filters([
                 Tables\Filters\SelectFilter::make('account_type')->label('Тип акаунт')
                     ->options(['individual' => 'Физическо лице', 'legal_entity' => 'Юридическо лице']),

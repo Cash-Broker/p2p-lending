@@ -35,7 +35,11 @@ class PortfolioController extends Controller
             // (investments predating the contract feature have none).
             ->withExists('contract')
             ->where('user_id', $request->user()->id)
+            // `id desc` breaks ties — two positions taken in the same second
+            // (or a flash-promo minute) otherwise leave LIMIT/OFFSET free to
+            // repeat one row across pages and drop another.
             ->latest('invested_at')
+            ->orderByDesc('id')
             ->paginate(15);
 
         return response()->json([

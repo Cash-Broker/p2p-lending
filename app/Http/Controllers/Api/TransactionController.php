@@ -28,7 +28,12 @@ class TransactionController extends Controller
             $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
         }
 
-        $transactions = $query->latest('created_at')->paginate(20);
+        // `id desc` breaks ties on created_at, which are the rule rather than
+        // the exception here: one repayment writes principal + interest in the
+        // same transaction, the payout engine writes a whole batch. Without
+        // it, LIMIT/OFFSET could show the investor the same row on two pages
+        // and hide another one entirely.
+        $transactions = $query->latest('created_at')->orderByDesc('id')->paginate(20);
 
         return response()->json([
             'data' => TransactionResource::collection($transactions),

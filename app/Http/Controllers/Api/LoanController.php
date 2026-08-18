@@ -77,6 +77,13 @@ class LoanController extends Controller
             };
         }, fn ($q) => $q->latest('published_at'));
 
+        // Tie-break. Every key above repeats across loans — dozens share a
+        // term, a rate or a publish minute — and LIMIT/OFFSET over a
+        // non-unique ORDER BY has no defined row order in MySQL: the same
+        // loan can appear on two pages while another never shows up at all.
+        // `id desc` also puts the newest loan first inside a tie.
+        $query->orderByDesc('loans.id');
+
         $loans = $query->paginate(12);
 
         return response()->json([
@@ -341,6 +348,16 @@ class LoanController extends Controller
                     ->orWhereHas('grants', fn ($g) => $g->where('user_id', $userId))
                     ->orWhereHas('investments', fn ($i) => $i->where('user_id', $userId));
             })
+            // Last favorited on top. Without an explicit order this list had
+            // NO ordering at all — MySQL was free to return the rows in any
+            // order, which also makes paging over them unreliable.
+            ->orderByDesc(
+                Favorite::select('created_at')
+                    ->whereColumn('favorites.loan_id', 'loans.id')
+                    ->where('favorites.user_id', $userId)
+                    ->limit(1)
+            )
+            ->orderByDesc('loans.id')
             ->paginate(12);
 
         return response()->json([
@@ -394,8 +411,12 @@ class LoanController extends Controller
     {
         $this->authorize('viewEvents', $loan);
 
+        // `id desc` breaks ties: a cron pass (late detection, buyback) writes
+        // several events with the same occurred_at, and a paginated list
+        // needs one defined order to page through.
         $events = $loan->events()
             ->latest('occurred_at')
+            ->orderByDesc('id')
             ->paginate(20);
 
         return response()->json([

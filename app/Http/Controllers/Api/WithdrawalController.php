@@ -105,7 +105,10 @@ class WithdrawalController extends Controller
         $this->authorize('viewAny', WithdrawalRequest::class);
 
         $withdrawals = WithdrawalRequest::where('user_id', $request->user()->id)
+            // Newest request first; `id` keeps paging deterministic when two
+            // requests share a created_at second.
             ->latest()
+            ->orderByDesc('id')
             ->paginate(15);
 
         return response()->json([

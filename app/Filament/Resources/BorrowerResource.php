@@ -80,8 +80,11 @@ class BorrowerResource extends Resource
                     ->placeholder('—')
                     ->formatStateUsing(fn (?string $state) => $state ? '****'.substr($state, -4) : '—'),
                 Tables\Columns\TextColumn::make('loans_count')->label('Кредити')->counts('loans'),
-                Tables\Columns\TextColumn::make('created_at')->label('Създаден')->date('d.m.Y'),
+                Tables\Columns\TextColumn::make('created_at')->label('Създаден')->date('d.m.Y')->sortable(),
             ])
+            // Както при потребителите: без това списъкът тръгваше от най-стария
+            // кредитополучател (подредба по `id` възходящо).
+            ->defaultSort('created_at', 'desc')
             ->actions([EditAction::make()]);
     }
 
