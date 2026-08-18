@@ -331,6 +331,11 @@ spendable only when the investor has money genuinely working in the platform. Ru
   SEVERAL loans (the sum counts); «след третия падеж» = three RECEIVED payouts; a plan with
   fewer rows than required (capitalized pays once, at maturity) unlocks on its last one; NO
   claim button — «важното е да се изпълнят условията, тегленето си е теглене».
+- ⚠ Prod check 2026-08-18: all 7 live loans are `payout_mode=automatic`, so «three RECEIVED
+  payouts» vs «three elapsed due dates» differ by 15 minutes (04:00 cron marks paid, 04:15
+  releases). The distinction only becomes visible if a MANUAL-payout loan ever exists — then
+  the bonus waits for the admin's «Пусни плащане сега» click. Not worth a client question until
+  that happens.
 - **Assumptions to confirm if she ever asks:** only investments made AFTER the grant count
   (`qualifies_from`; for promo grants it is the investment's own timestamp, so its investment
   qualifies); partial fulfilment releases nothing; grants never expire; grandfathered `bonus`
