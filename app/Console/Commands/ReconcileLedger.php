@@ -50,39 +50,45 @@ class ReconcileLedger extends Command
      * @var array<string, array{cash:int, invested:int, earned:int, accrued:int}>
      */
     private const LEDGER_MAP = [
-        Transaction::TYPE_DEPOSIT => ['cash' => 1,  'invested' => 0,  'earned' => 0, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_WITHDRAWAL => ['cash' => -1, 'invested' => 0,  'earned' => 0, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_FEE => ['cash' => -1, 'invested' => 0,  'earned' => 0, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_INVESTMENT => ['cash' => -1, 'invested' => 1,  'earned' => 0, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_REPAYMENT_PRINCIPAL => ['cash' => 1,  'invested' => -1, 'earned' => 0, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_REPAYMENT_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_BUYBACK_PRINCIPAL => ['cash' => 1,  'invested' => -1, 'earned' => 0, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_BUYBACK_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL => ['cash' => 1, 'invested' => -1, 'earned' => 0, 'accrued' => 0, 'bonus_locked' => 0],
-        Transaction::TYPE_EARLY_REPAYMENT_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0, 'bonus_locked' => 0],
+        Transaction::TYPE_DEPOSIT => ['cash' => 1,  'invested' => 0,  'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_WITHDRAWAL => ['cash' => -1, 'invested' => 0,  'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_FEE => ['cash' => -1, 'invested' => 0,  'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_INVESTMENT => ['cash' => -1, 'invested' => 1,  'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_REPAYMENT_PRINCIPAL => ['cash' => 1,  'invested' => -1, 'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_REPAYMENT_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0],
+        Transaction::TYPE_BUYBACK_PRINCIPAL => ['cash' => 1,  'invested' => -1, 'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_BUYBACK_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0],
+        Transaction::TYPE_EARLY_REPAYMENT_PRINCIPAL => ['cash' => 1, 'invested' => -1, 'earned' => 0, 'accrued' => 0],
+        Transaction::TYPE_EARLY_REPAYMENT_INTEREST => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => 0],
         // Locked profit accrues (текущо салдо grows), no cash move yet.
-        Transaction::TYPE_INTEREST_ACCRUED => ['cash' => 0,  'invested' => 0,  'earned' => 0, 'accrued' => 1, 'bonus_locked' => 0],
+        Transaction::TYPE_INTEREST_ACCRUED => ['cash' => 0,  'invested' => 0,  'earned' => 0, 'accrued' => 1],
         // Locked profit released into spendable available (+ earned counter).
-        Transaction::TYPE_INTEREST_RELEASED => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => -1, 'bonus_locked' => 0],
+        Transaction::TYPE_INTEREST_RELEASED => ['cash' => 1,  'invested' => 0,  'earned' => 1, 'accrued' => -1],
         // Locked profit written OFF (principal-only buyback: the originator
         // does not cover interest, so the accrued promise is reversed, not
         // paid out). No cash move, no earned income.
-        Transaction::TYPE_INTEREST_ACCRUAL_REVERSED => ['cash' => 0, 'invested' => 0, 'earned' => 0, 'accrued' => -1, 'bonus_locked' => 0],
+        Transaction::TYPE_INTEREST_ACCRUAL_REVERSED => ['cash' => 0, 'invested' => 0, 'earned' => 0, 'accrued' => -1],
         // Admin-granted promotional credit — spendable cash like a deposit,
         // but with NO bank wire behind it. Wallet-vs-ledger reconciliation
         // treats it as cash-in; the BANK-statement side must exclude it
         // (SUM(type='bonus') = platform marketing spend, not client money).
-        Transaction::TYPE_BONUS => ['cash' => 1, 'invested' => 0, 'earned' => 0, 'accrued' => 0, 'bonus_locked' => 0],
-        // Conditional bonus (Reni 2026-08-18): granted into the LOCKED
-        // bucket — visible to the investor, spendable by nobody until the
-        // investment condition is met. Same marketing-spend note as
-        // TYPE_BONUS: the bank statement must not expect a wire for it.
-        Transaction::TYPE_BONUS_LOCKED => ['cash' => 0, 'invested' => 0, 'earned' => 0, 'accrued' => 0, 'bonus_locked' => 1],
-        // Condition met — the bonus becomes real money.
-        Transaction::TYPE_BONUS_RELEASED => ['cash' => 1, 'invested' => 0, 'earned' => 0, 'accrued' => 0, 'bonus_locked' => -1],
-        // Written off (admin cancel / account closure): leaves the bucket,
-        // reaches no one.
-        Transaction::TYPE_BONUS_CANCELLED => ['cash' => 0, 'invested' => 0, 'earned' => 0, 'accrued' => 0, 'bonus_locked' => -1],
+        Transaction::TYPE_BONUS => ['cash' => 1, 'invested' => 0, 'earned' => 0, 'accrued' => 0],
+        // Conditional bonus (Reni 2026-08-18): spendable cash from the start
+        // — the investor may invest it immediately — but not WITHDRAWABLE
+        // until its condition is met. The restriction is a floor inside
+        // WalletService::reserve(), not a separate bucket, so as far as the
+        // ledger is concerned this is cash-in like any other bonus. Same
+        // marketing-spend note as TYPE_BONUS: no bank wire behind it.
+        Transaction::TYPE_BONUS_LOCKED => ['cash' => 1, 'invested' => 0, 'earned' => 0, 'accrued' => 0],
+        // LEGACY (never written since 2026-08-18): under the short-lived
+        // separate-bucket design this moved the bonus into `available`. Rows
+        // from that window are already counted by their grant above, so this
+        // must contribute nothing — mapped, not removed, because default-deny
+        // fails on any persisted type without a rule.
+        Transaction::TYPE_BONUS_RELEASED => ['cash' => 0, 'invested' => 0, 'earned' => 0, 'accrued' => 0],
+        // Written off (admin cancel / account closure) — the grant is debited
+        // back out of the balance.
+        Transaction::TYPE_BONUS_CANCELLED => ['cash' => -1, 'invested' => 0, 'earned' => 0, 'accrued' => 0],
     ];
 
     public function handle(): int
@@ -123,7 +129,6 @@ class ReconcileLedger extends Command
                 $expectedInvested = '0.00';
                 $expectedEarned = '0.00';
                 $expectedAccrued = '0.00';
-                $expectedBonusLocked = '0.00';
 
                 foreach (self::LEDGER_MAP as $type => $signs) {
                     $amount = (string) ($sums[$type] ?? '0.00');
@@ -131,7 +136,6 @@ class ReconcileLedger extends Command
                     $expectedInvested = bcadd($expectedInvested, bcmul((string) $signs['invested'], $amount, 2), 2);
                     $expectedEarned = bcadd($expectedEarned, bcmul((string) $signs['earned'], $amount, 2), 2);
                     $expectedAccrued = bcadd($expectedAccrued, bcmul((string) $signs['accrued'], $amount, 2), 2);
-                    $expectedBonusLocked = bcadd($expectedBonusLocked, bcmul((string) $signs['bonus_locked'], $amount, 2), 2);
                 }
 
                 $expectedAvailablePlusReserved = $expectedCash;
@@ -153,10 +157,6 @@ class ReconcileLedger extends Command
                     $errors[] = "accrued: expected={$expectedAccrued}, actual={$wallet->accrued}";
                 }
 
-                if (bccomp($wallet->bonus_locked, $expectedBonusLocked, 2) !== 0) {
-                    $errors[] = "bonus_locked: expected={$expectedBonusLocked}, actual={$wallet->bonus_locked}";
-                }
-
                 if (! empty($errors)) {
                     $mismatches++;
                     $errorMsg = "Ledger mismatch for user #{$userId}: ".implode('; ', $errors);
@@ -170,13 +170,11 @@ class ReconcileLedger extends Command
                             'reserved' => $wallet->reserved,
                             'invested' => $wallet->invested,
                             'earned' => $wallet->earned,
-                            'bonus_locked' => $wallet->bonus_locked,
                         ],
                         'expected' => [
                             'available+reserved' => $expectedAvailablePlusReserved,
                             'invested' => $expectedInvested,
                             'earned' => $expectedEarned,
-                            'bonus_locked' => $expectedBonusLocked,
                         ],
                         'errors' => $errors,
                     ];

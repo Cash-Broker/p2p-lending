@@ -21,6 +21,9 @@ use UnitEnum;
  * (Reni 2026-08-18). Grants are created from «Начисли бонус» / the promo
  * engine and released by the `bonuses:release-eligible` cron — the only
  * action here is cancelling one that should never be paid.
+ *
+ * A granted bonus is spendable for INVESTING right away; «Заключен» here means
+ * only that it cannot be withdrawn yet.
  */
 class BonusGrantResource extends Resource
 {
@@ -55,7 +58,7 @@ class BonusGrantResource extends Resource
 
     public static function getNavigationBadgeTooltip(): ?string
     {
-        return 'Заключени бонуси, чакащи изпълнение на условието';
+        return 'Бонуси, чакащи изпълнение на условието за теглене';
     }
 
     public static function table(Table $table): Table
@@ -121,7 +124,7 @@ class BonusGrantResource extends Resource
                     ->color('danger')
                     ->visible(fn (BonusGrant $record) => $record->isLocked())
                     ->modalHeading('Отмени заключения бонус')
-                    ->modalDescription('Сумата се отписва от бонус сметката на инвеститора и не му се изплаща.')
+                    ->modalDescription('Сумата се отписва от баланса на инвеститора и не му се изплаща. Възможно е само докато бонусът не е инвестиран.')
                     ->form([
                         Forms\Components\Textarea::make('reason')
                             ->label('Причина')
@@ -144,8 +147,13 @@ class BonusGrantResource extends Resource
 
                             Notification::make()->title('Бонусът е отменен')
                                 ->body("{$cancelled->amount} € са отписани.")->success()->send();
-                        } catch (\InvalidArgumentException $e) {
-                            Notification::make()->title('Отмяната е отказана')->body($e->getMessage())->danger()->send();
+                        } catch (\InvalidArgumentException) {
+                            // The investor already put the bonus to work — there
+                            // is nothing left in the balance to take back, and
+                            // this codebase never drives one negative.
+                            Notification::make()->title('Отмяната е отказана')
+                                ->body('Бонусът вече е използван — свободните средства не го покриват. Може да се отмени само докато стои неизползван.')
+                                ->danger()->send();
                         } catch (\Throwable $e) {
                             Log::error('Bonus cancel failed', ['bonus_grant_id' => $record->id, 'error' => $e->getMessage()]);
                             Notification::make()->title('Грешка при отмяна на бонуса')->danger()->send();

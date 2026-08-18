@@ -22,10 +22,11 @@ use Tests\TestCase;
 
 /**
  * «Начисли бонус» (boss 2026-08-09, reworked by Reni 2026-08-18): the admin
- * grants promotional credit without a deposit code — but the money lands
- * LOCKED (`bonus_locked` bucket, TYPE_BONUS_LOCKED row) together with the
- * base it has to be earned against. Releasing it is BonusLockTest's subject;
- * this file covers the grant itself.
+ * grants promotional credit without a deposit code. The money is spendable
+ * balance at once — the investor may invest it — but a `bonus_grants` row
+ * records the base it must be earned against before it can be WITHDRAWN.
+ * The condition and the withdrawal floor are BonusLockTest's subject; this
+ * file covers the grant itself.
  */
 class AdminBonusTest extends TestCase
 {
@@ -63,11 +64,9 @@ class AdminBonusTest extends TestCase
             ])
             ->assertHasNoActionErrors();
 
-        $wallet = $user->wallet->fresh();
-        // The bonus is NOT spendable: available is untouched, the money waits
-        // in its own bucket until the investment condition is met.
-        $this->assertSame('50.00', $wallet->available);
-        $this->assertSame('150.00', $wallet->bonus_locked);
+        // The bonus is investable at once — it joins the balance — while the
+        // grant row keeps the condition that gates WITHDRAWING it.
+        $this->assertSame('200.00', $user->wallet->fresh()->available);
 
         $this->assertDatabaseHas('transactions', [
             'user_id' => $user->id,
@@ -113,7 +112,7 @@ class AdminBonusTest extends TestCase
             ->callAction('grant_bonus', data: ['amount' => '100', 'base_amount' => '2000', 'reason' => 'Реферал'])
             ->assertHasNoActionErrors();
 
-        $this->assertSame('100.00', $user->wallet->fresh()->bonus_locked);
+        $this->assertSame('100.00', $user->wallet->fresh()->available);
         $this->assertSame(1, Transaction::where('user_id', $user->id)->count());
         $this->assertSame(1, BonusGrant::where('user_id', $user->id)->count());
 
@@ -122,7 +121,7 @@ class AdminBonusTest extends TestCase
             ->callAction('grant_bonus', data: ['amount' => '50', 'base_amount' => '1000', 'reason' => 'Друга кампания'])
             ->assertHasNoActionErrors();
 
-        $this->assertSame('150.00', $user->wallet->fresh()->bonus_locked);
+        $this->assertSame('150.00', $user->wallet->fresh()->available);
     }
 
     public function test_reason_longer_than_248_chars_is_rejected(): void
@@ -165,9 +164,7 @@ class AdminBonusTest extends TestCase
             ->callAction('grant_bonus', data: ['amount' => '500', 'base_amount' => '100', 'reason' => 'x'])
             ->assertHasActionErrors(['base_amount']);
 
-        $wallet = $user->wallet->fresh();
-        $this->assertSame('0.00', $wallet->available);
-        $this->assertSame('0.00', $wallet->bonus_locked);
+        $this->assertSame('0.00', $user->wallet->fresh()->available);
         $this->assertSame(0, Transaction::where('user_id', $user->id)->count());
     }
 
@@ -180,15 +177,15 @@ class AdminBonusTest extends TestCase
             ->assertActionHidden('grant_bonus');
     }
 
-    public function test_wallet_service_bonus_locked_fills_the_locked_bucket_only(): void
+    public function test_wallet_service_conditional_bonus_credits_the_balance(): void
     {
         $user = $this->investor('10.00');
 
         $tx = app(WalletService::class)->bonusLocked($user->id, '99.50', 'Бонус: тест', 'bonus:admin:1');
 
-        $wallet = $user->wallet->fresh();
-        $this->assertSame('10.00', $wallet->available);
-        $this->assertSame('99.50', $wallet->bonus_locked);
+        $this->assertSame('109.50', $user->wallet->fresh()->available);
+        // Own ledger type: conditional grants stay distinguishable from the
+        // pre-2026-08-18 free ones.
         $this->assertSame(Transaction::TYPE_BONUS_LOCKED, $tx->type);
         $this->assertSame('99.50', (string) $tx->amount);
     }
@@ -258,9 +255,7 @@ class AdminBonusTest extends TestCase
             ])
             ->assertHasNoActionErrors();
 
-        $wallet = $user->wallet->fresh();
-        $this->assertSame('10.00', $wallet->available);
-        $this->assertSame('200.00', $wallet->bonus_locked);
+        $this->assertSame('210.00', $user->wallet->fresh()->available);
 
         $this->assertDatabaseHas('transactions', [
             'user_id' => $user->id,
@@ -302,7 +297,7 @@ class AdminBonusTest extends TestCase
             ])
             ->assertHasNoActionErrors();
 
-        $this->assertSame('0.00', $user->wallet->fresh()->bonus_locked);
+        $this->assertSame('0.00', $user->wallet->fresh()->available);
         $this->assertSame(0, Transaction::count());
     }
 

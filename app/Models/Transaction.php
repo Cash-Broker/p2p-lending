@@ -68,21 +68,24 @@ class Transaction extends Model
     const TYPE_BONUS = 'bonus';
 
     // Conditional bonus (Reni 2026-08-18) — the successor of TYPE_BONUS, which
-    // survives ONLY for rows granted under the old "spendable immediately"
-    // terms. The money lands in the wallet's `bonus_locked` bucket, outside
-    // `available`: it can neither be withdrawn nor invested until the investor
-    // has served the agreed investment. Like TYPE_BONUS it is platform
-    // marketing spend with NO bank wire behind it — bank-statement
+    // survives ONLY for rows granted under the old "no strings" terms. The
+    // money lands in `available` and IS investable at once; what it is not, is
+    // withdrawable — WalletService::reserve() holds back a floor equal to the
+    // investor's still-locked grants (`bonus_grants`). Like TYPE_BONUS it is
+    // platform marketing spend with NO bank wire behind it — bank-statement
     // reconciliation must exclude it.
+    // (The name is a leftover from the first, short-lived design that parked
+    // the money in its own bucket; transactions are immutable, so the type
+    // string cannot be renamed after the fact.)
     const TYPE_BONUS_LOCKED = 'bonus_locked';
 
-    // The condition was met: bonus_locked → available. This is the moment the
-    // bonus becomes real, spendable money for the investor.
+    // LEGACY, never written since 2026-08-18: under that first design this was
+    // the bucket → available move. Releasing a grant now only drops the
+    // withdrawal floor, which is not a money movement and writes no row.
     const TYPE_BONUS_RELEASED = 'bonus_released';
 
-    // A locked bonus written off — admin cancellation, or an account closing
-    // with the condition never met. Leaves the bucket, reaches no one: the
-    // platform never owed it.
+    // A conditional bonus written off before it was earned — admin
+    // cancellation, or an account closing. Debits the balance back out.
     const TYPE_BONUS_CANCELLED = 'bonus_cancelled';
 
     const TYPES = [

@@ -30,14 +30,14 @@ class BonusReleasedNotification extends Notification
         $message = (new MailMessage)
             ->subject("Бонусът ви е освободен — {$this->amount} € — Vamaasset")
             ->greeting("Здравейте, {$notifiable->name}!")
-            ->line("Изпълнихте условието и бонусът от {$this->amount} € вече е свободен.");
+            ->line("Изпълнихте условието и бонусът от {$this->amount} € вече може да се тегли.");
 
         if ($this->reason !== '') {
             $message->line("Основание: {$this->reason}");
         }
 
         return $message
-            ->line('Сумата е при свободните ви средства — можете да я инвестирате или изтеглите.')
+            ->line('Сумата е при свободните ви средства — можете да я изтеглите или да я инвестирате отново.')
             ->action('Виж баланс', config('app.url').'/dashboard')
             ->salutation('Поздрави, екипът на Vamaasset');
     }
@@ -55,7 +55,7 @@ class BonusReleasedNotification extends Notification
     {
         return $this->webPushMessage(
             "Бонусът ви е освободен: {$this->amount} €",
-            'Сумата вече е свободна за теглене.',
+            'Сумата вече може да се тегли.',
             config('app.url').'/dashboard',
         );
     }

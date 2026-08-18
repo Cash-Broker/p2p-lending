@@ -137,7 +137,7 @@ function formatAmount(val) {
 const txTypeLabels = {
   deposit: 'Депозит',
   bonus: 'Бонус',
-  bonus_locked: 'Бонус (заключен)',
+  bonus_locked: 'Бонус (условен)',
   bonus_released: 'Освободен бонус',
   bonus_cancelled: 'Отменен бонус',
   withdrawal: 'Теглене',
@@ -166,7 +166,7 @@ function rateDisplay(loan) {
 
 // Same convention as TransactionsPage: cash-in +, cash-out -, everything
 // else (accrual bookkeeping / unknown newer types) neutral without a sign.
-const incomingTypes = ['deposit', 'bonus', 'bonus_released', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
+const incomingTypes = ['deposit', 'bonus', 'bonus_locked', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
 const outgoingTypes = ['withdrawal', 'investment', 'fee']
 </script>
 

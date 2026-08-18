@@ -49,6 +49,32 @@ class AccountDeletionService
             // Lock wallet FIRST to prevent concurrent financial operations
             $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->first();
 
+            // Conditional bonuses are written off FIRST (Reni 2026-08-18).
+            // They live inside `available` but are not withdrawable, so
+            // checking the balance before clearing them would trap the
+            // investor: they could never empty an account holding an unearned
+            // bonus. The money was never theirs — it leaves as
+            // TYPE_BONUS_CANCELLED so the ledger can still explain it, rather
+            // than vanishing with the wallet row.
+            foreach (BonusGrant::where('user_id', $userId)->locked()->lockForUpdate()->get() as $grant) {
+                try {
+                    $this->bonusService->cancel($grant, null, 'Закрит акаунт (GDPR изтриване)');
+                } catch (\InvalidArgumentException $e) {
+                    // The balance no longer covers the bonus — it is inside an
+                    // open investment. Don't fail with a raw exception: the
+                    // `invested > 0` check below is the honest answer to give
+                    // the user, and it refuses the deletion anyway.
+                    Log::warning('Could not forfeit conditional bonus on account closure', [
+                        'user_id' => $userId,
+                        'bonus_grant_id' => $grant->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            // Re-read: the write-offs above just changed `available`.
+            $wallet = $wallet?->fresh();
+
             // All balance checks inside transaction with lock — prevents race conditions
             if ($wallet && bccomp($wallet->invested, '0', 2) > 0) {
                 throw ValidationException::withMessages([
@@ -83,16 +109,6 @@ class AccountDeletionService
                 'email' => $user->email,
                 'ip_address' => request()?->ip(),
             ]);
-
-            // Conditional bonuses are NOT a reason to refuse the deletion:
-            // unlocking one requires investing, so blocking on it would trap
-            // the person in the platform. The money was never earned, so it is
-            // written off explicitly (TYPE_BONUS_CANCELLED) instead of
-            // vanishing with the wallet row — the ledger must be able to
-            // explain where every locked cent went (Reni 2026-08-18).
-            foreach (BonusGrant::where('user_id', $userId)->locked()->lockForUpdate()->get() as $grant) {
-                $this->bonusService->cancel($grant, null, 'Закрит акаунт (GDPR изтриване)');
-            }
 
             // Retire the unused deposit code placeholder(s) (amount=NULL —
             // funded pending deposits were already blocked above). Deposit

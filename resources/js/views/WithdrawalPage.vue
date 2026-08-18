@@ -22,6 +22,12 @@ const success = ref(false)
 const feeConfig = ref({ withdrawal: { enabled: false, amount: '0.00' } })
 
 const availableBalance = computed(() => auth.user?.wallet?.available ?? '0.00')
+// «Свободни за теглене» е различно от «свободни», когато има начислен бонус,
+// който още не е изработен: бонусът може да се инвестира, но не и да се тегли.
+const withdrawableBalance = computed(() => auth.user?.wallet?.withdrawable ?? availableBalance.value)
+const lockedBonus = computed(() =>
+  Math.max(0, parseFloat(availableBalance.value) - parseFloat(withdrawableBalance.value)),
+)
 const isKycApproved = computed(() => auth.user?.kyc_status === 'approved')
 
 const feeEnabled = computed(() => feeConfig.value.withdrawal.enabled && parseFloat(feeConfig.value.withdrawal.amount) > 0)
@@ -96,7 +102,7 @@ function openConfirm() {
     errors.value = { amount: ['Минималната сума е 10.00 €.'] }
     return
   }
-  if (parseFloat(form.value.amount) > parseFloat(availableBalance.value)) {
+  if (parseFloat(form.value.amount) > parseFloat(withdrawableBalance.value)) {
     errors.value = { amount: ['Недостатъчен свободен баланс.'] }
     return
   }
@@ -194,9 +200,15 @@ onMounted(() => load())
           </div>
 
           <template v-else>
-            <div class="flex items-center justify-between text-sm mb-4 p-3 rounded-xl bg-gray-50">
-              <span class="text-gray-500">Свободен баланс</span>
-              <span class="font-semibold text-navy-700">{{ formatAmount(availableBalance) }} €</span>
+            <div class="text-sm mb-4 p-3 rounded-xl bg-gray-50">
+              <div class="flex items-center justify-between">
+                <span class="text-gray-500">Свободни за теглене</span>
+                <span class="font-semibold text-navy-700">{{ formatAmount(withdrawableBalance) }} €</span>
+              </div>
+              <p v-if="lockedBonus > 0" class="mt-1.5 text-xs text-gray-400">
+                Още {{ formatAmount(lockedBonus) }} € са бонус в изчакване — може да се инвестира,
+                но се тегли след изпълнение на условието.
+              </p>
             </div>
 
             <form @submit.prevent="openConfirm" class="space-y-4">

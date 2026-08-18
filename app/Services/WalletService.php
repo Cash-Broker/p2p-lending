@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\BonusGrant;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
@@ -98,123 +99,41 @@ class WalletService
     }
 
     /**
-     * Grant a bonus into the LOCKED bucket (Reni 2026-08-18).
+     * Grant a CONDITIONAL bonus (Reni 2026-08-18).
      *
-     * The money exists and is visible to the investor, but sits outside
-     * `available`: it cannot be withdrawn and cannot be invested until
-     * BonusService confirms the investment condition. Every spend path in the
-     * platform reads `available`, so keeping the bonus out of it is the whole
-     * enforcement — there is no second place to forget a check.
+     * The money is spendable balance from the first second — the investor may
+     * invest it right away — but it is not yet CASHABLE: `reserve()` below
+     * keeps a floor equal to the investor's still-locked grants, so a
+     * withdrawal can never reach a bonus that has not been earned.
+     *
+     * Own ledger type (not TYPE_BONUS) so the conditional grants stay
+     * distinguishable from the pre-2026-08-18 free ones. Same marketing-spend
+     * note as TYPE_BONUS: no bank wire stands behind it.
      */
     public function bonusLocked(int $userId, string $amount, string $description, ?string $reference = null): Transaction
     {
-        if (bccomp($amount, '0', 2) <= 0) {
-            throw new InvalidArgumentException('Bonus amount must be positive.');
-        }
-
-        return DB::transaction(function () use ($userId, $amount, $description, $reference) {
-            $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
-
-            $wallet->forceFill([
-                'bonus_locked' => bcadd($wallet->bonus_locked, $amount, 2),
-            ])->save();
-
-            return Transaction::create([
-                'user_id' => $userId,
-                'type' => Transaction::TYPE_BONUS_LOCKED,
-                'amount' => $amount,
-                'description' => $description,
-                'reference' => $reference,
-                'ip_address' => request()?->ip(),
-                'user_agent' => request()?->userAgent(),
-            ]);
-        });
+        return $this->credit($userId, $amount, Transaction::TYPE_BONUS_LOCKED, $description, $reference);
     }
 
     /**
-     * The condition was met: move a locked bonus into spendable `available`.
-     */
-    public function releaseBonus(int $userId, string $amount, string $description, ?string $reference = null): Transaction
-    {
-        return $this->moveOutOfLockedBonus(
-            $userId,
-            $amount,
-            Transaction::TYPE_BONUS_RELEASED,
-            $description,
-            $reference,
-            creditAvailable: true,
-        );
-    }
-
-    /**
-     * Write a locked bonus off — admin cancellation, or an account closing
-     * with the condition never met. The bucket shrinks and the money reaches
-     * no one: it was a conditional promise the investor did not earn.
+     * Reverse a conditional bonus that must not be paid — admin cancellation,
+     * or an account closing with the condition never met.
+     *
+     * Throws when the balance no longer holds it: once the investor has put
+     * the bonus to work, there is nothing to claw back, and inventing a
+     * negative balance to "fix" the books is exactly what this codebase never
+     * does. The caller turns that into an explanation for the admin.
      */
     public function cancelLockedBonus(int $userId, string $amount, string $description, ?string $reference = null): Transaction
     {
-        return $this->moveOutOfLockedBonus(
-            $userId,
-            $amount,
-            Transaction::TYPE_BONUS_CANCELLED,
-            $description,
-            $reference,
-            creditAvailable: false,
-        );
-    }
-
-    /**
-     * Shared guts of release/cancel. No clamping: a bucket that would go
-     * negative means the caller's bookkeeping is wrong, and paying out an
-     * unbacked bonus is worse than failing loudly — so it throws and the whole
-     * transaction rolls back.
-     */
-    private function moveOutOfLockedBonus(
-        int $userId,
-        string $amount,
-        string $type,
-        string $description,
-        ?string $reference,
-        bool $creditAvailable,
-    ): Transaction {
-        if (bccomp($amount, '0', 2) <= 0) {
-            throw new InvalidArgumentException('Bonus amount must be positive.');
+        try {
+            return $this->debit($userId, $amount, Transaction::TYPE_BONUS_CANCELLED, $description, $reference);
+        } catch (InvalidArgumentException $e) {
+            throw new InvalidArgumentException(
+                'Locked bonus is no longer covered by the available balance.',
+                previous: $e,
+            );
         }
-
-        return DB::transaction(function () use ($userId, $amount, $type, $description, $reference, $creditAvailable) {
-            $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
-
-            if (bccomp($wallet->bonus_locked, $amount, 2) < 0) {
-                $reconciliationId = (string) Str::uuid();
-                Log::error('Locked-bonus underflow refused', [
-                    'reconciliation_id' => $reconciliationId,
-                    'user_id' => $userId,
-                    'bonus_locked' => (string) $wallet->bonus_locked,
-                    'requested' => $amount,
-                    'type' => $type,
-                ]);
-
-                throw new InvalidArgumentException(
-                    "Insufficient locked bonus balance (reconciliation_id: {$reconciliationId})."
-                );
-            }
-
-            $changes = ['bonus_locked' => bcsub($wallet->bonus_locked, $amount, 2)];
-            if ($creditAvailable) {
-                $changes['available'] = bcadd($wallet->available, $amount, 2);
-            }
-            $wallet->forceFill($changes)->save();
-
-            return Transaction::create([
-                'user_id' => $userId,
-                'type' => $type,
-                'amount' => $amount,
-                'description' => $description,
-                'reference' => $reference,
-                'ip_address' => request()?->ip(),
-                'user_agent' => request()?->userAgent(),
-            ]);
-        });
     }
 
     /**
@@ -231,7 +150,22 @@ class WalletService
         DB::transaction(function () use ($userId, $amount) {
             $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
 
-            if (bccomp($wallet->available, $amount, 2) < 0) {
+            // Conditional bonuses (Reni 2026-08-18) are spendable for
+            // INVESTING but not yet for cashing out. Every withdrawal reserves
+            // first, and this is reserve's only caller path, so subtracting the
+            // still-locked grants here is the single place the rule has to
+            // hold. A grant created a moment later only raises the floor —
+            // it can never retroactively free money already reserved.
+            $lockedBonus = $this->lockedBonusTotal($userId);
+            $withdrawable = bcsub($wallet->available, $lockedBonus, 2);
+
+            if (bccomp($withdrawable, $amount, 2) < 0) {
+                if (bccomp($lockedBonus, '0', 2) > 0 && bccomp($wallet->available, $amount, 2) >= 0) {
+                    throw new InvalidArgumentException(
+                        "Insufficient withdrawable balance: {$lockedBonus} € are a bonus awaiting its condition."
+                    );
+                }
+
                 throw new InvalidArgumentException('Insufficient available balance.');
             }
 
@@ -240,6 +174,29 @@ class WalletService
                 'reserved' => bcadd($wallet->reserved, $amount, 2),
             ])->save();
         });
+    }
+
+    /**
+     * Σ of the investor's bonus grants still waiting on their condition — the
+     * part of `available` that may be invested but not withdrawn.
+     */
+    public function lockedBonusTotal(int $userId): string
+    {
+        $total = BonusGrant::where('user_id', $userId)
+            ->where('status', BonusGrant::STATUS_LOCKED)
+            ->sum('amount');
+
+        return bcadd((string) ($total ?: '0'), '0', 2);
+    }
+
+    /**
+     * What the investor can actually cash out right now.
+     */
+    public function withdrawableBalance(Wallet $wallet): string
+    {
+        $withdrawable = bcsub((string) $wallet->available, $this->lockedBonusTotal($wallet->user_id), 2);
+
+        return bccomp($withdrawable, '0', 2) > 0 ? $withdrawable : '0.00';
     }
 
     /**

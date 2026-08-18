@@ -116,10 +116,10 @@ Decision rationale now lives in git history + `docs/BIZNES-DOKUMENTACIA.md`.
   because of the 0–100 DB CHECK; don't copy the pattern.)
 - **Every wallet move goes through `WalletService`** — row `lockForUpdate` → validate → mutate →
   immutable `Transaction` row (with ip/UA). Balances are never mass-assignable.
-- **6 wallet buckets:** `available`, `reserved`, `invested`, `accrued`, `earned`,
-  `bonus_locked` — all DB CHECK ≥ 0. `currentBalance() = invested + accrued`
-  ("Текущо салдо", derived); `bonus_locked` is in NEITHER that nor `available` —
-  a conditional bonus is not spendable cash and not an open position.
+- **5 wallet buckets:** `available`, `reserved`, `invested`, `accrued`, `earned` — all DB CHECK
+  ≥ 0. `currentBalance() = invested + accrued` ("Текущо салдо", derived).
+  A conditional bonus lives INSIDE `available` (investable from day one); only WITHDRAWING it
+  is gated — `WalletService::withdrawableBalance()` = available − Σ locked grants.
   `reserve()`/`releaseReservation()` move buckets **without** a ledger row (hold, not event) —
   hence reconciliation compares `available+reserved` as one cash bucket.
 - **17 transaction types** (`Transaction::TYPES`): deposit, withdrawal, investment,
@@ -282,10 +282,16 @@ spendable only when the investor has money genuinely working in the platform. Ru
 > Σ (investments made after the grant, on which the investor has already RECEIVED
 > `required_installments` scheduled payments) ≥ `base_amount`
 
-- Money lands in the `bonus_locked` wallet bucket (`TYPE_BONUS_LOCKED`), **outside
-  `available`** — that IS the enforcement: every spend path (withdraw, invest, fee) reads
-  `available`, so there is no second check to forget. Release = `TYPE_BONUS_RELEASED`
-  (bonus_locked → available), write-off = `TYPE_BONUS_CANCELLED`.
+- ⚠ **Two designs shipped the same day.** v1 (commit 494352c) parked the money in a
+  `wallets.bonus_locked` bucket; Reni then asked whether the bonus can be invested while it
+  waits («или ще стои заключен без движение до 3-тия месец») ⇒ v2: the grant credits
+  `available` (`TYPE_BONUS_LOCKED`, cash-in) and the condition is a **withdrawal floor** in
+  `WalletService::reserve()` — its only caller is `WithdrawalService::createRequest`, so
+  investing is untouched and cashing out cannot reach an unearned bonus. Migration
+  `2026_08_18_000002` moves the bucket into `available` and drops the column; `TYPE_BONUS_RELEASED`
+  survives ONLY as a mapped-to-zero legacy type (releasing now writes no ledger row — the money
+  never moves, the floor drops). Write-off = `TYPE_BONUS_CANCELLED` (debits the balance; refuses
+  when the investor already spent the bonus).
 - `bonus_grants` row per grant carries the terms: amount, `base_amount` (admin types it in;
   = the investment amount for promo grants), `required_installments` (default 3), `source`
   (admin|promo), `qualifies_from`, status, and the release/cancel evidence. DB CHECK pins
@@ -302,12 +308,14 @@ spendable only when the investor has money genuinely working in the platform. Ru
   after the payout cron marks installments paid). Idempotent — grant row `lockForUpdate` +
   status recheck. Admin can cancel a LOCKED grant from Filament «Финанси → Бонуси» (read-only
   register + cancel action); released money is the investor's and is not reversible there.
-- Account closure forfeits locked grants (`TYPE_BONUS_CANCELLED`) instead of blocking the
-  deletion — unlocking would require investing, which would trap the person in the platform.
-- Investor UI: `wallet.bonus_locked` + a `locked_bonus` block in `/api/dashboard` (amount,
-  base, qualified so far, remaining) → `LockedBonusStrip.vue`. The grant mail spells the
-  condition out — the money is visible from that moment, so that is when we must say what it
-  takes to cash it.
+- Account closure forfeits locked grants (`TYPE_BONUS_CANCELLED`) **before** the balance
+  checks — the bonus sits inside `available` and is not withdrawable, so checking first would
+  leave the investor unable to ever empty the account.
+- Investor UI: `wallet.withdrawable` (≠ `available` exactly by the unearned bonuses) + a
+  `locked_bonus` block in `/api/dashboard` (amount, base, qualified so far, remaining) →
+  `LockedBonusStrip.vue`; the withdrawal screen shows the withdrawable figure and names the
+  difference. The grant mail spells the condition out — the money is spendable from that
+  moment, so that is when we must say what it takes to CASH it.
 
 ## Private loan links
 

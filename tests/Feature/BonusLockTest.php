@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\PayoutType;
 use App\Filament\Resources\BonusGrantResource\Pages\ListBonusGrants;
 use App\Models\BonusGrant;
 use App\Models\Investment;
@@ -13,7 +14,9 @@ use App\Models\User;
 use App\Notifications\BonusReleasedNotification;
 use App\Services\AccountDeletionService;
 use App\Services\BonusService;
+use App\Services\InvestmentService;
 use App\Services\PromotionService;
+use App\Services\WalletService;
 use App\Services\WithdrawalService;
 use Filament\Actions\Testing\TestAction;
 use Filament\Facades\Filament;
@@ -29,10 +32,11 @@ use Tests\TestCase;
  * Conditional bonuses — the release rule (Reni 2026-08-18).
  *
  * «бонуса може да се тегли след направена инвестиция в необходимия размер и
- * след третия падеж»: the bonus unlocks when the investments made after the
- * grant, on which the investor has already RECEIVED three scheduled payments,
- * add up to the base it was calculated on. The amount may be spread over
- * several loans; a capitalized plan pays once, at maturity, and unlocks then.
+ * след третия падеж»: the bonus is spendable balance from the start — it can
+ * be INVESTED at once — but WITHDRAWING it waits until the investments made
+ * after the grant, on which the investor has already RECEIVED three scheduled
+ * payments, add up to the base it was calculated on. The amount may be spread
+ * over several loans; a capitalized plan pays once, at maturity.
  */
 class BonusLockTest extends TestCase
 {
@@ -120,21 +124,21 @@ class BonusLockTest extends TestCase
         $this->investmentWithInstallments($user, '3000.00', total: 12, paid: 3);
         $this->investmentWithInstallments($user, '2000.00', total: 12, paid: 3);
 
-        Artisan::call('bonuses:release-eligible');
+        // The money is in the balance from the grant, but none of it is
+        // withdrawable while the condition is open.
+        $this->assertSame('0.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
 
-        $wallet = $user->wallet->fresh();
-        $this->assertSame('50.00', $wallet->available);
-        $this->assertSame('0.00', $wallet->bonus_locked);
+        Artisan::call('bonuses:release-eligible');
 
         $grant->refresh();
         $this->assertSame(BonusGrant::STATUS_RELEASED, $grant->status);
         $this->assertNotNull($grant->released_at);
-        $this->assertDatabaseHas('transactions', [
-            'id' => $grant->release_transaction_id,
-            'type' => Transaction::TYPE_BONUS_RELEASED,
-            'amount' => '50.00',
-            'reference' => "bonus_grant:{$grant->id}:release",
-        ]);
+
+        // Releasing moves no money — it only drops the floor. A second ledger
+        // row here would mint the bonus twice.
+        $this->assertSame('50.00', $user->wallet->fresh()->available);
+        $this->assertSame('50.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
+        $this->assertSame(0, Transaction::where('type', Transaction::TYPE_BONUS_RELEASED)->count());
 
         Notification::assertSentTo($user, BonusReleasedNotification::class);
     }
@@ -148,8 +152,8 @@ class BonusLockTest extends TestCase
 
         Artisan::call('bonuses:release-eligible');
 
-        $this->assertSame('0.00', $user->wallet->fresh()->available);
-        $this->assertSame('50.00', $user->wallet->fresh()->bonus_locked);
+        $this->assertSame('50.00', $user->wallet->fresh()->available);
+        $this->assertSame('0.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
         $this->assertSame(BonusGrant::STATUS_LOCKED, $grant->fresh()->status);
     }
 
@@ -162,14 +166,13 @@ class BonusLockTest extends TestCase
 
         Artisan::call('bonuses:release-eligible');
         $this->assertSame(BonusGrant::STATUS_LOCKED, $grant->fresh()->status);
-        $this->assertSame('50.00', $user->wallet->fresh()->bonus_locked);
 
         // The third payout lands — the next sweep frees the bonus.
         $this->markInstallmentPaid($investment, 3);
         Artisan::call('bonuses:release-eligible');
 
         $this->assertSame(BonusGrant::STATUS_RELEASED, $grant->fresh()->status);
-        $this->assertSame('50.00', $user->wallet->fresh()->available);
+        $this->assertSame('50.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
     }
 
     public function test_capitalized_investment_unlocks_on_its_single_maturity_installment(): void
@@ -189,7 +192,7 @@ class BonusLockTest extends TestCase
         Artisan::call('bonuses:release-eligible');
 
         $this->assertSame(BonusGrant::STATUS_RELEASED, $grant->fresh()->status);
-        $this->assertSame('50.00', $user->wallet->fresh()->available);
+        $this->assertSame('50.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
     }
 
     public function test_investments_made_before_the_grant_do_not_count(): void
@@ -207,7 +210,7 @@ class BonusLockTest extends TestCase
         Artisan::call('bonuses:release-eligible');
 
         $this->assertSame(BonusGrant::STATUS_LOCKED, $grant->fresh()->status);
-        $this->assertSame('50.00', $user->wallet->fresh()->bonus_locked);
+        $this->assertSame('0.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
     }
 
     public function test_an_investment_without_a_schedule_yet_does_not_qualify(): void
@@ -246,10 +249,10 @@ class BonusLockTest extends TestCase
 
         app(PromotionService::class)->grantInvestBonus($investment, $investment->loan, $user);
 
-        // 2% of 5000 — locked, not spendable.
+        // 2% of 5000 — in the balance (investable), not withdrawable yet.
         $wallet = $user->wallet->fresh();
-        $this->assertSame('0.00', $wallet->available);
-        $this->assertSame('100.00', $wallet->bonus_locked);
+        $this->assertSame('100.00', $wallet->available);
+        $this->assertSame('0.00', app(WalletService::class)->withdrawableBalance($wallet));
 
         $grant = BonusGrant::where('user_id', $user->id)->firstOrFail();
         $this->assertSame(BonusGrant::SOURCE_PROMO, $grant->source);
@@ -264,20 +267,46 @@ class BonusLockTest extends TestCase
         Artisan::call('bonuses:release-eligible');
 
         $this->assertSame(BonusGrant::STATUS_RELEASED, $grant->fresh()->status);
-        $this->assertSame('100.00', $user->wallet->fresh()->available);
+        $this->assertSame('100.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
     }
 
     // ── The money guarantees ──
 
     public function test_a_locked_bonus_cannot_be_withdrawn(): void
     {
-        $user = $this->investor();
+        $user = $this->investor('200.00');
         $this->grant($user, '100.00', '5000.00');
 
-        // 100 € sit in the wallet, but not one cent of it is withdrawable:
-        // the withdrawal path reads `available`, which the bonus never entered.
+        // Balance 300 €, of which 100 € is an unearned bonus: the floor in
+        // WalletService::reserve() keeps withdrawals to the other 200 €.
+        $this->assertSame('300.00', $user->wallet->fresh()->available);
+        $this->assertSame('200.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
+
+        app(WithdrawalService::class)->createRequest($user->id, '200.00', 'BG80BNBG96611020345678');
+
         $this->expectException(ValidationException::class);
-        app(WithdrawalService::class)->createRequest($user->id, '50.00', 'BG80BNBG96611020345678');
+        app(WithdrawalService::class)->createRequest($user->id, '0.01', 'BG80BNBG96611020345678');
+    }
+
+    public function test_a_locked_bonus_can_be_invested_immediately(): void
+    {
+        // Reni 2026-08-18: «може ли бонусът да се инвестира» — yes, from the
+        // first second; only cashing out waits for the condition.
+        $user = $this->investor('4900.00');
+        $this->grant($user, '100.00', '5000.00');
+
+        $loan = Loan::factory()->published()->create([
+            'amount' => '10000.00', 'funded_amount' => 0, 'term_months' => 6,
+        ]);
+
+        $investment = app(InvestmentService::class)->invest(
+            $user, $loan, '5000.00', 'bonus-invest-'.uniqid(),
+            $loan->offers()->where('payout_type', PayoutType::InterestOnly)->value('id'),
+        );
+
+        $this->assertSame('5000.00', (string) $investment->amount);
+        $this->assertSame('0.00', $user->wallet->fresh()->available);
+        $this->assertSame('5000.00', $user->wallet->fresh()->invested);
     }
 
     public function test_release_is_idempotent(): void
@@ -290,8 +319,11 @@ class BonusLockTest extends TestCase
         Artisan::call('bonuses:release-eligible');
         app(BonusService::class)->release($grant->fresh());
 
+        // Releasing is a status flip, so running it three times must still
+        // leave one released grant and an untouched balance.
         $this->assertSame('50.00', $user->wallet->fresh()->available);
-        $this->assertSame(1, Transaction::where('type', Transaction::TYPE_BONUS_RELEASED)->count());
+        $this->assertSame(1, BonusGrant::where('status', BonusGrant::STATUS_RELEASED)->count());
+        $this->assertSame(1, Transaction::where('user_id', $user->id)->count());
     }
 
     public function test_ledger_reconciles_through_the_whole_bonus_lifecycle(): void
@@ -319,9 +351,8 @@ class BonusLockTest extends TestCase
 
         app(BonusService::class)->cancel($grant, $this->admin()->id, 'Злоупотреба');
 
-        $wallet = $user->wallet->fresh();
-        $this->assertSame('0.00', $wallet->available);
-        $this->assertSame('0.00', $wallet->bonus_locked);
+        // Debited back out of the balance — the grant is undone, not parked.
+        $this->assertSame('0.00', $user->wallet->fresh()->available);
 
         $grant->refresh();
         $this->assertSame(BonusGrant::STATUS_CANCELLED, $grant->status);
@@ -358,6 +389,24 @@ class BonusLockTest extends TestCase
         $this->assertDatabaseMissing('wallets', ['user_id' => $user->id]);
     }
 
+    public function test_account_closure_is_refused_with_the_normal_message_when_the_bonus_is_invested(): void
+    {
+        $user = User::factory()->kycApproved()->create([
+            'email_verified_at' => now(),
+            'password' => bcrypt('secret-password'),
+        ]);
+        $user->wallet()->create();
+        $this->grant($user, '50.00', '5000.00');
+
+        // Bonus put to work: nothing left in the balance to write off. The
+        // closure must still fail with the investor-facing message, not with a
+        // raw exception from the write-off attempt.
+        $user->wallet->forceFill(['available' => '0.00', 'invested' => '50.00'])->save();
+
+        $this->expectException(ValidationException::class);
+        app(AccountDeletionService::class)->deleteAccount($user, 'secret-password');
+    }
+
     // ── What the admin sees ──
 
     public function test_admin_register_lists_grants_and_cancels_a_locked_one(): void
@@ -375,7 +424,7 @@ class BonusLockTest extends TestCase
             ->assertHasNoActionErrors();
 
         $this->assertSame(BonusGrant::STATUS_CANCELLED, $grant->fresh()->status);
-        $this->assertSame('0.00', $user->wallet->fresh()->bonus_locked);
+        $this->assertSame('0.00', $user->wallet->fresh()->available);
     }
 
     public function test_released_grants_cannot_be_cancelled_from_the_register(): void
@@ -404,8 +453,9 @@ class BonusLockTest extends TestCase
 
         $response = $this->actingAs($user)->getJson('/api/dashboard')->assertOk();
 
-        $this->assertSame('0.00', $response->json('wallet.available'));
-        $this->assertSame('50.00', $response->json('wallet.bonus_locked'));
+        $this->assertSame('50.00', $response->json('wallet.available'));
+        // …none of which is withdrawable yet.
+        $this->assertSame('0.00', $response->json('wallet.withdrawable'));
         $this->assertSame('50.00', $response->json('locked_bonus.amount'));
         $this->assertSame('5000.00', $response->json('locked_bonus.base_amount'));
         $this->assertSame('2000.00', $response->json('locked_bonus.qualified_amount'));
@@ -420,6 +470,6 @@ class BonusLockTest extends TestCase
         $this->actingAs($user)->getJson('/api/dashboard')
             ->assertOk()
             ->assertJsonPath('locked_bonus', null)
-            ->assertJsonPath('wallet.bonus_locked', '0.00');
+            ->assertJsonPath('wallet.withdrawable', '0.00');
     }
 }

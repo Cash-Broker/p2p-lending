@@ -16,8 +16,10 @@ use InvalidArgumentException;
 /**
  * Conditional bonuses (Reni 2026-08-18).
  *
- * A bonus is granted LOCKED and becomes spendable only when the investor has
- * money genuinely working in the platform:
+ * A bonus is credited to `available` immediately — the investor may INVEST it
+ * from day one (Reni 2026-08-18) — but it cannot be WITHDRAWN until the
+ * condition is met: `WalletService::reserve()` keeps back a floor equal to the
+ * still-locked grants. The condition:
  *
  *   Σ (investments made after the grant, on which the investor has already
  *      received {required_installments} scheduled payments) ≥ base_amount
@@ -42,7 +44,8 @@ class BonusService
     public function __construct(private WalletService $walletService) {}
 
     /**
-     * Admin «Начисли бонус»: credit the locked bucket and record the terms.
+     * Admin «Начисли бонус»: credit the balance and record the terms the
+     * bonus has to be earned against.
      * Caller is responsible for authorization and the duplicate-grant guard.
      */
     public function grantAdminBonus(
@@ -209,8 +212,11 @@ class BonusService
     }
 
     /**
-     * Move one grant's money into `available`. Idempotent: the row is locked
-     * and re-checked, so a cron racing an admin cannot pay the bonus twice.
+     * Mark one grant earned: the withdrawal floor drops and the bonus becomes
+     * cashable. NO ledger row — the money has been in `available` since the
+     * grant (it was investable all along), so a transaction here would mint it
+     * a second time. Idempotent: the row is locked and re-checked, so a cron
+     * racing an admin cannot release the same grant twice.
      */
     public function release(BonusGrant $grant): ?BonusGrant
     {
@@ -221,17 +227,9 @@ class BonusService
                 return null;
             }
 
-            $transaction = $this->walletService->releaseBonus(
-                $fresh->user_id,
-                (string) $fresh->amount,
-                'Освободен бонус: '.($fresh->reason ?? 'изпълнено условие'),
-                "bonus_grant:{$fresh->id}:release",
-            );
-
             $fresh->forceFill([
                 'status' => BonusGrant::STATUS_RELEASED,
                 'released_at' => now(),
-                'release_transaction_id' => $transaction->id,
             ])->save();
 
             return $fresh;
