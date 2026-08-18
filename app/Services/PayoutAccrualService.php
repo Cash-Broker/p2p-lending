@@ -140,12 +140,16 @@ class PayoutAccrualService
         // Term from the FROZEN row — never the live (editable) loan.term_months.
         // See OfferProjectionService::capitalizedTermFromRow.
         $term = OfferProjectionService::capitalizedTermFromRow(
-            (string) $investment->amount,
+            (string) $row->principal,
             (string) $investment->interest_rate,
             (string) $row->interest,
             (int) $loan->term_months,
         );
-        $amount = (string) $investment->amount;
+        // The ROW is the source of truth for what is still outstanding, not
+        // `investment->amount`: a partial early closure (Reni 2026-08-18)
+        // shrinks the row, and accruing on the original principal afterwards
+        // would keep paying interest on money already returned.
+        $amount = (string) $row->principal;
         $maturity = $row->due_date->copy()->startOfDay();
         $firstDue = $maturity->copy()->subMonthsNoOverflow($term - 1);
         $asOfDay = $asOf->copy()->startOfDay();

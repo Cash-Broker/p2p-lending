@@ -6,10 +6,14 @@ use App\Filament\Resources\LoanResource\Pages;
 use App\Models\Borrower;
 use App\Models\BorrowerAnonymizedProfile;
 use App\Models\Investment;
+use App\Models\InvestmentSchedule;
 use App\Models\Loan;
 use App\Models\Originator;
 use App\Models\User;
 use App\Notifications\EarlyRepaymentReceivedNotification;
+use App\Notifications\LoanPartiallyClosedNotification;
+use App\Services\Loans\EarlyClosureCalculationService;
+use App\Services\Loans\EarlyClosureExecutionService;
 use App\Services\Loans\EarlyRepaymentAlreadyExecutedException;
 use App\Services\Loans\EarlyRepaymentCalculationService;
 use App\Services\Loans\EarlyRepaymentExecutionService;
@@ -22,6 +26,8 @@ use Filament\Actions\DeleteAction;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Forms\Components\Component;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
@@ -30,6 +36,7 @@ use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\HtmlString;
@@ -64,10 +71,10 @@ class LoanResource extends Resource
     {
         return [
             Section::make('Досие (поверително, вижда се само от админ)')->schema([
-                Forms\Components\TextInput::make('full_name')->label('Пълно име')->required(),
-                Forms\Components\TextInput::make('phone')->label('Телефон')->required(),
-                Forms\Components\TextInput::make('address')->label('Адрес')->required(),
-                Forms\Components\TextInput::make('income')->label('Доход (€)')->numeric()->required(),
+                TextInput::make('full_name')->label('Пълно име')->required(),
+                TextInput::make('phone')->label('Телефон')->required(),
+                TextInput::make('address')->label('Адрес')->required(),
+                TextInput::make('income')->label('Доход (€)')->numeric()->required(),
                 Forms\Components\Select::make('credit_score')->label('Кредитен рейтинг')
                     ->options(Borrower::CREDIT_RATINGS)
                     ->placeholder('— без рейтинг —')
@@ -79,7 +86,7 @@ class LoanResource extends Resource
                     ->options(['A' => 'A — Нисък', 'B' => 'B — Умерен', 'C' => 'C — Среден', 'D' => 'D — Повишен', 'E' => 'E — Висок'])
                     ->default('C')
                     ->required(),
-                Forms\Components\TextInput::make('profile_region')->label('Регион')
+                TextInput::make('profile_region')->label('Регион')
                     ->placeholder('напр. Кюстендил')->required(),
                 Forms\Components\Select::make('profile_loan_purpose')->label('Цел на кредита')
                     ->options(BorrowerAnonymizedProfile::LOAN_PURPOSES)
@@ -153,7 +160,7 @@ class LoanResource extends Resource
                 return ['share_url' => url('/invest/shared/'.$record->share_token)];
             })
             ->form([
-                Forms\Components\TextInput::make('share_url')
+                TextInput::make('share_url')
                     ->label('Линк за частен достъп')
                     ->helperText('Копирайте линка и го изпратете на инвеститора. Кредитът трябва да е ПУБЛИКУВАН, за да е достъпен през линка (видимостта остава „Частен").')
                     ->readOnly()
@@ -209,7 +216,7 @@ class LoanResource extends Resource
                     ->validatedWhenNotDehydrated(false),
                 // Hand-entered by the admin — matches the REAL credit-contract
                 // paperwork number (boss 2026-08-10), never auto-generated.
-                Forms\Components\TextInput::make('contract_number')->label('Номер на договор')
+                TextInput::make('contract_number')->label('Номер на договор')
                     ->placeholder('напр. 1042/2026')
                     ->maxLength(64)
                     ->nullable()
@@ -274,12 +281,12 @@ class LoanResource extends Resource
                     ->helperText('Частните кредити не се виждат на общото табло — достъп само през линк.'),
             ])->columns(2),
             Section::make('Финансови параметри')->schema([
-                Forms\Components\TextInput::make('amount')->label('Сума на кредита (€)')->numeric()->required()->minValue(100)
+                TextInput::make('amount')->label('Сума на кредита (€)')->numeric()->required()->minValue(100)
                     ->validatedWhenNotDehydrated(false),
                 // Renamed from «Свободни за инвестиция» (boss 2026-08-10):
                 // that name now belongs to the LIVE remaining figure below —
                 // this input is the total offered to investors, a set-once cap.
-                Forms\Components\TextInput::make('investable_amount')->label('Предлагани на инвеститорите (€)')
+                TextInput::make('investable_amount')->label('Предлагани на инвеститорите (€)')
                     ->helperText('Общо колко от кредита се предлага на инвеститорите (може да е по-малко от сумата). Празно = цялата сума. Оставащото се смята само — вижте „Текущо състояние“.')
                     // Required on CREATE; legacy loans legitimately store NULL
                     // (= fall back to the full amount), so an edit of an
@@ -298,7 +305,7 @@ class LoanResource extends Resource
                 // from the form (boss 2026-08-10: «ненужни са — трите оферти
                 // долу са достатъчни»). The columns stay nullable for legacy
                 // loans; the admin-only ГПР/Марж preview went with them.
-                Forms\Components\TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
+                TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
                     ->validatedWhenNotDehydrated(false),
                 // Live funding math, in the boss's exact vocabulary
                 // (2026-08-10): «Сума на кредита 13 000 · Инвестирани 5 000 ·
@@ -471,11 +478,15 @@ class LoanResource extends Resource
                     ->label('Предсрочно погасяване')
                     ->icon('heroicon-o-forward')
                     ->color('success')
+                    // Legacy (per-loan amortization) loans only — offer-based
+                    // ones are served by the two closure actions below, which
+                    // understand per-investor schedules and partial amounts.
                     ->visible(fn (Loan $r) => in_array($r->status, [
                         Loan::STATUS_ACTIVE,
                         Loan::STATUS_LATE,
                         Loan::STATUS_DEFAULT,
                     ], true)
+                        && ! $r->usesOffers()
                         && $r->early_repaid_at === null
                         && $r->bought_back_at === null)
                     ->requiresConfirmation()
@@ -587,6 +598,9 @@ class LoanResource extends Resource
                         }
                     }),
 
+                self::earlyClosureAction(),
+                self::partialClosureAction(),
+
                 // Deletion straight from the list (boss 2026-08-10). Same
                 // guards as the EditLoan header delete: ONLY drafts with zero
                 // funding and no investments — a loan investors have money in
@@ -668,6 +682,195 @@ class LoanResource extends Resource
             LoanResource\RelationManagers\InvestmentsRelationManager::class,
             LoanResource\RelationManagers\LoanEventsRelationManager::class,
         ];
+    }
+
+    /**
+     * Loans the early-closure buttons apply to: offer-based, still running,
+     * not already finished by another path.
+     */
+    public static function isEarlyClosable(Loan $loan): bool
+    {
+        return $loan->usesOffers()
+            && in_array($loan->status, [Loan::STATUS_ACTIVE, Loan::STATUS_LATE, Loan::STATUS_DEFAULT], true)
+            && $loan->early_repaid_at === null
+            && $loan->bought_back_at === null;
+    }
+
+    /**
+     * «Предсрочно погасяване» for offer-based loans (Reni 2026-08-18).
+     *
+     * The borrower closed the whole loan ahead of plan: every investor gets
+     * their outstanding principal back plus the interest earned up to the
+     * chosen day (30/360), the remaining installments are cancelled and the
+     * loan lands in «Погасен».
+     */
+    public static function earlyClosureAction(): Action
+    {
+        return Action::make('early_closure')
+            ->label('Предсрочно погасяване')
+            ->icon('heroicon-o-forward')
+            ->color('success')
+            ->visible(fn (Loan $record) => self::isEarlyClosable($record))
+            ->modalHeading(fn (Loan $record) => "Предсрочно погасяване на кредит #{$record->id}")
+            ->modalDescription('Връща цялата остатъчна главница на инвеститорите заедно с лихвата за реално ползвания период.')
+            ->form([
+                DatePicker::make('as_of')
+                    ->label('Лихва към дата')
+                    ->default(now()->toDateString())
+                    ->maxDate(now()->addDay())
+                    ->required()
+                    ->live(),
+            ])
+            ->modalContent(fn (Loan $record, array $arguments) => self::closurePreview($record, null, null))
+            ->modalSubmitActionLabel('Изпълни погасяване')
+            ->action(fn (Loan $record, array $data) => self::runClosure($record, null, $data['as_of'] ?? null));
+    }
+
+    /**
+     * «Частично погасяване» — the borrower returned only part of the principal
+     * («има клиенти които може предсрочно да закрият една част»). Each
+     * investor's position shrinks by the same share; the term does not move.
+     */
+    public static function partialClosureAction(): Action
+    {
+        return Action::make('partial_closure')
+            ->label('Частично погасяване')
+            ->icon('heroicon-o-scissors')
+            ->color('warning')
+            ->visible(fn (Loan $record) => self::isEarlyClosable($record))
+            ->modalHeading(fn (Loan $record) => "Частично погасяване на кредит #{$record->id}")
+            ->modalDescription('Затваря съответния дял от позицията на ВСЕКИ инвеститор пропорционално. Броят вноски и падежите остават — намалява се размерът им.')
+            ->form([
+                TextInput::make('amount')
+                    ->label('Върната главница (€)')
+                    ->helperText(fn (Loan $record) => 'Остатъчна главница по кредита: '
+                        .self::outstandingPrincipal($record).' €')
+                    ->required()
+                    ->numeric()
+                    ->minValue(0.01)
+                    ->rules(['decimal:0,2']),
+                DatePicker::make('as_of')
+                    ->label('Лихва към дата')
+                    ->default(now()->toDateString())
+                    ->maxDate(now()->addDay())
+                    ->required(),
+            ])
+            ->modalSubmitActionLabel('Изпълни погасяване')
+            ->action(fn (Loan $record, array $data) => self::runClosure($record, $data['amount'], $data['as_of'] ?? null));
+    }
+
+    /** Outstanding investor principal, for the form helper text. */
+    public static function outstandingPrincipal(Loan $loan): string
+    {
+        return InvestmentSchedule::where('loan_id', $loan->id)
+            ->whereIn('status', ['pending', 'late'])
+            ->get(['principal'])
+            ->reduce(fn (string $carry, $row) => bcadd($carry, (string) $row->principal, 2), '0.00');
+    }
+
+    /** Fresh quote rendered into the confirmation modal — never cached. */
+    protected static function closurePreview(Loan $loan, ?string $amount, ?string $asOf)
+    {
+        $asOfDate = $asOf ? Carbon::parse($asOf) : now();
+
+        try {
+            $quote = app(EarlyClosureCalculationService::class)->quote($loan, $amount, $asOfDate);
+
+            return view('filament.modals.early-closure-preview', [
+                'loan' => $loan,
+                'quote' => $quote,
+                'asOf' => $asOfDate,
+                'error' => null,
+            ]);
+        } catch (InvalidArgumentException $e) {
+            return view('filament.modals.early-closure-preview', [
+                'loan' => $loan,
+                'quote' => null,
+                'asOf' => $asOfDate,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Shared execution for both closure buttons: money first, then one
+     * notification per investor, each isolated so a single bad address cannot
+     * starve the rest (F1/F2/F3 discipline). Catch order specific → generic.
+     */
+    protected static function runClosure(Loan $record, ?string $amount, ?string $asOf): void
+    {
+        try {
+            $result = app(EarlyClosureExecutionService::class)->execute(
+                loanId: $record->id,
+                adminId: (int) auth()->id(),
+                principalAmount: $amount,
+                asOf: $asOf ? Carbon::parse($asOf) : null,
+            );
+
+            $quote = $result['quote'];
+            $closure = $result['closure'];
+            $notified = 0;
+
+            foreach ($quote['positions'] as $position) {
+                try {
+                    $investor = $position['investment']->user ?? User::find($position['user_id']);
+                    if (! $investor) {
+                        continue;
+                    }
+
+                    $investor->notify($quote['is_full']
+                        ? new EarlyRepaymentReceivedNotification(
+                            loan: $record->fresh(),
+                            executedAt: $record->fresh()->early_repaid_at ?? now(),
+                            investorPrincipal: $position['principal'],
+                            investorInterest: $position['interest'],
+                            totalReceived: $position['total'],
+                        )
+                        : new LoanPartiallyClosedNotification(
+                            loanId: $record->id,
+                            closureId: $closure->id,
+                            principal: $position['principal'],
+                            interest: $position['interest'],
+                            total: $position['total'],
+                            asOf: $closure->as_of,
+                        ));
+                    $notified++;
+                } catch (\Throwable $e) {
+                    Log::error('Early closure notification failed', [
+                        'loan_id' => $record->id,
+                        'user_id' => $position['user_id'],
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            Notification::make()
+                ->title($quote['is_full'] ? 'Кредитът е погасен предсрочно' : 'Частичното погасяване е изпълнено')
+                ->body(sprintf(
+                    'Върнати %s € главница + %s € лихва към %d %s. Уведомления: %d.',
+                    $quote['principal_total'],
+                    $quote['interest_total'],
+                    count($quote['positions']),
+                    count($quote['positions']) === 1 ? 'инвеститор' : 'инвеститори',
+                    $notified,
+                ))
+                ->success()
+                ->send();
+        } catch (InvalidArgumentException $e) {
+            Notification::make()->title('Невалидна операция')->body($e->getMessage())->danger()->send();
+        } catch (\Throwable $e) {
+            Log::error('Early closure failed unexpectedly', [
+                'loan_id' => $record->id,
+                'admin_id' => auth()->id(),
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+            Notification::make()
+                ->title('Грешка')
+                ->body('Неочаквана грешка. Моля проверете логовете.')
+                ->danger()
+                ->send();
+        }
     }
 
     public static function getPages(): array

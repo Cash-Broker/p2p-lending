@@ -247,6 +247,10 @@ Two coexisting repayment worlds, routed by `Loan::usesOffers()` (any investment 
 
 **2. Legacy per-loan amortization (pre-offer loans, `loan_offer_id` null)**
 
+⚠ Prod check 2026-08-18: **zero live legacy loans** (none in active/late/default). This branch
+now serves history only — do not invest effort in porting new features to it (the early-closure
+work deliberately stopped at the offer engine for exactly this reason).
+
 - Per-loan `amortization_schedules`; admin posts installments via Filament «Погашения»
   (ProcessRepayment page) → `RepaymentService::processRepayment(loanId, scheduleId)`.
 - **Schedule id required; amounts derived from the locked schedule row** — caller can never
@@ -262,10 +266,37 @@ Two coexisting repayment worlds, routed by `Loan::usesOffers()` (any investment 
   (originator override ?? `buyback_default_coverage`). Offer-loan branch nets the accrued
   bucket: plus_interest ⇒ `releaseAccrued` (paid once), principal_only ⇒ `reverseAccrued`
   (**write-off** — this fixed the 2026-07-02 audit bug). `bought_back` is terminal.
-- **Early repayment:** admin-only LoanResource action «Предсрочно погасяване», no cron.
-  Schedule-boundary interest (unpaid interest up to next upcoming due date). **Legacy loans
-  only — offer loans throw** `InvalidArgumentException` (not yet supported). Stamps
-  `early_repaid_at` + `early_repayment_amount`, status → repaid.
+- **Early repayment — LEGACY loans:** admin-only LoanResource action «Предсрочно погасяване»,
+  no cron. Schedule-boundary interest (unpaid interest up to next upcoming due date). Stamps
+  `early_repaid_at` + `early_repayment_amount`, status → repaid. The action now HIDES itself on
+  offer loans (they get the closure buttons below), so the old "not supported" error is
+  unreachable.
+- **Early closure — OFFER loans, full or PARTIAL (Reni 2026-08-18):**
+  `EarlyClosure{Calculation,Execution}Service`, admin-only, no cron. Two buttons in the loan
+  page's bottom cluster next to «Запази»/«Линк за инвеститор» (Yordan: «като влиза в кредита
+  там да ги има») + the same two in the list row actions: «Предсрочно погасяване» (whole loan)
+  and «Частично погасяване» (amount + as-of date, `maxDate` today — interest is never priced
+  into the future).
+  - Rules, verbatim from Reni: the closed share is the SAME for every investor, applied to
+    their own outstanding («на всеки по 40% от неговата позиция»); the position **shrinks
+    pro-rata over the remaining installments and the term does NOT move**; interest is for the
+    days actually used at **30/360** (`App\Support\DayCount`; she picked the basis after being
+    shown actual/365); capitalized pays «натрупаното до деня» (whole months compounded + stub
+    days, capped at the contracted maturity interest) and the rest shrinks; unlimited repeats,
+    no minimum.
+  - Cancelled installments get schedule status **`closed`** (+ `closed_at`), never `paid`:
+    nothing was received, and `paid` would both lie in the portfolio and unlock a conditional
+    bonus, which Reni excluded. `LoanStatusUpdaterService` treats `closed` as settled for
+    auto-close; the payout services already filter on pending/late.
+  - ⚠ `PayoutAccrualService::processCapitalized` now reads `$row->principal` instead of
+    `$investment->amount` — otherwise a shrunken position keeps accruing on the original
+    principal and pays it out twice at maturity.
+  - `loan_early_closures` = one row per event (ratio, amounts, as-of, admin) — the only place
+    the inputs survive, since the closure rewrites the schedules it was computed from. Money
+    rides the existing `early_repayment_principal/interest` types, so **`LEDGER_MAP` is
+    untouched**. Investor gets `EarlyRepaymentReceivedNotification` (full) or
+    `LoanPartiallyClosedNotification` (partial, deduped on `closure_id` — a partial closure has
+    no `early_repaid_at` to key on and may repeat the same day).
 - **Fees:** only `withdrawal` category wired; `fees_withdrawal_enabled` default **false**
   (flag off = byte-identical legacy behavior). Fee-on: two `debitReserved` calls
   (net TYPE_WITHDRAWAL + TYPE_FEE `…:fee`); net ≤ 0 throws. No platform wallet — fee revenue

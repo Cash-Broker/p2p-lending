@@ -57,6 +57,46 @@ describe('summarizeSchedule', () => {
   })
 })
 
+describe('early-closed installments', () => {
+  it('are left out of the expected total and the progress', () => {
+    // Половината позиция е върната предсрочно: отменените вноски не се броят
+    // нито като очаквани, нито като получени.
+    const schedule = [
+      row('2026-01-15', '100.00', '10.00', 'paid'),
+      row('2026-02-15', '100.00', '10.00', 'closed'),
+      row('2026-03-15', '100.00', '10.00'),
+    ]
+
+    const summary = summarizeSchedule(schedule)
+
+    expect(summary.totalExpected).toBe('220.00')
+    expect(summary.received).toBe('110.00')
+    expect(summary.count).toBe(2)
+    expect(summary.paidCount).toBe(1)
+    expect(summary.progressPct).toBe(50)
+  })
+
+  it('never become the next installment', () => {
+    const schedule = [
+      row('2026-01-15', '100.00', '10.00', 'paid'),
+      row('2026-02-15', '100.00', '10.00', 'closed'),
+      row('2026-03-15', '100.00', '10.00'),
+    ]
+
+    expect(nextUnpaidInstallment(schedule).due_date).toBe('2026-03-15')
+  })
+
+  it('return null when the whole position was closed early', () => {
+    const schedule = [
+      row('2026-02-15', '100.00', '10.00', 'closed'),
+      row('2026-03-15', '100.00', '10.00', 'closed'),
+    ]
+
+    expect(summarizeSchedule(schedule)).toBeNull()
+    expect(nextUnpaidInstallment(schedule)).toBeNull()
+  })
+})
+
 describe('nextUnpaidInstallment', () => {
   it('returns the earliest unpaid row regardless of input order', () => {
     const later = row('2026-12-01', '10.00', '1.00')

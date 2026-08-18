@@ -50,8 +50,24 @@ class EditLoan extends EditRecord
         return [
             $this->getSaveFormAction(),
             LoanResource::shareLinkAction(),
+            // Приключването на кредита стои до останалите бутони на самия
+            // кредит (Йордан 2026-08-18) — там го търси човек, който вече е
+            // отворил кредита, не в списъка.
+            LoanResource::earlyClosureAction(),
+            LoanResource::partialClosureAction(),
             $this->getCancelFormAction(),
         ];
+    }
+
+    /** @see share_linkAction() — same name-based resolver requirement. */
+    public function early_closureAction(): Actions\Action
+    {
+        return LoanResource::earlyClosureAction();
+    }
+
+    public function partial_closureAction(): Actions\Action
+    {
+        return LoanResource::partialClosureAction();
     }
 
     /**

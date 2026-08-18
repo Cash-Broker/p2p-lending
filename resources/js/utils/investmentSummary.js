@@ -22,7 +22,15 @@ export function summarizeSchedule(schedule) {
   let receivedCents = 0
   let paidCount = 0
 
+  let liveCount = 0
+
   for (const row of schedule) {
+    // Вноска, отменена от предсрочно погасяване, няма да бъде плащана —
+    // главницата вече е върната. Ако я броим в очакваното, прогресът лъже
+    // надолу до безкрайност (2026-08-18).
+    if (row.status === 'closed') continue
+
+    liveCount += 1
     totalCents += toCents(row.total)
     interestCents += toCents(row.interest)
     if (row.status === 'paid') {
@@ -31,12 +39,14 @@ export function summarizeSchedule(schedule) {
     }
   }
 
+  if (liveCount === 0) return null
+
   return {
     totalExpected: fromCents(totalCents),
     totalInterest: fromCents(interestCents),
     received: fromCents(receivedCents),
     paidCount,
-    count: schedule.length,
+    count: liveCount,
     // Amount-based, not row-count-based: honest for amortizing plans where
     // installments differ in size. Guard the /0 for a zero-sum schedule.
     progressPct: totalCents > 0 ? Math.round((receivedCents / totalCents) * 100) : 0,
@@ -46,10 +56,11 @@ export function summarizeSchedule(schedule) {
 /**
  * First unpaid installment in due-date order, or null when everything is paid.
  * Late/default rows count as "next" too — they are what the investor is owed.
+ * `closed` rows never will be: they were cancelled by an early repayment.
  */
 export function nextUnpaidInstallment(schedule) {
   if (!Array.isArray(schedule)) return null
-  const unpaid = schedule.filter((r) => r.status !== 'paid')
+  const unpaid = schedule.filter((r) => r.status !== 'paid' && r.status !== 'closed')
   if (!unpaid.length) return null
   return unpaid.reduce((a, b) => (String(a.due_date) <= String(b.due_date) ? a : b))
 }

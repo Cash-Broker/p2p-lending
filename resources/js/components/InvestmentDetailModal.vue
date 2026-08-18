@@ -37,12 +37,15 @@ const statusClasses = {
   bought_back: 'bg-blue-50 text-blue-600',
   repaid: 'bg-gray-100 text-gray-500',
 }
-const scheduleStatusLabels = { pending: 'Предстои', paid: 'Платено', late: 'Закъснение', default: 'Просрочено' }
+// «Закрита» = вноската е отменена от предсрочно погасяване по кредита —
+// главницата вече е върната, тази вноска няма да бъде плащана (2026-08-18).
+const scheduleStatusLabels = { pending: 'Предстои', paid: 'Платено', late: 'Закъснение', default: 'Просрочено', closed: 'Закрита предсрочно' }
 const scheduleStatusClasses = {
   pending: 'bg-gray-100 text-gray-500',
   paid: 'bg-green-50 text-green-600',
   late: 'bg-amber-50 text-amber-600',
   default: 'bg-red-50 text-red-600',
+  closed: 'bg-blue-50 text-blue-600',
 }
 // Mobile schedule rows compress the status pill to a colored dot next to the
 // date (five text columns don't fit 375px; principal/interest/total must stay).
@@ -51,6 +54,7 @@ const scheduleStatusDotClasses = {
   paid: 'bg-green-500',
   late: 'bg-amber-500',
   default: 'bg-red-500',
+  closed: 'bg-blue-500',
 }
 
 const loan = computed(() => props.investment?.loan ?? null)

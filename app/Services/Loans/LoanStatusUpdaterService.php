@@ -403,10 +403,12 @@ class LoanStatusUpdaterService
             return false;
         }
 
-        // Any non-paid row (pending / late / default) blocks auto-close —
-        // delinquent positions must go through the late/buyback path.
+        // Any unsettled row (pending / late / default) blocks auto-close —
+        // delinquent positions must go through the late/buyback path. `closed`
+        // counts as settled: an early closure already returned that principal
+        // and cancelled the installment (Reni 2026-08-18).
         $nonPaid = $loan->investmentSchedules()
-            ->whereNotIn('status', ['paid'])
+            ->whereNotIn('status', ['paid', 'closed'])
             ->exists();
         if ($nonPaid) {
             return false;

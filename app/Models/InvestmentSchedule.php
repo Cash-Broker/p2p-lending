@@ -13,6 +13,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class InvestmentSchedule extends Model
 {
+    public const STATUS_PENDING = 'pending';
+
+    public const STATUS_PAID = 'paid';
+
+    public const STATUS_LATE = 'late';
+
+    /**
+     * Cancelled by an early closure (Reni 2026-08-18) — the borrower repaid
+     * that principal ahead of plan, so the installment will never be paid out.
+     * Deliberately NOT `paid`: nothing was received, and everything that counts
+     * received money (portfolio totals, the conditional-bonus condition) must
+     * skip it.
+     */
+    public const STATUS_CLOSED = 'closed';
+
     protected $fillable = [
         'investment_id',
         'loan_id',
@@ -22,6 +37,7 @@ class InvestmentSchedule extends Model
         'total',
         'status',
         'paid_at',
+        'closed_at',
         'became_late_at',
         'days_late',
     ];
@@ -34,6 +50,7 @@ class InvestmentSchedule extends Model
             'interest' => 'decimal:2',
             'total' => 'decimal:2',
             'paid_at' => 'datetime',
+            'closed_at' => 'datetime',
             'became_late_at' => 'datetime',
             'days_late' => 'integer',
         ];
