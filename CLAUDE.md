@@ -415,7 +415,9 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
   ALL files before the cache lock and any storage write — corrupt file ⇒ 422 + zero orphans.
   Stored on `local` disk under `kyc-documents/` (= `storage/app/private/`), served to admins
   only via `/admin/kyc-document/{path}` (isAdmin + path-traversal guards).
-- Consents: versioned `ConsentRecord` (terms v1.1, privacy v1.1, risk v1.0, biometric v1.0);
+- Consents: versioned `ConsentRecord` (terms **v1.2** since 2026-08-18 — added чл. 5.4
+  «Предсрочно погасяване» + чл. 7 «Промоционални бонуси», so the bonus-release rule is a
+  contractual term and not just an email; privacy v1.1, risk v1.0, biometric v1.0);
   `consent.current` middleware forces re-accept via SPA `ReConsentModal` (403
   `consent_required` intercepted in axios).
 - Legal-entity investors: `account_type`, `LegalEntityProfile` (encrypted ЕИК/ДДС/ЕГН),

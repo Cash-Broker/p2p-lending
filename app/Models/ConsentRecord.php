@@ -10,7 +10,9 @@ class ConsentRecord extends Model
     public $timestamps = false;
 
     const TYPE_TERMS = 'terms_of_service';
+
     const TYPE_PRIVACY = 'privacy_policy';
+
     const TYPE_RISK = 'risk_disclosure';
 
     // Explicit consent for processing the live selfie (biometric data, GDPR
@@ -23,9 +25,17 @@ class ConsentRecord extends Model
     // erasure, and legal-entity onboarding. Risk disclosure is unchanged.
     // Existing users are re-prompted by the consent gate (EnsureConsentsCurrent)
     // which compares each user's latest accepted version against these.
-    const CURRENT_TERMS_VERSION = 'v1.1';
+    // v1.2 (2026-08-18): добавени чл. 5.4 «Предсрочно погасяване на Кредит»
+    // и чл. 7 «Промоционални бонуси» — условията, при които бонусът се
+    // освобождава за теглене, вече са договорно задължение, не само текст в
+    // имейла при начисляване. Бумпът заставя всички инвеститори да приемат
+    // наново (EnsureConsentsCurrent).
+    const CURRENT_TERMS_VERSION = 'v1.2';
+
     const CURRENT_PRIVACY_VERSION = 'v1.1';
+
     const CURRENT_RISK_VERSION = 'v1.0';
+
     const CURRENT_BIOMETRIC_VERSION = 'v1.0';
 
     /**

@@ -30,6 +30,43 @@ class ConsentGateTest extends TestCase
         return $user;
     }
 
+    public function test_terms_v11_users_must_re_accept_after_the_v12_bump(): void
+    {
+        // v1.2 (2026-08-18) added the bonus-release conditions and the early
+        // repayment clause — everyone who accepted v1.1 has to see them.
+        // Everything else stays current, so the bump is what is under test.
+        $user = User::factory()->create(['email_verified_at' => now()]);
+        $user->wallet()->create();
+        foreach (ConsentRecord::currentDocumentVersions() as $type => $version) {
+            $user->consentRecords()->create([
+                'type' => $type,
+                'version' => $type === ConsentRecord::TYPE_TERMS ? 'v1.1' : $version,
+                'ip_address' => '127.0.0.1',
+                'user_agent' => 'phpunit',
+                'accepted_at' => now()->subDay(),
+            ]);
+        }
+
+        $pending = $this->actingAs($user)->getJson('/api/consents/pending')
+            ->assertOk()
+            ->json('pending');
+
+        $this->assertContains(ConsentRecord::TYPE_TERMS, collect($pending)->pluck('type')->all());
+        $this->assertSame('v1.2', ConsentRecord::CURRENT_TERMS_VERSION);
+
+        // …and a financial action is refused until they do.
+        $this->actingAs($user)->postJson('/api/withdrawal', ['amount' => '50.00'])
+            ->assertStatus(403)
+            ->assertJsonPath('error', 'consent_required');
+
+        $this->actingAs($user)->postJson('/api/consents/accept', [
+            'types' => [ConsentRecord::TYPE_TERMS],
+        ])->assertOk();
+
+        $this->actingAs($user)->getJson('/api/consents/pending')
+            ->assertOk()->assertJsonPath('pending', []);
+    }
+
     public function test_pending_lists_only_stale_documents(): void
     {
         // Terms + Privacy are now v1.1; Risk is unchanged at v1.0.
