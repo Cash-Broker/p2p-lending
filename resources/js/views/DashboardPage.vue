@@ -6,6 +6,7 @@ import api from '../api/axios'
 import EarnedTicker from '../components/EarnedTicker.vue'
 import IdleMoneyStrip from '../components/IdleMoneyStrip.vue'
 import NextPayoutRing from '../components/NextPayoutRing.vue'
+import LockedBonusStrip from '../components/LockedBonusStrip.vue'
 import PromoPanel from '../components/PromoPanel.vue'
 import PushOptInBanner from '../components/PushOptInBanner.vue'
 import WelcomeBackBanner from '../components/WelcomeBackBanner.vue'
@@ -136,6 +137,9 @@ function formatAmount(val) {
 const txTypeLabels = {
   deposit: 'Депозит',
   bonus: 'Бонус',
+  bonus_locked: 'Бонус (заключен)',
+  bonus_released: 'Освободен бонус',
+  bonus_cancelled: 'Отменен бонус',
   withdrawal: 'Теглене',
   investment: 'Инвестиция',
   repayment_principal: 'Главница',
@@ -162,7 +166,7 @@ function rateDisplay(loan) {
 
 // Same convention as TransactionsPage: cash-in +, cash-out -, everything
 // else (accrual bookkeeping / unknown newer types) neutral without a sign.
-const incomingTypes = ['deposit', 'bonus', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
+const incomingTypes = ['deposit', 'bonus', 'bonus_released', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
 const outgoingTypes = ['withdrawal', 'investment', 'fee']
 </script>
 
@@ -229,6 +233,9 @@ const outgoingTypes = ['withdrawal', 'investment', 'fee']
 
       <!-- Flash promo panel — renders only while a promo is running -->
       <PromoPanel />
+
+      <!-- Начислен, но още заключен бонус: сумата + какво остава до нея -->
+      <LockedBonusStrip v-if="dashboard?.locked_bonus" :bonus="dashboard.locked_bonus" />
 
       <!-- Stat cards -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">

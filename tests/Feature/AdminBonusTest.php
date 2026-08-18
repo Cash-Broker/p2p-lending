@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Filament\Resources\DepositRequestResource\Pages\ListDepositRequests;
 use App\Filament\Resources\UserResource\Pages\ViewUser;
+use App\Models\BonusGrant;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Notifications\BonusCreditedNotification;
@@ -20,10 +21,11 @@ use Livewire\Livewire;
 use Tests\TestCase;
 
 /**
- * «Начисли бонус» (boss 2026-08-09): admin grants promotional credit into
- * the investor's available balance without a deposit code. New TYPE_BONUS
- * ledger row — spendable like a deposit, excluded from bank-statement
- * reconciliation, visible to the investor as «Бонус».
+ * «Начисли бонус» (boss 2026-08-09, reworked by Reni 2026-08-18): the admin
+ * grants promotional credit without a deposit code — but the money lands
+ * LOCKED (`bonus_locked` bucket, TYPE_BONUS_LOCKED row) together with the
+ * base it has to be earned against. Releasing it is BonusLockTest's subject;
+ * this file covers the grant itself.
  */
 class AdminBonusTest extends TestCase
 {
@@ -54,16 +56,35 @@ class AdminBonusTest extends TestCase
         $user = $this->investor('50.00');
 
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '150', 'reason' => 'Бонус за препоръчан клиент'])
+            ->callAction('grant_bonus', data: [
+                'amount' => '150',
+                'base_amount' => '5000',
+                'reason' => 'Бонус за препоръчан клиент',
+            ])
             ->assertHasNoActionErrors();
 
-        $this->assertSame('200.00', $user->wallet->fresh()->available);
+        $wallet = $user->wallet->fresh();
+        // The bonus is NOT spendable: available is untouched, the money waits
+        // in its own bucket until the investment condition is met.
+        $this->assertSame('50.00', $wallet->available);
+        $this->assertSame('150.00', $wallet->bonus_locked);
+
         $this->assertDatabaseHas('transactions', [
             'user_id' => $user->id,
-            'type' => Transaction::TYPE_BONUS,
+            'type' => Transaction::TYPE_BONUS_LOCKED,
             'amount' => '150.00',
             'description' => 'Бонус: Бонус за препоръчан клиент',
         ]);
+        $this->assertDatabaseHas('bonus_grants', [
+            'user_id' => $user->id,
+            'amount' => '150.00',
+            'base_amount' => '5000.00',
+            'required_installments' => 3,
+            'source' => BonusGrant::SOURCE_ADMIN,
+            'granted_by' => $admin->id,
+            'status' => BonusGrant::STATUS_LOCKED,
+        ]);
+
         // Per-grant unique reference: admin id prefix + uuid suffix.
         $reference = Transaction::where('user_id', $user->id)->value('reference');
         $this->assertMatchesRegularExpression(
@@ -84,23 +105,24 @@ class AdminBonusTest extends TestCase
         $user = $this->investor();
 
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '100', 'reason' => 'Реферал'])
+            ->callAction('grant_bonus', data: ['amount' => '100', 'base_amount' => '2000', 'reason' => 'Реферал'])
             ->assertHasNoActionErrors();
 
         // Same (user, amount) again straight away — replay guard blocks it.
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '100', 'reason' => 'Реферал'])
+            ->callAction('grant_bonus', data: ['amount' => '100', 'base_amount' => '2000', 'reason' => 'Реферал'])
             ->assertHasNoActionErrors();
 
-        $this->assertSame('100.00', $user->wallet->fresh()->available);
+        $this->assertSame('100.00', $user->wallet->fresh()->bonus_locked);
         $this->assertSame(1, Transaction::where('user_id', $user->id)->count());
+        $this->assertSame(1, BonusGrant::where('user_id', $user->id)->count());
 
         // A DIFFERENT amount is not a replay — goes through immediately.
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '50', 'reason' => 'Друга кампания'])
+            ->callAction('grant_bonus', data: ['amount' => '50', 'base_amount' => '1000', 'reason' => 'Друга кампания'])
             ->assertHasNoActionErrors();
 
-        $this->assertSame('150.00', $user->wallet->fresh()->available);
+        $this->assertSame('150.00', $user->wallet->fresh()->bonus_locked);
     }
 
     public function test_reason_longer_than_248_chars_is_rejected(): void
@@ -111,7 +133,9 @@ class AdminBonusTest extends TestCase
         // 249 chars + the 7-char «Бонус: » prefix would overflow the
         // VARCHAR(255) description column mid-transaction.
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '100', 'reason' => str_repeat('х', 249)])
+            ->callAction('grant_bonus', data: [
+                'amount' => '100', 'base_amount' => '1000', 'reason' => str_repeat('х', 249),
+            ])
             ->assertHasActionErrors(['reason']);
 
         $this->assertSame(0, Transaction::where('user_id', $user->id)->count());
@@ -123,19 +147,27 @@ class AdminBonusTest extends TestCase
         $user = $this->investor();
 
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '', 'reason' => ''])
-            ->assertHasActionErrors(['amount', 'reason']);
+            ->callAction('grant_bonus', data: ['amount' => '', 'base_amount' => '', 'reason' => ''])
+            ->assertHasActionErrors(['amount', 'base_amount', 'reason']);
 
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '-100', 'reason' => 'x'])
+            ->callAction('grant_bonus', data: ['amount' => '-100', 'base_amount' => '1000', 'reason' => 'x'])
             ->assertHasActionErrors(['amount']);
 
         // Fat-finger guard: five-digit bonuses are almost certainly typos.
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '10001', 'reason' => 'x'])
+            ->callAction('grant_bonus', data: ['amount' => '10001', 'base_amount' => '20000', 'reason' => 'x'])
             ->assertHasActionErrors(['amount']);
 
-        $this->assertSame('0.00', $user->wallet->fresh()->available);
+        // A base below the bonus itself is nonsense — it would unlock the
+        // bonus with an investment smaller than the reward.
+        Livewire::test(ViewUser::class, ['record' => $user->id])
+            ->callAction('grant_bonus', data: ['amount' => '500', 'base_amount' => '100', 'reason' => 'x'])
+            ->assertHasActionErrors(['base_amount']);
+
+        $wallet = $user->wallet->fresh();
+        $this->assertSame('0.00', $wallet->available);
+        $this->assertSame('0.00', $wallet->bonus_locked);
         $this->assertSame(0, Transaction::where('user_id', $user->id)->count());
     }
 
@@ -148,14 +180,16 @@ class AdminBonusTest extends TestCase
             ->assertActionHidden('grant_bonus');
     }
 
-    public function test_wallet_service_bonus_credits_available_and_writes_ledger_row(): void
+    public function test_wallet_service_bonus_locked_fills_the_locked_bucket_only(): void
     {
         $user = $this->investor('10.00');
 
-        $tx = app(WalletService::class)->bonus($user->id, '99.50', 'Бонус: тест', 'bonus:admin:1');
+        $tx = app(WalletService::class)->bonusLocked($user->id, '99.50', 'Бонус: тест', 'bonus:admin:1');
 
-        $this->assertSame('109.50', $user->wallet->fresh()->available);
-        $this->assertSame(Transaction::TYPE_BONUS, $tx->type);
+        $wallet = $user->wallet->fresh();
+        $this->assertSame('10.00', $wallet->available);
+        $this->assertSame('99.50', $wallet->bonus_locked);
+        $this->assertSame(Transaction::TYPE_BONUS_LOCKED, $tx->type);
         $this->assertSame('99.50', (string) $tx->amount);
     }
 
@@ -164,13 +198,28 @@ class AdminBonusTest extends TestCase
         $user = $this->investor();
 
         $this->expectException(InvalidArgumentException::class);
-        app(WalletService::class)->bonus($user->id, '0.00', 'Бонус: тест');
+        app(WalletService::class)->bonusLocked($user->id, '0.00', 'Бонус: тест');
+    }
+
+    public function test_legacy_free_bonus_rows_still_credit_available(): void
+    {
+        // Bonuses granted before 2026-08-18 were spendable on arrival. Their
+        // rows keep that meaning — terms are not rewritten retroactively.
+        // Balance starts at zero so the ledger check below has nothing but the
+        // bonus row to reconcile against.
+        $user = $this->investor();
+
+        $tx = app(WalletService::class)->bonus($user->id, '40.00', 'Бонус: заварен');
+
+        $this->assertSame('40.00', $user->wallet->fresh()->available);
+        $this->assertSame(Transaction::TYPE_BONUS, $tx->type);
+        $this->assertSame(0, Artisan::call('ledger:reconcile'));
     }
 
     public function test_ledger_reconciles_with_bonus_rows(): void
     {
         $user = $this->investor();
-        app(WalletService::class)->bonus($user->id, '200.00', 'Бонус: реферал');
+        app(WalletService::class)->bonusLocked($user->id, '200.00', 'Бонус: реферал');
 
         // Default-deny reconciliation: an unmapped type would exit non-zero.
         $this->assertSame(0, Artisan::call('ledger:reconcile'));
@@ -190,7 +239,7 @@ class AdminBonusTest extends TestCase
             ->andReturn(true);
 
         Livewire::test(ViewUser::class, ['record' => $user->id])
-            ->callAction('grant_bonus', data: ['amount' => '100', 'reason' => 'Реферал'])
+            ->callAction('grant_bonus', data: ['amount' => '100', 'base_amount' => '3000', 'reason' => 'Реферал'])
             ->assertHasNoActionErrors();
     }
 
@@ -204,16 +253,25 @@ class AdminBonusTest extends TestCase
             ->callAction(TestAction::make('grant_bonus')->table(), data: [
                 'user_id' => $user->id,
                 'amount' => '200',
+                'base_amount' => '10000',
                 'reason' => 'Доведен клиент',
             ])
             ->assertHasNoActionErrors();
 
-        $this->assertSame('210.00', $user->wallet->fresh()->available);
+        $wallet = $user->wallet->fresh();
+        $this->assertSame('10.00', $wallet->available);
+        $this->assertSame('200.00', $wallet->bonus_locked);
+
         $this->assertDatabaseHas('transactions', [
             'user_id' => $user->id,
-            'type' => Transaction::TYPE_BONUS,
+            'type' => Transaction::TYPE_BONUS_LOCKED,
             'amount' => '200.00',
             'description' => 'Бонус: Доведен клиент',
+        ]);
+        $this->assertDatabaseHas('bonus_grants', [
+            'user_id' => $user->id,
+            'base_amount' => '10000.00',
+            'status' => BonusGrant::STATUS_LOCKED,
         ]);
 
         Notification::assertSentTo($user, BonusCreditedNotification::class);
@@ -229,6 +287,7 @@ class AdminBonusTest extends TestCase
             ->callAction(TestAction::make('grant_bonus')->table(), data: [
                 'user_id' => null,
                 'amount' => '100',
+                'base_amount' => '1000',
                 'reason' => 'Тест',
             ])
             ->assertHasActionErrors(['user_id']);
@@ -238,23 +297,24 @@ class AdminBonusTest extends TestCase
             ->callAction(TestAction::make('grant_bonus')->table(), data: [
                 'user_id' => $admin->id,
                 'amount' => '100',
+                'base_amount' => '1000',
                 'reason' => 'Тест',
             ])
             ->assertHasNoActionErrors();
 
-        $this->assertSame('0.00', $user->wallet->fresh()->available);
+        $this->assertSame('0.00', $user->wallet->fresh()->bonus_locked);
         $this->assertSame(0, Transaction::count());
     }
 
     public function test_investor_sees_bonus_in_transactions_and_can_filter_it(): void
     {
         $user = $this->investor();
-        app(WalletService::class)->bonus($user->id, '120.00', 'Бонус: кампания');
+        app(WalletService::class)->bonusLocked($user->id, '120.00', 'Бонус: кампания');
 
-        $response = $this->actingAs($user)->getJson('/api/transactions?type[]=bonus');
+        $response = $this->actingAs($user)->getJson('/api/transactions?type[]=bonus_locked');
 
         $response->assertStatus(200)
-            ->assertJsonPath('data.0.type', 'bonus')
+            ->assertJsonPath('data.0.type', 'bonus_locked')
             ->assertJsonPath('data.0.amount', '120.00');
     }
 }

@@ -26,6 +26,7 @@ class Wallet extends Model
         'invested' => '0.00',
         'accrued' => '0.00',
         'earned' => '0.00',
+        'bonus_locked' => '0.00',
     ];
 
     protected function casts(): array
@@ -36,6 +37,7 @@ class Wallet extends Model
             'invested' => 'decimal:2',
             'accrued' => 'decimal:2',
             'earned' => 'decimal:2',
+            'bonus_locked' => 'decimal:2',
         ];
     }
 
@@ -49,6 +51,10 @@ class Wallet extends Model
      *   invested         → "Инвестирана сума"
      *   currentBalance() → "Текущо салдо"
      *   available        → "Свободни за теглене"
+     *
+     * `bonus_locked` is deliberately in NEITHER: a conditional bonus is not
+     * spendable cash and not an open position — it is a promise the investor
+     * has not yet earned (Reni 2026-08-18). It is shown as its own line.
      */
     public function currentBalance(): string
     {

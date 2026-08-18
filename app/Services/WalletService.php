@@ -98,6 +98,126 @@ class WalletService
     }
 
     /**
+     * Grant a bonus into the LOCKED bucket (Reni 2026-08-18).
+     *
+     * The money exists and is visible to the investor, but sits outside
+     * `available`: it cannot be withdrawn and cannot be invested until
+     * BonusService confirms the investment condition. Every spend path in the
+     * platform reads `available`, so keeping the bonus out of it is the whole
+     * enforcement — there is no second place to forget a check.
+     */
+    public function bonusLocked(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        if (bccomp($amount, '0', 2) <= 0) {
+            throw new InvalidArgumentException('Bonus amount must be positive.');
+        }
+
+        return DB::transaction(function () use ($userId, $amount, $description, $reference) {
+            $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
+
+            $wallet->forceFill([
+                'bonus_locked' => bcadd($wallet->bonus_locked, $amount, 2),
+            ])->save();
+
+            return Transaction::create([
+                'user_id' => $userId,
+                'type' => Transaction::TYPE_BONUS_LOCKED,
+                'amount' => $amount,
+                'description' => $description,
+                'reference' => $reference,
+                'ip_address' => request()?->ip(),
+                'user_agent' => request()?->userAgent(),
+            ]);
+        });
+    }
+
+    /**
+     * The condition was met: move a locked bonus into spendable `available`.
+     */
+    public function releaseBonus(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        return $this->moveOutOfLockedBonus(
+            $userId,
+            $amount,
+            Transaction::TYPE_BONUS_RELEASED,
+            $description,
+            $reference,
+            creditAvailable: true,
+        );
+    }
+
+    /**
+     * Write a locked bonus off — admin cancellation, or an account closing
+     * with the condition never met. The bucket shrinks and the money reaches
+     * no one: it was a conditional promise the investor did not earn.
+     */
+    public function cancelLockedBonus(int $userId, string $amount, string $description, ?string $reference = null): Transaction
+    {
+        return $this->moveOutOfLockedBonus(
+            $userId,
+            $amount,
+            Transaction::TYPE_BONUS_CANCELLED,
+            $description,
+            $reference,
+            creditAvailable: false,
+        );
+    }
+
+    /**
+     * Shared guts of release/cancel. No clamping: a bucket that would go
+     * negative means the caller's bookkeeping is wrong, and paying out an
+     * unbacked bonus is worse than failing loudly — so it throws and the whole
+     * transaction rolls back.
+     */
+    private function moveOutOfLockedBonus(
+        int $userId,
+        string $amount,
+        string $type,
+        string $description,
+        ?string $reference,
+        bool $creditAvailable,
+    ): Transaction {
+        if (bccomp($amount, '0', 2) <= 0) {
+            throw new InvalidArgumentException('Bonus amount must be positive.');
+        }
+
+        return DB::transaction(function () use ($userId, $amount, $type, $description, $reference, $creditAvailable) {
+            $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
+
+            if (bccomp($wallet->bonus_locked, $amount, 2) < 0) {
+                $reconciliationId = (string) Str::uuid();
+                Log::error('Locked-bonus underflow refused', [
+                    'reconciliation_id' => $reconciliationId,
+                    'user_id' => $userId,
+                    'bonus_locked' => (string) $wallet->bonus_locked,
+                    'requested' => $amount,
+                    'type' => $type,
+                ]);
+
+                throw new InvalidArgumentException(
+                    "Insufficient locked bonus balance (reconciliation_id: {$reconciliationId})."
+                );
+            }
+
+            $changes = ['bonus_locked' => bcsub($wallet->bonus_locked, $amount, 2)];
+            if ($creditAvailable) {
+                $changes['available'] = bcadd($wallet->available, $amount, 2);
+            }
+            $wallet->forceFill($changes)->save();
+
+            return Transaction::create([
+                'user_id' => $userId,
+                'type' => $type,
+                'amount' => $amount,
+                'description' => $description,
+                'reference' => $reference,
+                'ip_address' => request()?->ip(),
+                'user_agent' => request()?->userAgent(),
+            ]);
+        });
+    }
+
+    /**
      * Reserve funds for a pending withdrawal.
      * Moves amount from available → reserved. No transaction record —
      * a reservation is a hold, not a ledger event.

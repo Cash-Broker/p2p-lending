@@ -298,7 +298,7 @@ class DepositRequestResource extends Resource
                     ->icon('heroicon-o-gift')
                     ->color('warning')
                     ->modalHeading('Начисли бонус')
-                    ->modalDescription('Избери потребител — пиши първите букви от името или имейла. Сумата се записва като „Бонус“, не като депозит (без банков превод зад нея).')
+                    ->modalDescription('Избери потребител — пиши първите букви от името или имейла. Сумата се записва като „Бонус“, не като депозит (без банков превод зад нея), и стои ЗАКЛЮЧЕНА, докато инвеститорът не инвестира базата и не получи 3 погашения по нея.')
                     ->form([
                         Forms\Components\Select::make('user_id')
                             ->label('Потребител')
@@ -324,6 +324,17 @@ class DepositRequestResource extends Resource
                             // Fat-finger guard, not business policy.
                             ->maxValue(10000)
                             ->rules(['decimal:0,2']),
+                        Forms\Components\TextInput::make('base_amount')
+                            ->label('Сума, върху която се начислява (€)')
+                            ->helperText('Напр. бонус 50 € за инвестиция от 5000 € → тук 5000. Бонусът се освобождава, когато инвеститорът има инвестиции за толкова и по тях са минали 3 погашения.')
+                            ->required()
+                            ->numeric()
+                            ->minValue(0.01)
+                            ->rules(['decimal:0,2'])
+                            // Filament helper — a relative 'gte:amount' rule
+                            // does not resolve inside an action's data path.
+                            ->gte('amount')
+                            ->validationMessages(['gte' => 'Базата не може да е по-малка от самия бонус.']),
                         Forms\Components\Textarea::make('reason')
                             ->label('Основание')
                             ->placeholder('напр. Бонус за препоръчан клиент')
@@ -342,7 +353,7 @@ class DepositRequestResource extends Resource
                             return;
                         }
 
-                        UserResource::grantBonus($user, $data['amount'], $data['reason']);
+                        UserResource::grantBonus($user, $data['amount'], $data['base_amount'], $data['reason']);
                     }),
             ])
             ->actions([

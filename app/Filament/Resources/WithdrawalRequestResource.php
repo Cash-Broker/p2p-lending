@@ -23,6 +23,12 @@ class WithdrawalRequestResource extends Resource
     protected static ?string $modelLabel = 'Теглене';
     protected static ?int $navigationSort = 3;
 
+    /**
+     * Wall-clock timezone for the dates in this list — prod's app tz is UTC,
+     * the admin thinks in Sofia time. Same idiom as DepositRequestResource.
+     */
+    private const DISPLAY_TIMEZONE = 'Europe/Sofia';
+
     public static function table(Table $table): Table
     {
         return $table
@@ -33,7 +39,18 @@ class WithdrawalRequestResource extends Resource
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
                     ->formatStateUsing(fn (string $state) => match ($state) { 'pending' => 'Чакащо', 'approved' => 'Одобрено', 'rejected' => 'Отхвърлено', 'processed' => 'Обработено', default => $state })
                     ->colors(['warning' => 'pending', 'success' => 'approved', 'danger' => 'rejected', 'info' => 'processed']),
-                Tables\Columns\TextColumn::make('created_at')->label('Дата')->date('d.m.Y H:i'),
+                Tables\Columns\TextColumn::make('created_at')->label('Дата')
+                    ->dateTime('d.m.Y H:i', self::DISPLAY_TIMEZONE)
+                    ->sortable(),
+                // Кога парите реално напускат сметката. Стъпва при «Одобри»
+                // (там е debitReserved) и се пре-стъпва при «Обработено», щом
+                // преводът е пуснат — чакащите заявки нямат такъв момент и
+                // показват «—». Подредбата умишлено остава по датата на
+                // ЗАЯВКАТА (Рени 2026-08-18): списъкът е работна опашка.
+                Tables\Columns\TextColumn::make('processed_at')->label('Изплатен на')
+                    ->dateTime('d.m.Y H:i', self::DISPLAY_TIMEZONE)
+                    ->placeholder('—')
+                    ->sortable(),
             ])
             ->defaultSort('created_at', 'desc')
             ->filters([Tables\Filters\SelectFilter::make('status')->options(['pending' => 'Чакащо', 'approved' => 'Одобрено', 'rejected' => 'Отхвърлено', 'processed' => 'Обработено'])])

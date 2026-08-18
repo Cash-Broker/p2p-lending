@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\BonusGrant;
 use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\LoanPromotion;
@@ -18,7 +19,8 @@ use Illuminate\Support\Facades\Log;
  *   1. grantInvestBonus() — called INSIDE InvestmentService::invest()'s
  *      transaction right after the investment is created: if the loan has a
  *      running promotion, pay the investor the upfront bonus immediately
- *      (WalletService::bonus → TYPE_BONUS → `available`), atomically with
+ *      (BonusService::grantPromoBonus → TYPE_BONUS_LOCKED → `bonus_locked`,
+ *      released once the investment has served its installments), atomically with
  *      the investment. Budget cap is enforced under a row lock on the
  *      promotion; the DB CHECK (bonus_paid_total ≤ budget_cap) is the
  *      backstop. Reference `promo:{id}:investment:{iid}` is unique per
@@ -35,7 +37,7 @@ use Illuminate\Support\Facades\Log;
  */
 class PromotionService
 {
-    public function __construct(private WalletService $walletService) {}
+    public function __construct(private BonusService $bonusService) {}
 
     /**
      * Pay the upfront promo bonus for a fresh investment, if its loan has a
@@ -57,7 +59,7 @@ class PromotionService
 
         // Belt-and-braces: one bonus per investment, ever.
         $reference = "promo:{$promotion->id}:investment:{$investment->id}";
-        if (Transaction::where('reference', $reference)->where('type', Transaction::TYPE_BONUS)->exists()) {
+        if (Transaction::where('reference', $reference)->where('type', Transaction::TYPE_BONUS_LOCKED)->exists()) {
             return null;
         }
 
@@ -74,8 +76,14 @@ class PromotionService
             return null;
         }
 
-        $this->walletService->bonus(
-            $user->id,
+        // Locked like every other bonus (Reni 2026-08-18): the investment that
+        // earned it is already made, but the money must serve its installments
+        // before the bonus is cashable — otherwise invest, pocket the bonus,
+        // withdraw it the same minute.
+        $this->bonusService->grantPromoBonus(
+            $user,
+            $investment,
+            $promotion,
             $bonus,
             "Промо бонус {$promotion->bonus_percent}% за инвестиция в кредит #{$loan->id}",
             $reference,
@@ -92,9 +100,14 @@ class PromotionService
         $investment->promoBonusGranted = $bonus;
 
         // Bell + mail AFTER the money commits; failure only logs.
-        DB::afterCommit(function () use ($user, $bonus, $loan) {
+        DB::afterCommit(function () use ($user, $bonus, $loan, $investment) {
             try {
-                $user->notify(new BonusCreditedNotification($bonus, "Промо оферта — кредит #{$loan->id}"));
+                $user->notify(new BonusCreditedNotification(
+                    $bonus,
+                    "Промо оферта — кредит #{$loan->id}",
+                    (string) $investment->amount,
+                    BonusGrant::DEFAULT_REQUIRED_INSTALLMENTS,
+                ));
             } catch (\Throwable $e) {
                 Log::error('Promo bonus notification failed', ['user_id' => $user->id, 'error' => $e->getMessage()]);
             }

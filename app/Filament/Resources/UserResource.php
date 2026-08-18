@@ -8,8 +8,8 @@ use App\Models\User;
 use App\Notifications\BonusCreditedNotification;
 use App\Notifications\BonusGrantedAdminNotification;
 use App\Notifications\KycStatusNotification;
+use App\Services\BonusService;
 use App\Services\TelegramService;
-use App\Services\WalletService;
 use App\Support\Money;
 use BackedEnum;
 use Filament\Actions\Action;
@@ -180,7 +180,7 @@ class UserResource extends Resource
             ->color('success')
             ->visible(fn (User $record) => $record->isInvestor())
             ->modalHeading('Начисли бонус')
-            ->modalDescription('Сумата се добавя директно към свободния баланс на потребителя и се записва като „Бонус“ (не като депозит — без банков превод зад нея).')
+            ->modalDescription('Бонусът се записва като „Бонус“ (не като депозит — без банков превод зад нея) и стои ЗАКЛЮЧЕН, докато потребителят не инвестира сумата по-долу и не получи 3 погашения по нея.')
             ->form([
                 TextInput::make('amount')
                     ->label('Сума (€)')
@@ -191,6 +191,18 @@ class UserResource extends Resource
                     // client ever wants bigger bonuses.
                     ->maxValue(10000)
                     ->rules(['decimal:0,2']),
+                TextInput::make('base_amount')
+                    ->label('Сума, върху която се начислява (€)')
+                    ->helperText('Например: бонус 50 € за инвестиция от 5000 € → тук се пише 5000. Бонусът се освобождава, когато инвеститорът има инвестиции за толкова и по тях са минали 3 погашения (при „Капитализация“ — на падежа).')
+                    ->required()
+                    ->numeric()
+                    ->minValue(0.01)
+                    ->rules(['decimal:0,2'])
+                    // Filament helper, not a raw 'gte:amount' rule: inside an
+                    // action the field lives at mountedActions.0.data.*, and a
+                    // relative field name never resolves there.
+                    ->gte('amount')
+                    ->validationMessages(['gte' => 'Базата не може да е по-малка от самия бонус.']),
                 Textarea::make('reason')
                     ->label('Основание')
                     ->placeholder('напр. Бонус за препоръчан клиент')
@@ -202,7 +214,9 @@ class UserResource extends Resource
                     ->maxLength(248),
             ])
             ->requiresConfirmation()
-            ->action(fn (User $record, array $data) => static::grantBonus($record, $data['amount'], $data['reason']));
+            ->action(fn (User $record, array $data) => static::grantBonus(
+                $record, $data['amount'], $data['base_amount'], $data['reason'],
+            ));
     }
 
     /**
@@ -211,11 +225,21 @@ class UserResource extends Resource
      * by their DEP code). Validation, replay guard, the wallet move,
      * investor + other-admin notifications, and BG toasts for every outcome.
      */
-    public static function grantBonus(User $record, string $rawAmount, string $rawReason): void
+    public static function grantBonus(User $record, string $rawAmount, string $rawBaseAmount, string $rawReason): void
     {
         try {
             $amount = Money::normalizePositive($rawAmount);
+            // The investment the bonus is calculated on (Reni 2026-08-18) —
+            // the bonus stays locked until the investor has invested at least
+            // this much and served the installments on it.
+            $baseAmount = Money::normalizePositive($rawBaseAmount);
             $reason = trim($rawReason);
+
+            if (bccomp($baseAmount, $amount, 2) < 0) {
+                Notification::make()->title('Базата не може да е по-малка от бонуса')->danger()->send();
+
+                return;
+            }
 
             if ($record->wallet === null) {
                 Notification::make()->title('Потребителят няма портфейл')->danger()->send();
@@ -230,7 +254,7 @@ class UserResource extends Resource
             // (user, amount) bonus in the last 2 minutes is treated as
             // a duplicate; a deliberate repeat just waits them out.
             $recentDuplicate = Transaction::where('user_id', $record->id)
-                ->where('type', Transaction::TYPE_BONUS)
+                ->where('type', Transaction::TYPE_BONUS_LOCKED)
                 ->where('amount', $amount)
                 ->where('created_at', '>=', now()->subMinutes(2))
                 ->exists();
@@ -244,10 +268,12 @@ class UserResource extends Resource
                 return;
             }
 
-            app(WalletService::class)->bonus(
-                $record->id,
+            $grant = app(BonusService::class)->grantAdminBonus(
+                $record,
                 $amount,
-                'Бонус: '.$reason,
+                $baseAmount,
+                $reason,
+                (int) auth()->id(),
                 // Per-grant unique reference — a duplicated row must be
                 // distinguishable from two intended grants afterwards.
                 'bonus:admin:'.auth()->id().':'.Str::uuid(),
@@ -255,7 +281,9 @@ class UserResource extends Resource
 
             // Money first, notifications after — failure logs, never rolls back.
             try {
-                $record->notify(new BonusCreditedNotification($amount, $reason));
+                $record->notify(new BonusCreditedNotification(
+                    $amount, $reason, $baseAmount, $grant->required_installments,
+                ));
             } catch (\Throwable $e) {
                 Log::warning('Failed to send bonus notification', [
                     'user_id' => $record->id, 'error' => $e->getMessage(),
@@ -289,12 +317,17 @@ class UserResource extends Resource
             app(TelegramService::class)->info(
                 'Начислен бонус',
                 auth()->user()->name." начисли бонус {$amount} € на {$record->name}.",
-                ['Основание' => $reason],
+                ['Основание' => $reason, 'Отключва се при' => $baseAmount.' € инвестиции'],
             );
 
             Notification::make()
                 ->title("Бонус {$amount} € е начислен")
-                ->body("Потребителят {$record->name} получи бонуса в свободния си баланс.")
+                // e(): Filament renders notification bodies as SANITIZED HTML,
+                // not as escaped text, so an investor-chosen name could smuggle
+                // a live link into the admin panel (same guard as the
+                // withdrawal bell in WithdrawalController).
+                ->body('Бонусът стои заключен, докато '.e($record->name)." инвестира {$baseAmount} € и получи "
+                    ."{$grant->required_installments} погашения по тях. Освобождава се автоматично.")
                 ->success()
                 ->send();
         } catch (\InvalidArgumentException $e) {

@@ -15,6 +15,8 @@ const filters = reactive({
 const txTypes = [
   { value: 'deposit', label: 'Депозит' },
   { value: 'bonus', label: 'Бонус' },
+  { value: 'bonus_locked', label: 'Бонус (заключен)' },
+  { value: 'bonus_released', label: 'Освободен бонус' },
   { value: 'withdrawal', label: 'Теглене' },
   { value: 'investment', label: 'Инвестиция' },
   { value: 'repayment_principal', label: 'Главница' },
@@ -25,6 +27,9 @@ const txTypes = [
 const txTypeLabels = {
   deposit: 'Депозит',
   bonus: 'Бонус',
+  bonus_locked: 'Бонус (заключен)',
+  bonus_released: 'Освободен бонус',
+  bonus_cancelled: 'Отменен бонус',
   withdrawal: 'Теглене',
   investment: 'Инвестиция',
   repayment_principal: 'Главница',
@@ -42,6 +47,9 @@ const txTypeLabels = {
 const txTypeClasses = {
   deposit: 'bg-green-50 text-green-600',
   bonus: 'bg-amber-50 text-amber-600',
+  bonus_locked: 'bg-amber-50 text-amber-600',
+  bonus_released: 'bg-amber-50 text-amber-600',
+  bonus_cancelled: 'bg-gray-100 text-gray-500',
   withdrawal: 'bg-red-50 text-red-600',
   investment: 'bg-blue-50 text-blue-600',
   repayment_principal: 'bg-green-50 text-green-600',
@@ -59,7 +67,7 @@ const txTypeClasses = {
 // Cash-in rows show +green, cash-out rows -red. Types in NEITHER list
 // (accrual bookkeeping, or a type this bundle predates) render neutral —
 // an unknown credit must never look like money taken.
-const incomingTypes = ['deposit', 'bonus', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
+const incomingTypes = ['deposit', 'bonus', 'bonus_released', 'repayment_principal', 'repayment_interest', 'buyback_principal', 'buyback_interest', 'early_repayment_principal', 'early_repayment_interest', 'interest_released']
 const outgoingTypes = ['withdrawal', 'investment', 'fee']
 
 async function load(page = 1) {

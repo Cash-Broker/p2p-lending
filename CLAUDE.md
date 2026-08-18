@@ -73,13 +73,13 @@ app/
   Models/              25 models; core: Loan, LoanOffer, Investment, InvestmentSchedule,
                        InvestmentContract (frozen agreement + click-wrap evidence),
                        AmortizationSchedule, Wallet, Transaction, LoanEvent, LoanGrant,
-                       DepositRequest, WithdrawalRequest, Borrower(+AnonymizedProfile),
+                       DepositRequest, WithdrawalRequest, BonusGrant, Borrower(+AnonymizedProfile),
                        LegalEntityProfile, BeneficialOwner, ConsentRecord, SavedIban,
                        PlatformSetting, PlatformMetric, AuditLog, AdminTrustedIp
   Services/            ALL business logic. Money engine: WalletService (sole wallet gateway),
                        RepaymentService, ScheduledPayoutService, PayoutAccrualService,
                        OfferProjectionService, InvestmentScheduleGenerator, InvestmentService,
-                       InvestmentContractService (dogovor snapshots + dompdf render),
+                       InvestmentContractService (dogovor snapshots + dompdf render), BonusService,
                        AmortizationService, DepositService, WithdrawalService, FeeService,
                        APRCalculatorService, TelegramService, KycImageNormalizer,
                        AccountDeletionService
@@ -116,21 +116,26 @@ Decision rationale now lives in git history + `docs/BIZNES-DOKUMENTACIA.md`.
   because of the 0–100 DB CHECK; don't copy the pattern.)
 - **Every wallet move goes through `WalletService`** — row `lockForUpdate` → validate → mutate →
   immutable `Transaction` row (with ip/UA). Balances are never mass-assignable.
-- **5 wallet buckets:** `available`, `reserved`, `invested`, `accrued`, `earned` — all DB CHECK
-  ≥ 0. `currentBalance() = invested + accrued` ("Текущо салдо", derived).
+- **6 wallet buckets:** `available`, `reserved`, `invested`, `accrued`, `earned`,
+  `bonus_locked` — all DB CHECK ≥ 0. `currentBalance() = invested + accrued`
+  ("Текущо салдо", derived); `bonus_locked` is in NEITHER that nor `available` —
+  a conditional bonus is not spendable cash and not an open position.
   `reserve()`/`releaseReservation()` move buckets **without** a ledger row (hold, not event) —
   hence reconciliation compares `available+reserved` as one cash bucket.
-- **14 transaction types** (`Transaction::TYPES`): deposit, withdrawal, investment,
+- **17 transaction types** (`Transaction::TYPES`): deposit, withdrawal, investment,
   repayment_principal/interest, buyback_principal/interest, early_repayment_principal/interest,
-  interest_accrued, interest_released, interest_accrual_reversed, fee, **bonus** (2026-08-09:
-  admin promo credit «Начисли бонус» — primary entry: Депозити header action next to «Захрани
-  сметка», searchable investor picker (newest 50 preloaded, name/email SQL search — NO codes,
-  boss 2026-08-10); secondary: ViewUser header. Shared guts `UserResource::grantBonus()` →
-  `WalletService::bonus()` → available+; 2-min identical-grant replay guard; unique ref
-  `bonus:admin:{id}:{uuid}`; reason ≤248 chars (255 − «Бонус: » prefix); NO bank wire behind
-  it — bank-statement reconciliation must EXCLUDE `SUM(type='bonus')`, mirror of the fee note;
-  investor gets «Бонус» tx + mail/bell; OTHER admins get a queued email per grant + a 🟡
-  silent Telegram record in the shared channel).
+  interest_accrued, interest_released, interest_accrual_reversed, fee, **bonus** (LEGACY —
+  free-on-arrival grants made before 2026-08-18; never written again, kept mapped to cash so
+  historical wallets still reconcile), **bonus_locked / bonus_released / bonus_cancelled**
+  (see «Conditional bonuses» below). Admin entry points for a grant: Депозити header action
+  next to «Захрани сметка» with a searchable investor picker (newest 50 preloaded, name/email
+  SQL search — NO codes, boss 2026-08-10) + ViewUser header; shared guts
+  `UserResource::grantBonus()` → `BonusService::grantAdminBonus()`; 2-min identical-grant
+  replay guard; unique ref `bonus:admin:{id}:{uuid}`; reason ≤248 chars (255 − «Бонус: »
+  prefix); NO bank wire behind it — bank-statement reconciliation must EXCLUDE
+  `SUM(type IN ('bonus','bonus_locked','bonus_released'))`, mirror of the fee note; investor
+  gets a tx + mail/bell/push; OTHER admins get a queued email per grant + a 🟡 silent Telegram
+  record in the shared channel.
   `transactions`, `loan_events`, `audit_logs` are **immutable at the DB level** (MySQL triggers
   `SIGNAL SQLSTATE '45000'`); LoanEvent additionally throws from app-level `update()`/`delete()`
   (Transaction/AuditLog just set `UPDATED_AT = null` — the triggers are the guard).
@@ -149,7 +154,8 @@ Decision rationale now lives in git history + `docs/BIZNES-DOKUMENTACIA.md`.
   `loan:{id}:investment:{iid}:buyback`, `loan:{id}:buyback:user:{uid}`,
   `loan:{id}:early_repayment:user:{uid}`, `investment:{id}`, `deposit_request:{id}`,
   `withdrawal_request:{id}` (+`:fee`), `bonus:admin:{admin_id}:{uuid}` (uuid = per-grant
-  uniqueness; bonus has no backing entity row).
+  uniqueness; the admin grant has no backing entity row at write time),
+  `promo:{promo_id}:investment:{investment_id}`, `bonus_grant:{id}:release|cancel`.
 - **Idempotency:** invest = `idempotency_key` column (SPA auto-sends `X-Idempotency-Key`,
   backend 422s without it); repayment/payouts = `status='paid'` guard under row lock;
   buyback/early-repay = terminal-status check + dedicated exception; crons = `Cache::lock` 600s.
@@ -268,6 +274,41 @@ Two coexisting repayment worlds, routed by `Loan::usesOffers()` (any investment 
   (exact while borrower-side fees are zero; IRR solver is the v1.1 upgrade). Null-safe → «—».
   Admin-only «Марж» = ГПР − Доходност in LoanResource «Ставки» section.
 
+## Conditional bonuses (Reni 2026-08-18)
+
+Every bonus — admin «Начисли бонус» AND flash-promo — is granted **locked** and becomes
+spendable only when the investor has money genuinely working in the platform. Rule:
+
+> Σ (investments made after the grant, on which the investor has already RECEIVED
+> `required_installments` scheduled payments) ≥ `base_amount`
+
+- Money lands in the `bonus_locked` wallet bucket (`TYPE_BONUS_LOCKED`), **outside
+  `available`** — that IS the enforcement: every spend path (withdraw, invest, fee) reads
+  `available`, so there is no second check to forget. Release = `TYPE_BONUS_RELEASED`
+  (bonus_locked → available), write-off = `TYPE_BONUS_CANCELLED`.
+- `bonus_grants` row per grant carries the terms: amount, `base_amount` (admin types it in;
+  = the investment amount for promo grants), `required_installments` (default 3), `source`
+  (admin|promo), `qualifies_from`, status, and the release/cancel evidence. DB CHECK pins
+  status/source and the released_at ↔ release_transaction_id pair.
+- **Client decisions encoded:** all bonuses (not just manual); the base may be spread over
+  SEVERAL loans (the sum counts); «след третия падеж» = three RECEIVED payouts; a plan with
+  fewer rows than required (capitalized pays once, at maturity) unlocks on its last one; NO
+  claim button — «важното е да се изпълнят условията, тегленето си е теглене».
+- **Assumptions to confirm if she ever asks:** only investments made AFTER the grant count
+  (`qualifies_from`; for promo grants it is the investment's own timestamp, so its investment
+  qualifies); partial fulfilment releases nothing; grants never expire; grandfathered `bonus`
+  rows stay free.
+- Release path: `BonusService::evaluateUser()` from the `bonuses:release-eligible` cron (04:15,
+  after the payout cron marks installments paid). Idempotent — grant row `lockForUpdate` +
+  status recheck. Admin can cancel a LOCKED grant from Filament «Финанси → Бонуси» (read-only
+  register + cancel action); released money is the investor's and is not reversible there.
+- Account closure forfeits locked grants (`TYPE_BONUS_CANCELLED`) instead of blocking the
+  deletion — unlocking would require investing, which would trap the person in the platform.
+- Investor UI: `wallet.bonus_locked` + a `locked_bonus` block in `/api/dashboard` (amount,
+  base, qualified so far, remaining) → `LockedBonusStrip.vue`. The grant mail spells the
+  condition out — the money is visible from that moment, so that is when we must say what it
+  takes to cash it.
+
 ## Private loan links
 
 `loans.visibility='private'` ⇒ unlisted; admin shares `/invest/shared/{share_token}` (48-char,
@@ -348,6 +389,7 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 | 03:30                                                                                                 | `loans:process-late`              | F1: late detection + recovery + auto-repay; flags `--dry-run --loan= --detail --force`; kill switch `late_check_enabled` |
 | 03:45                                                                                                 | `loans:detect-buyback-eligible`   | F2; same flags; kill switch `buyback_check_enabled`; must run after F1                                                   |
 | 04:00                                                                                                 | `loans:process-payouts`           | offer payout engine, automatic loans only                                                                                |
+| 04:15                                                                                                 | `bonuses:release-eligible`        | conditional bonuses whose condition now holds (flags `--dry-run --user=`); runs after the payout cron marks installments paid |
 | 09:00                                                                                                 | `telegram:digest`                 | BG morning digest (INFO tier, silent) + admin ACTION-ITEMS EMAIL (`AdminActionItemsNotification`, queued, only when KYC/deposits/withdrawals/buyback > 0, only to role=admin; independent of Telegram config). Since 2026-08-07 the digest email is a REMINDER backstop — the primary admin alerting is event-driven (see KYC section) |
 
 - Health: `GET /api/health/scheduler` (public, 60/min) — F1 flat fields + nested `buyback`

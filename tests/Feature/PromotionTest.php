@@ -22,7 +22,9 @@ use Tests\TestCase;
 
 /**
  * Flash promos (Reni 2026-08-14): invest during the window → upfront
- * TYPE_BONUS lands in `available` atomically with the investment. These
+ * TYPE_BONUS_LOCKED lands in the `bonus_locked` bucket atomically with the
+ * investment (Reni 2026-08-18: promo bonuses are conditional too — released
+ * once the investment has served its installments, see BonusLockTest). These
  * tests pin the money math, the window/budget guards, idempotency, the
  * ledger, the API feed, and the admin flow with its bell fan-out.
  */
@@ -82,16 +84,18 @@ class PromotionTest extends TestCase
 
         $investmentId = $loan->investments()->first()->id;
 
-        // 1000 × 2% = 20.00 — exact, bcmath, as a TYPE_BONUS ledger row.
-        $bonusTx = Transaction::where('type', Transaction::TYPE_BONUS)
+        // 1000 × 2% = 20.00 — exact, bcmath, as a TYPE_BONUS_LOCKED row.
+        $bonusTx = Transaction::where('type', Transaction::TYPE_BONUS_LOCKED)
             ->where('reference', "promo:{$promo->id}:investment:{$investmentId}")
             ->first();
         $this->assertNotNull($bonusTx);
         $this->assertSame('20.00', (string) $bonusTx->amount);
 
-        // Wallet: −1000 invest + 20 bonus; buckets and ledger agree.
+        // Wallet: −1000 invested; the 20 € bonus is NOT spendable yet — it
+        // waits in its own bucket until the position serves its installments.
         $wallet = $user->wallet->fresh();
-        $this->assertSame('4020.00', $wallet->available);
+        $this->assertSame('4000.00', $wallet->available);
+        $this->assertSame('20.00', $wallet->bonus_locked);
         $this->assertSame('1000.00', $wallet->invested);
         $this->assertSame('20.00', (string) $promo->fresh()->bonus_paid_total);
         $this->assertSame(0, Artisan::call('ledger:reconcile'));
@@ -120,7 +124,7 @@ class PromotionTest extends TestCase
         $userB = $this->investor();
         $this->invest($userB, $loanB, '1000.00', 'promo-cancelled');
 
-        $this->assertSame(0, Transaction::where('type', Transaction::TYPE_BONUS)->count());
+        $this->assertSame(0, Transaction::where('type', Transaction::TYPE_BONUS_LOCKED)->count());
     }
 
     public function test_budget_cap_trims_and_then_stops_bonuses(): void
@@ -136,7 +140,7 @@ class PromotionTest extends TestCase
             $this->invest($user, $loan->fresh(), '1000.00', "promo-cap-{$i}");
         }
 
-        $bonuses = Transaction::where('type', Transaction::TYPE_BONUS)
+        $bonuses = Transaction::where('type', Transaction::TYPE_BONUS_LOCKED)
             ->orderBy('id')->pluck('amount')->map(fn ($a) => (string) $a);
 
         $this->assertSame(['20.00', '10.00'], $bonuses->all());
@@ -156,7 +160,7 @@ class PromotionTest extends TestCase
         $this->invest($user, $loan, '1000.00', 'promo-replay'); // same key → same investment
 
         $this->assertSame(1, $loan->investments()->count());
-        $this->assertSame(1, Transaction::where('type', Transaction::TYPE_BONUS)->count());
+        $this->assertSame(1, Transaction::where('type', Transaction::TYPE_BONUS_LOCKED)->count());
     }
 
     // ── API feed ──

@@ -15,6 +15,7 @@ use App\Models\LoanPromotion;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Services\AccruedEarningsService;
+use App\Services\BonusService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -24,7 +25,7 @@ use Illuminate\Support\Facades\Log;
 
 class DashboardController extends Controller
 {
-    public function index(Request $request, AccruedEarningsService $accruedEarnings): JsonResponse
+    public function index(Request $request, AccruedEarningsService $accruedEarnings, BonusService $bonusService): JsonResponse
     {
         $this->authorize('viewAny', Investment::class);
 
@@ -82,6 +83,9 @@ class DashboardController extends Controller
 
         return response()->json([
             'wallet' => new WalletResource($wallet),
+            // What the investor still has to do to unlock a granted bonus —
+            // null when there is nothing locked (Reni 2026-08-18).
+            'locked_bonus' => $bonusService->lockedSummary($user->id),
             'active_investments_count' => $activeInvestmentsCount,
             'recent_transactions' => TransactionResource::collection($recentTransactions),
             'latest_loans' => LoanResource::collection($latestLoans),

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\BonusGrant;
 use App\Models\User;
 use App\Models\Wallet;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,8 @@ use Illuminate\Validation\ValidationException;
  */
 class AccountDeletionService
 {
+    public function __construct(private BonusService $bonusService) {}
+
     public function deleteAccount(User $user, string $currentPassword): void
     {
         // Verify password — critical for preventing unauthorized deletion
@@ -80,6 +83,16 @@ class AccountDeletionService
                 'email' => $user->email,
                 'ip_address' => request()?->ip(),
             ]);
+
+            // Conditional bonuses are NOT a reason to refuse the deletion:
+            // unlocking one requires investing, so blocking on it would trap
+            // the person in the platform. The money was never earned, so it is
+            // written off explicitly (TYPE_BONUS_CANCELLED) instead of
+            // vanishing with the wallet row — the ledger must be able to
+            // explain where every locked cent went (Reni 2026-08-18).
+            foreach (BonusGrant::where('user_id', $userId)->locked()->lockForUpdate()->get() as $grant) {
+                $this->bonusService->cancel($grant, null, 'Закрит акаунт (GDPR изтриване)');
+            }
 
             // Retire the unused deposit code placeholder(s) (amount=NULL —
             // funded pending deposits were already blocked above). Deposit

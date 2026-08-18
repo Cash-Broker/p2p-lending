@@ -61,6 +61,17 @@ return Application::configure(basePath: dirname(__DIR__))
             ->runInBackground()
             ->appendOutputTo(storage_path('logs/loans-process-payouts.log'));
 
+        // Conditional bonuses — release the ones whose investment condition is
+        // now met (Reni 2026-08-18). Runs 15 minutes AFTER the payout cron on
+        // purpose: that run is what marks installments paid, so a bonus whose
+        // third payout lands tonight is free the same night. Idempotent — a
+        // re-run releases nothing twice.
+        $schedule->command('bonuses:release-eligible')
+            ->dailyAt('04:15')
+            ->withoutOverlapping(30)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/bonuses-release-eligible.log'));
+
         // Daily morning digest — Telegram summary (INFO tier, silent) of
         // platform state: new registrations, KYC pending, deposits awaiting
         // confirmation, withdrawals awaiting processing, buyback queue size,
