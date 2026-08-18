@@ -14,6 +14,7 @@ use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Log;
 use UnitEnum;
@@ -33,6 +34,16 @@ class DepositRequestResource extends Resource
     protected static ?string $modelLabel = 'Депозит';
 
     protected static ?int $navigationSort = 2;
+
+    /**
+     * Wall-clock timezone for the dates in this list.
+     *
+     * Prod's app tz is UTC (APP_TIMEZONE is not set), so the raw timestamps
+     * render two/three hours behind the hour the admin actually approved the
+     * deposit. The column is about "кога стана" — it must show Sofia time.
+     * Same idiom as ActivityStats / UserResource.
+     */
+    private const DISPLAY_TIMEZONE = 'Europe/Sofia';
 
     /**
      * The Filament page does NOT expose a Resource-level create form anymore.
@@ -70,6 +81,30 @@ class DepositRequestResource extends Resource
             ->all();
     }
 
+    /**
+     * Order the list by the moment each row actually happened: `confirmed_at`
+     * for an approved deposit (when the money hit the wallet), the request
+     * date for everything else.
+     *
+     * Why not `created_at`: a DEP code is issued when the investor first opens
+     * the deposit page and stays valid until it is consumed (client decision
+     * 2026-07-17, no expiry) — so a code minted in June can be credited in
+     * August. Sorting by issuance date scattered the approvals across the list
+     * (Reni 2026-08-18).
+     *
+     * Raw expression by necessity (COALESCE over two columns); no user input
+     * reaches it — the column names are literals and $direction is whitelisted
+     * here. Filament appends its own `order by id` afterwards, which keeps
+     * pagination stable for approvals that share a second.
+     */
+    protected static function orderByDecisionDate(Builder $query, string $direction): Builder
+    {
+        return $query->orderByRaw(
+            'COALESCE(deposit_requests.confirmed_at, deposit_requests.created_at) '
+            .($direction === 'asc' ? 'asc' : 'desc')
+        );
+    }
+
     public static function table(Table $table): Table
     {
         return $table
@@ -85,9 +120,24 @@ class DepositRequestResource extends Resource
                     })
                     ->colors(['warning' => 'pending', 'success' => 'approved', 'danger' => 'rejected']),
                 Tables\Columns\TextColumn::make('admin_note')->label('Бележка')->limit(30)->toggleable(isToggledHiddenByDefault: true),
-                Tables\Columns\TextColumn::make('created_at')->label('Дата')->date('d.m.Y H:i'),
+                // «Дата» = кога е ОДОБРЕН депозитът (confirmed_at — моментът,
+                // в който парите влизат в сметката), не кога е издаден кодът.
+                // Чакащите/отхвърлените нямат такъв момент и падат обратно към
+                // датата на заявката; подтекстът казва коя от двете се вижда,
+                // за да не смесва една колона два смисъла безмълвно.
+                Tables\Columns\TextColumn::make('confirmed_at')
+                    ->label('Дата')
+                    ->state(fn (DepositRequest $record) => $record->confirmed_at ?? $record->created_at)
+                    ->dateTime('d.m.Y H:i', self::DISPLAY_TIMEZONE)
+                    ->description(fn (DepositRequest $record) => $record->confirmed_at ? 'одобрен' : 'заявен')
+                    ->sortable(query: fn (Builder $query, string $direction): Builder => self::orderByDecisionDate($query, $direction)),
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label('Заявен на')
+                    ->dateTime('d.m.Y H:i', self::DISPLAY_TIMEZONE)
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
             ])
-            ->defaultSort('created_at', 'desc')
+            ->defaultSort(fn (Builder $query, string $direction): Builder => self::orderByDecisionDate($query, $direction), 'desc')
             // Hide unfunded placeholder rows (amount=null, status=pending) by
             // default — they're issued codes the user hasn't wired against yet.
             // Toggle the filter off to see them (debug / orphan code cleanup).

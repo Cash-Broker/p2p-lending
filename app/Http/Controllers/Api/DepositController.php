@@ -49,9 +49,16 @@ class DepositController extends Controller
         // Filter `amount > 0` excludes the placeholder rows that
         // getOrCreateActiveCode creates with NULL amount — investors only
         // see deposits that actually happened, not their unused codes.
+        // Newest first by the date the investor actually cares about: when the
+        // deposit was approved (money in the wallet). Codes never expire, so
+        // ordering by created_at buried an August credit made against a June
+        // code below newer requests — same reason the admin list sorts on
+        // confirmed_at. `id` breaks ties so pagination can't repeat/skip a row
+        // when two deposits are approved in the same second.
         $deposits = DepositRequest::where('user_id', $request->user()->id)
             ->where('amount', '>', 0)
-            ->latest()
+            ->orderByRaw('COALESCE(deposit_requests.confirmed_at, deposit_requests.created_at) desc')
+            ->orderByDesc('id')
             ->paginate(15);
 
         return response()->json([

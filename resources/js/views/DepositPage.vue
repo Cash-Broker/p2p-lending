@@ -177,7 +177,7 @@ onMounted(() => load())
           </thead>
           <tbody>
             <tr v-for="dep in deposits" :key="dep.id" class="border-t border-gray-50">
-              <td class="px-6 py-3 text-gray-600">{{ new Date(dep.created_at).toLocaleDateString('bg-BG') }}</td>
+              <td class="px-6 py-3 text-gray-600">{{ new Date(dep.confirmed_at || dep.created_at).toLocaleDateString('bg-BG') }}</td>
               <td class="px-6 py-3 font-semibold text-navy-700">{{ formatAmount(dep.amount) }} €</td>
               <td class="px-6 py-3 text-gray-400 font-mono text-xs hidden sm:table-cell">{{ dep.reference_code }}</td>
               <td class="px-6 py-3">
