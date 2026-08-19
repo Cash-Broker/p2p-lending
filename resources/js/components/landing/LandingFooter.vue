@@ -1,9 +1,3 @@
-<script setup>
-import { useAuthStore } from '../../stores/auth'
-
-const auth = useAuthStore()
-</script>
-
 <template>
   <footer class="border-t border-gray-100 bg-gray-50/50">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -21,8 +15,6 @@ const auth = useAuthStore()
           <p class="text-sm font-semibold text-navy-700 mb-4">Платформа</p>
           <ul class="space-y-2.5">
             <li><a href="#how-it-works" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Как работи</a></li>
-            <li><a href="#loans" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Кредити</a></li>
-            <li v-if="auth.isAuthenticated"><a href="#originators" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Партньори</a></li>
             <li><a href="#faq" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Въпроси</a></li>
             <li><a href="#" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">За нас</a></li>
           </ul>
