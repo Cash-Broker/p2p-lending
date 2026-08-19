@@ -20,6 +20,7 @@ use Filament\Tables\Table;
 class ConsentRecordsRelationManager extends RelationManager
 {
     protected static string $relationship = 'consentRecords';
+
     protected static ?string $title = 'Съгласия с правни документи';
 
     // Same reason as the investments tab: without these, Filament's generated
@@ -42,9 +43,9 @@ class ConsentRecordsRelationManager extends RelationManager
                 Tables\Columns\BadgeColumn::make('type')
                     ->label('Документ')
                     ->formatStateUsing(fn (string $state) => match ($state) {
-                        ConsentRecord::TYPE_TERMS   => 'Общи условия',
+                        ConsentRecord::TYPE_TERMS => 'Общи условия',
                         ConsentRecord::TYPE_PRIVACY => 'Поверителност',
-                        ConsentRecord::TYPE_RISK    => 'Декларация за риска',
+                        ConsentRecord::TYPE_RISK => 'Декларация за риска',
                         default => $state,
                     })
                     ->colors([
