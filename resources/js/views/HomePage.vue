@@ -11,7 +11,7 @@ import WhyUs from '../components/landing/WhyUs.vue'
 // show to people who've passed the registration gate. Guests get the
 // non-originator version of the landing; authenticated users see the
 // originators block on the same scroll.
-import OriginatorsSection from '../components/landing/OriginatorsSection.vue'
+// import OriginatorsSection from '../components/landing/OriginatorsSection.vue'
 import FaqSection from '../components/landing/FaqSection.vue'
 import CtaSection from '../components/landing/CtaSection.vue'
 import LandingFooter from '../components/landing/LandingFooter.vue'
@@ -33,7 +33,7 @@ useDocumentMeta({
     <HowItWorks />
     <WhyUs />
     <!-- <InvestmentOpportunities /> -->
-    <OriginatorsSection v-if="auth.isAuthenticated" />
+    <!-- <OriginatorsSection v-if="auth.isAuthenticated" /> -->
     <FaqSection />
     <CtaSection />
     <LandingFooter />

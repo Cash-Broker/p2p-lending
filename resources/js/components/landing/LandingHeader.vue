@@ -18,7 +18,7 @@ const mobileMenuOpen = ref(false)
           <a href="#how-it-works" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Как работи</a>
           <a href="#advantages" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">За инвеститори</a>
           <a href="#loans" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Кредити</a>
-          <a v-if="auth.isAuthenticated" href="#originators" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Партньори</a>
+          <!-- <a v-if="auth.isAuthenticated" href="#originators" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Партньори</a> -->
           <a href="#faq" class="text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors">Въпроси</a>
         </nav>
 

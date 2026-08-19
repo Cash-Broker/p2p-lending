@@ -34,7 +34,7 @@ const originators = [
   <section id="originators" class="py-20 sm:py-28">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
       <div class="text-center max-w-2xl mx-auto mb-16">
-        <p class="text-sm font-semibold text-accent-500 uppercase tracking-wider mb-3">Партньори</p>
+        <!-- <p class="text-sm font-semibold text-accent-500 uppercase tracking-wider mb-3">Партньори</p> -->
         <h2 class="text-3xl sm:text-4xl font-bold text-navy-700">Нашите оригинатори</h2>
         <p class="mt-4 text-gray-500">Работим с утвърдени и лицензирани финансови институции</p>
       </div>
