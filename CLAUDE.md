@@ -81,7 +81,9 @@ app/
                        OfferProjectionService, InvestmentScheduleGenerator, InvestmentService,
                        InvestmentContractService (dogovor snapshots + dompdf render), BonusService,
                        AmortizationService, DepositService, WithdrawalService, FeeService,
-                       APRCalculatorService, TelegramService, KycImageNormalizer,
+                       APRCalculatorService, PayoutLiabilityService (display-only: unpaid
+                       interest+principal per plan, feeds the users-page cards),
+                       TelegramService, KycImageNormalizer,
                        AccountDeletionService
   Services/Loans/      InvestorDistributionService, Buyback{Calculation,Execution,Eligibility}Service,
                        EarlyRepayment{Calculation,Execution}Service, LateDetectionService,
