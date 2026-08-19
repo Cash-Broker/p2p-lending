@@ -6,7 +6,7 @@ import HeroSection from '../components/landing/HeroSection.vue'
 import StatsBar from '../components/landing/StatsBar.vue'
 import HowItWorks from '../components/landing/HowItWorks.vue'
 import WhyUs from '../components/landing/WhyUs.vue'
-import InvestmentOpportunities from '../components/landing/InvestmentOpportunities.vue'
+// import InvestmentOpportunities from '../components/landing/InvestmentOpportunities.vue'
 // Originator names + buyback policies are commercial info we only want to
 // show to people who've passed the registration gate. Guests get the
 // non-originator version of the landing; authenticated users see the
@@ -32,7 +32,7 @@ useDocumentMeta({
     <StatsBar />
     <HowItWorks />
     <WhyUs />
-    <InvestmentOpportunities />
+    <!-- <InvestmentOpportunities /> -->
     <OriginatorsSection v-if="auth.isAuthenticated" />
     <FaqSection />
     <CtaSection />
