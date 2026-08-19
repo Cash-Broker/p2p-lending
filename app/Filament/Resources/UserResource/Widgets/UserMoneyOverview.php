@@ -4,6 +4,7 @@ namespace App\Filament\Resources\UserResource\Widgets;
 
 use App\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Models\Wallet;
+use App\Services\PayoutLiabilityService;
 use Filament\Widgets\Concerns\InteractsWithPageTable;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
@@ -51,6 +52,12 @@ class UserMoneyOverview extends BaseWidget
         // cumulative counter credited ALONGSIDE `available` (WalletService
         // credits both on every interest payment), not a pot of money.
         // Adding it anywhere double-counts the same euros.
+        // What the platform still owes on the plans (Reni 2026-08-19: «важно ми
+        // е да си следя паричните потоци»). Derived from UNPAID schedule rows,
+        // so a payout or an early closure deducts itself on the next render.
+        $liability = app(PayoutLiabilityService::class);
+        $owedInterest = $liability->totalInterest($liability->unpaidByPlan($userIds));
+
         return [
             // Each card is exactly the SUM of the column beneath it — that is
             // the whole point («да не се налага да ги събирам»), so the value
@@ -58,7 +65,7 @@ class UserMoneyOverview extends BaseWidget
             // that live outside the columns are disclosed underneath instead,
             // and only when they actually hold money.
             Stat::make('Инвестирани общо', static::money($totals?->total_invested))
-                ->description(static::note($totals?->total_accrued, 'натрупана лихва'))
+                ->description(self::SCOPE_NOTE)
                 ->icon('heroicon-o-banknotes')
                 ->color('success'),
 
@@ -66,6 +73,15 @@ class UserMoneyOverview extends BaseWidget
                 ->description(static::note($totals?->total_reserved, 'в процес на теглене'))
                 ->icon('heroicon-o-wallet')
                 ->color('primary'),
+
+            // The third figure is NOT a wallet bucket — it is the interest
+            // still to be paid on the remaining installments. The accrued
+            // bucket is the slice of it already recognised in investors'
+            // balances, so it is disclosed as a subset, never added on top.
+            Stat::make('Лихви за плащане', static::money($owedInterest))
+                ->description(static::note($totals?->total_accrued, 'от тях вече начислени'))
+                ->icon('heroicon-o-arrow-trending-up')
+                ->color('warning'),
         ];
     }
 

@@ -139,6 +139,10 @@ class UserListInvestedColumnTest extends TestCase
      * `reserved` (a withdrawal on its way out) and `accrued` (interest
      * promised, not yet released) sit in no column, so the cards disclose
      * them underneath instead of silently leaving the money out.
+     *
+     * Since 2026-08-19 the accrued note lives under «Лихви за плащане» — it is
+     * the slice of that liability already recognised in investors' balances,
+     * which is where it means something.
      */
     public function test_widget_discloses_money_parked_outside_the_two_columns(): void
     {
@@ -150,7 +154,7 @@ class UserListInvestedColumnTest extends TestCase
             // The headline figures still equal the columns they sit above.
             ->assertSee(Number::currency(1000, 'EUR', 'bg'))
             ->assertSee(Number::currency(250, 'EUR', 'bg'))
-            ->assertSee('+ '.Number::currency(12.34, 'EUR', 'bg').' натрупана лихва')
+            ->assertSee('+ '.Number::currency(12.34, 'EUR', 'bg').' от тях вече начислени')
             ->assertSee('+ '.Number::currency(75, 'EUR', 'bg').' в процес на теглене');
     }
 
@@ -161,7 +165,7 @@ class UserListInvestedColumnTest extends TestCase
         Livewire::test(UserMoneyOverview::class)
             ->assertOk()
             ->assertDontSee('в процес на теглене')
-            ->assertDontSee('натрупана лихва')
+            ->assertDontSee('вече начислени')
             ->assertSee('По текущия филтър и търсене');
     }
 
