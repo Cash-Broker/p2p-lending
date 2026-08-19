@@ -154,7 +154,7 @@ class UserListInvestedColumnTest extends TestCase
             // The headline figures still equal the columns they sit above.
             ->assertSee(Number::currency(1000, 'EUR', 'bg'))
             ->assertSee(Number::currency(250, 'EUR', 'bg'))
-            ->assertSee('от тях '.Number::currency(12.34, 'EUR', 'bg').' вече в балансите')
+            ->assertSee('+ '.Number::currency(12.34, 'EUR', 'bg').' от тях вече в балансите')
             ->assertSee('+ '.Number::currency(75, 'EUR', 'bg').' в процес на теглене');
     }
 

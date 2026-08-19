@@ -2,124 +2,115 @@
 
 namespace App\Filament\Resources\UserResource\Widgets;
 
-use App\Enums\PayoutType;
 use App\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Models\Wallet;
 use App\Services\AccruedEarningsService;
-use App\Services\PayoutLiabilityService;
 use Filament\Widgets\Concerns\InteractsWithPageTable;
-use Filament\Widgets\Widget;
+use Filament\Widgets\StatsOverviewWidget as BaseWidget;
+use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Support\Number;
 
 /**
- * «Паричен поток» — единият панел над списъка с потребители (Рени 2026-08-19:
- * «важно ми е да си следя паричните потоци»).
+ * «Сумарно инвестирани и свободни», pinned above the users table (boss
+ * 2026-08-11: «при много потребители ще се наложи да скролва много надолу…
+ * по-добре това горе да го качим»). The column summaries live at the
+ * BOTTOM of the table, which stops being readable as soon as the admin
+ * raises the rows-per-page.
  *
- * Three headline figures and, underneath, where the accrued interest is being
- * earned — split by repayment plan with a share bar, so the answer to «как
- * вървят нещата» is one glance instead of three cards to add up.
- *
- * Custom view rather than the stock StatsOverviewWidget: the stock cards
- * stack into a wall of identical boxes and lose the hierarchy between «what
- * the platform holds» and «what it has earned for people» (Yordan 2026-08-19).
- *
- * Numbers, not decoration:
- *   • «Текущо начислени лихви» is the SUM of what each investor sees on their
- *     own dashboard as «Текуща печалба» — same service, so the admin view and
- *     the investor view can never drift apart (Reni's explicit requirement).
- *     It is interest EARNED TO DATE, never the remaining schedule.
- *   • The per-plan figures add up to that headline exactly.
- *   • Everything follows the table's own filter + search, so the panel always
- *     describes the rows underneath it.
+ * The figures are not a separate report: `InteractsWithPageTable` hands us
+ * the table's own filtered + searched query (minus pagination), so the two
+ * cards always describe exactly the rows underneath them.
  */
-class UserMoneyOverview extends Widget
+class UserMoneyOverview extends BaseWidget
 {
     use InteractsWithPageTable;
-
-    protected string $view = 'filament.widgets.user-money-overview';
-
-    protected int|string|array $columnSpan = 'full';
-
-    /** Brand accents, one per plan — the eye tells them apart before reading. */
-    private const PLAN_COLORS = [
-        'amortizing' => '#1B2A4A',
-        'interest_only' => '#22C55E',
-        'capitalized' => '#F59E0B',
-    ];
 
     protected function getTablePage(): string
     {
         return ListUsers::class;
     }
 
-    protected function getViewData(): array
+    /**
+     * Shown when there is nothing hiding outside the two figures.
+     */
+    private const SCOPE_NOTE = 'По текущия филтър и търсене';
+
+    protected function getStats(): array
     {
-        // reorder(): the table's ORDER BY is dead weight inside IN (...).
+        // reorder() drops the table's ORDER BY — it is dead weight (and in
+        // some engines illegal) inside an IN (...) subquery.
         $userIds = $this->getPageTableQuery()->reorder()->select('users.id');
 
-        $wallets = Wallet::whereIn('user_id', $userIds)
-            ->selectRaw('COALESCE(SUM(invested), 0) as invested')
-            ->selectRaw('COALESCE(SUM(available), 0) as available')
-            ->selectRaw('COALESCE(SUM(reserved), 0) as reserved')
-            ->selectRaw('COALESCE(SUM(accrued), 0) as accrued')
+        $totals = Wallet::whereIn('user_id', $userIds)
+            ->selectRaw('COALESCE(SUM(invested), 0) as total_invested')
+            ->selectRaw('COALESCE(SUM(available), 0) as total_available')
+            ->selectRaw('COALESCE(SUM(reserved), 0) as total_reserved')
+            ->selectRaw('COALESCE(SUM(accrued), 0) as total_accrued')
             ->first();
 
-        $accrued = app(AccruedEarningsService::class)->accruedByPlan($userIds);
-        $capital = app(PayoutLiabilityService::class)->unpaidByPlan($userIds);
+        // `earned` is deliberately absent from every figure here: it is a
+        // cumulative counter credited ALONGSIDE `available` (WalletService
+        // credits both on every interest payment), not a pot of money.
+        // Adding it anywhere double-counts the same euros.
+        // Interest the investors have ALREADY earned but not yet been paid —
+        // the platform's live liability (Reni 2026-08-19: «важно ми е да си
+        // следя паричните потоци»).
+        //
+        // NOT the remaining scheduled interest: that assumes every loan runs
+        // to term with no early or partial repayment, «което никога не е
+        // така», and it read as a scary number that means nothing today. This
+        // is the exact figure each investor sees as «Текуща печалба», summed —
+        // same service, so the two can never drift apart.
+        $accruedInterest = app(AccruedEarningsService::class)->accruedByPlan($userIds)['total'];
 
         return [
-            'invested' => $this->money($wallets?->invested),
-            'available' => $this->money($wallets?->available),
-            'reserved' => $this->amount($wallets?->reserved),
-            'inBalances' => $this->amount($wallets?->accrued),
-            'reservedLabel' => $this->money($wallets?->reserved),
-            'inBalancesLabel' => $this->money($wallets?->accrued),
-            'interest' => $this->money($accrued['total']),
-            'hasInterest' => bccomp($accrued['total'], '0', 2) > 0,
-            'plans' => $this->plans($accrued),
-            'capital' => $capital,
+            // Each card is exactly the SUM of the column beneath it — that is
+            // the whole point («да не се налага да ги събирам»), so the value
+            // must never quietly become a different figure. The two buckets
+            // that live outside the columns are disclosed underneath instead,
+            // and only when they actually hold money.
+            Stat::make('Инвестирани общо', static::money($totals?->total_invested))
+                ->description(self::SCOPE_NOTE)
+                ->icon('heroicon-o-banknotes')
+                ->color('success'),
+
+            Stat::make('Свободни общо', static::money($totals?->total_available))
+                ->description(static::note($totals?->total_reserved, 'в процес на теглене'))
+                ->icon('heroicon-o-wallet')
+                ->color('primary'),
+
+            // Not a wallet bucket: interest earned to date across every open
+            // position. The `accrued` bucket is the slice of it already parked
+            // in investors' balances (capitalized plans), so it is disclosed
+            // underneath as a subset — never added on top.
+            Stat::make('Текущо начислени лихви', static::money($accruedInterest))
+                ->description(static::note($totals?->total_accrued, 'от тях вече в балансите'))
+                ->icon('heroicon-o-arrow-trending-up')
+                ->color('warning'),
         ];
     }
 
     /**
-     * One row per plan: label, its accrued interest, its share of the total
-     * and the capital that is earning it.
-     *
-     * @param  array{total: string, by_plan: array<string, string>}  $accrued
-     * @return array<int, array<string, mixed>>
+     * Money parked in `reserved` (a withdrawal is on its way out) or in
+     * `accrued` (interest promised but not yet released) belongs to nobody's
+     * column, so without this line the cards would read as «everything the
+     * platform holds» while quietly missing it.
      */
-    private function plans(array $accrued): array
+    protected static function note(mixed $amount, string $label): string
     {
-        $total = $accrued['total'];
-        $rows = [];
+        $amount = (string) ($amount ?? '0');
 
-        foreach (PayoutType::cases() as $plan) {
-            $interest = $accrued['by_plan'][$plan->value] ?? '0.00';
-
-            $rows[] = [
-                'key' => $plan->value,
-                'label' => $plan->label(),
-                'color' => self::PLAN_COLORS[$plan->value],
-                'interest' => $this->money($interest),
-                'raw' => $interest,
-                // Display-only share; the euro figures above are the truth.
-                'share' => bccomp($total, '0', 2) > 0
-                    ? round(((float) $interest / (float) $total) * 100)
-                    : 0,
-            ];
-        }
-
-        return $rows;
+        return bccomp($amount, '0', 2) > 0
+            ? '+ '.static::money($amount).' '.$label
+            : self::SCOPE_NOTE;
     }
 
-    private function amount(mixed $value): string
+    /**
+     * Display only — the ledger never reads these figures back. Formatted
+     * like every other amount in the panel: «104 150,00 €».
+     */
+    protected static function money(mixed $amount): string
     {
-        return bcadd((string) ($value ?? '0'), '0', 2);
-    }
-
-    /** Display only — «104 150,00 €», like every other amount in the panel. */
-    private function money(mixed $value): string
-    {
-        return Number::currency((float) ($value ?? 0), 'EUR', 'bg');
+        return Number::currency((float) ($amount ?? 0), 'EUR', 'bg');
     }
 }

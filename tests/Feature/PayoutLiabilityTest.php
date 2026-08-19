@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\PayoutType;
 use App\Filament\Resources\UserResource\Pages\ListUsers;
+use App\Filament\Resources\UserResource\Widgets\InterestByPlanOverview;
 use App\Filament\Resources\UserResource\Widgets\UserMoneyOverview;
 use App\Models\InvestmentSchedule;
 use App\Models\Loan;
@@ -268,13 +269,12 @@ class PayoutLiabilityTest extends TestCase
         // their own lifecycle, so their content is asserted on them directly.
         Livewire::test(ListUsers::class)->assertOk();
 
-        // One panel now carries the totals AND the per-plan breakdown.
         Livewire::test(UserMoneyOverview::class)
             ->assertOk()
-            ->assertSee('Инвестирани общо')
-            ->assertSee('Свободни общо')
-            ->assertSee('Текущо начислени лихви')
-            ->assertSee('Начислени лихви по погасителен план')
+            ->assertSee('Текущо начислени лихви');
+
+        Livewire::test(InterestByPlanOverview::class)
+            ->assertOk()
             ->assertSee('Анюитет')
             ->assertSee('Само лихва')
             ->assertSee('Капитализация');
