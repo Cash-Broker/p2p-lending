@@ -3,7 +3,6 @@
 namespace App\Filament\Resources\UserResource\Pages;
 
 use App\Filament\Resources\UserResource;
-use App\Filament\Resources\UserResource\Widgets\InterestByPlanOverview;
 use App\Filament\Resources\UserResource\Widgets\UserMoneyOverview;
 use Filament\Resources\Pages\ListRecords;
 
@@ -18,9 +17,9 @@ class ListUsers extends ListRecords
     protected function getHeaderWidgets(): array
     {
         return [
+            // Един панел: трите общи суми + разбивката на начислената лихва
+            // по погасителен план (собствен изглед, не стандартните карти).
             UserMoneyOverview::class,
-            // Разбивката по погасителни планове стои под общите суми.
-            InterestByPlanOverview::class,
         ];
     }
 
