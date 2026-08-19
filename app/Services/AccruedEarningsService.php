@@ -8,6 +8,8 @@ use App\Models\InvestmentSchedule;
 use App\Models\Loan;
 use App\Services\Loans\InvestorDistributionService;
 use Carbon\CarbonInterface;
+use Illuminate\Contracts\Database\Query\Builder as QueryBuilder;
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 
@@ -138,6 +140,74 @@ class AccruedEarningsService
             'per_second_rate' => $perSecond,
             'as_of' => $asOf->toIso8601String(),
         ];
+    }
+
+    /**
+     * The same accrued-to-date figure as {@see forUser}, but for a SET of
+     * investors and split by repayment plan — the admin's «Текущо начислени
+     * лихви» cards above the users table (Reni 2026-08-19).
+     *
+     * It deliberately reuses this class rather than re-deriving the number
+     * somewhere else: «както на мен ми излиза текущата печалба» — the admin
+     * total has to be the sum of exactly what each investor sees on their own
+     * dashboard, and two implementations would drift apart the first time the
+     * accrual rules change.
+     *
+     * Offer investments only. Legacy positions accrue against the loan-level
+     * schedule and belong to no plan, so including them would break the
+     * «three cards add up to the header» property; prod has had zero live
+     * legacy loans since 2026-08-18 and none can be created.
+     *
+     * @param  EloquentBuilder|QueryBuilder|array<int, int>  $userIds
+     * @return array{total: string, by_plan: array<string, string>}
+     */
+    public function accruedByPlan(EloquentBuilder|QueryBuilder|array $userIds, ?CarbonInterface $asOf = null): array
+    {
+        $asOf = ($asOf ?? now())->copy();
+
+        $totalsByPlan = [];
+        foreach (PayoutType::cases() as $plan) {
+            $totalsByPlan[$plan->value] = [
+                'daily' => '0.00',
+                'live' => '0.000000',
+                'rate_per_day' => '0.0000000000',
+            ];
+        }
+
+        $investments = Investment::query()
+            ->whereIn('user_id', $userIds)
+            ->whereNotNull('loan_offer_id')
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES))
+            ->with([
+                'loan',
+                'schedules' => fn ($q) => $q->orderBy('due_date')->orderBy('id'),
+            ])
+            ->get();
+
+        foreach ($investments as $investment) {
+            $plan = $investment->payout_type;
+            $rows = $investment->schedules->isNotEmpty()
+                ? $investment->schedules
+                : $this->projectedRows($investment);
+
+            if ($plan === PayoutType::Capitalized) {
+                $this->addCapitalized($investment, $rows, $asOf, $totalsByPlan[$plan->value]);
+            } else {
+                $this->addScheduledRows($rows, $asOf, $totalsByPlan[$plan->value], '1');
+            }
+        }
+
+        $byPlan = [];
+        $total = '0.00';
+
+        foreach ($totalsByPlan as $plan => $totals) {
+            // The DAILY granularity is the honest one for a dashboard card:
+            // the live ticker is for the investor watching their own money.
+            $byPlan[$plan] = bcadd($totals['daily'], '0', 2);
+            $total = bcadd($total, $byPlan[$plan], 2);
+        }
+
+        return ['total' => $total, 'by_plan' => $byPlan];
     }
 
     /**

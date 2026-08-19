@@ -4,7 +4,7 @@ namespace App\Filament\Resources\UserResource\Widgets;
 
 use App\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Models\Wallet;
-use App\Services\PayoutLiabilityService;
+use App\Services\AccruedEarningsService;
 use Filament\Widgets\Concerns\InteractsWithPageTable;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
@@ -52,11 +52,16 @@ class UserMoneyOverview extends BaseWidget
         // cumulative counter credited ALONGSIDE `available` (WalletService
         // credits both on every interest payment), not a pot of money.
         // Adding it anywhere double-counts the same euros.
-        // What the platform still owes on the plans (Reni 2026-08-19: «важно ми
-        // е да си следя паричните потоци»). Derived from UNPAID schedule rows,
-        // so a payout or an early closure deducts itself on the next render.
-        $liability = app(PayoutLiabilityService::class);
-        $owedInterest = $liability->totalInterest($liability->unpaidByPlan($userIds));
+        // Interest the investors have ALREADY earned but not yet been paid —
+        // the platform's live liability (Reni 2026-08-19: «важно ми е да си
+        // следя паричните потоци»).
+        //
+        // NOT the remaining scheduled interest: that assumes every loan runs
+        // to term with no early or partial repayment, «което никога не е
+        // така», and it read as a scary number that means nothing today. This
+        // is the exact figure each investor sees as «Текуща печалба», summed —
+        // same service, so the two can never drift apart.
+        $accruedInterest = app(AccruedEarningsService::class)->accruedByPlan($userIds)['total'];
 
         return [
             // Each card is exactly the SUM of the column beneath it — that is
@@ -74,12 +79,12 @@ class UserMoneyOverview extends BaseWidget
                 ->icon('heroicon-o-wallet')
                 ->color('primary'),
 
-            // The third figure is NOT a wallet bucket — it is the interest
-            // still to be paid on the remaining installments. The accrued
-            // bucket is the slice of it already recognised in investors'
-            // balances, so it is disclosed as a subset, never added on top.
-            Stat::make('Лихви за плащане', static::money($owedInterest))
-                ->description(static::note($totals?->total_accrued, 'от тях вече начислени'))
+            // Not a wallet bucket: interest earned to date across every open
+            // position. The `accrued` bucket is the slice of it already parked
+            // in investors' balances (capitalized plans), so it is disclosed
+            // underneath as a subset — never added on top.
+            Stat::make('Текущо начислени лихви', static::money($accruedInterest))
+                ->description(static::note($totals?->total_accrued, 'от тях вече в балансите'))
                 ->icon('heroicon-o-arrow-trending-up')
                 ->color('warning'),
         ];

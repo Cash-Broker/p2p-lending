@@ -10,6 +10,7 @@ use App\Models\InvestmentSchedule;
 use App\Models\Loan;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Services\AccruedEarningsService;
 use App\Services\InvestmentService;
 use App\Services\Loans\EarlyClosureExecutionService;
 use App\Services\PayoutAccrualService;
@@ -24,13 +25,21 @@ use Livewire\Livewire;
 use Tests\TestCase;
 
 /**
- * «Лихви за плащане» + разбивката по планове над списъка с потребители
- * (Рени/Йордан 2026-08-19: «важно ми е да си следя паричните потоци… като се
- * изплатят някакви, ще трябва да се приспадат»).
+ * «Текущо начислени лихви» + разбивката по планове над списъка с потребители
+ * (Рени 2026-08-19).
  *
- * The figure must be self-maintaining: it is derived from UNPAID installments,
- * so paying one out — or cancelling it with an early closure — takes it off
- * the platform's liability without anybody editing a number.
+ * Two things are pinned here, both of them her words:
+ *
+ *   • «Искам лихвите за плащане да бъдат текущите вече начислени, а това са
+ *     бъдещи лихви ако всички кредити не се погасят частично или предварително,
+ *     което никога не е така» — the card shows interest EARNED TO DATE, not the
+ *     remaining schedule.
+ *   • «Както на мен ми излиза текущата печалба… като потребител» — the admin
+ *     total is exactly the sum of what each investor sees on their own
+ *     dashboard, computed by the same service, so the two cannot drift.
+ *
+ * The per-plan cards must add up to that header exactly, and the underlying
+ * capital figure still drops out when an installment is paid or cancelled.
  */
 class PayoutLiabilityTest extends TestCase
 {
@@ -68,6 +77,17 @@ class PayoutLiabilityTest extends TestCase
         return app(PayoutLiabilityService::class);
     }
 
+    private function accrued(): AccruedEarningsService
+    {
+        return app(AccruedEarningsService::class);
+    }
+
+    /** Every investor id, i.e. the widget's unfiltered scope. */
+    private function allUserIds(): array
+    {
+        return User::query()->pluck('id')->all();
+    }
+
     private function scheduleInterest(Loan $loan, array $statuses = ['pending', 'late']): string
     {
         return InvestmentSchedule::where('loan_id', $loan->id)
@@ -92,7 +112,77 @@ class PayoutLiabilityTest extends TestCase
         $this->assertSame('0.00', $this->liability()->totalInterest($byPlan));
     }
 
-    public function test_interest_is_split_by_plan_and_sums_to_the_headline(): void
+    public function test_the_headline_equals_what_the_investors_see_as_current_profit(): void
+    {
+        // Reni's requirement, literally: the admin total is the sum of every
+        // investor's own «Текуща печалба».
+        [, $first] = $this->activeLoan(PayoutType::InterestOnly, '16.00');
+        [, $second] = $this->activeLoan(PayoutType::Capitalized, '20.00');
+
+        Carbon::setTestNow(Carbon::now()->addDays(70));
+
+        $perInvestor = bcadd(
+            $this->accrued()->forUser($first->id)['amount_daily'],
+            $this->accrued()->forUser($second->id)['amount_daily'],
+            2,
+        );
+
+        $this->assertGreaterThan(0, (float) $perInvestor);
+        $this->assertSame($perInvestor, $this->accrued()->accruedByPlan($this->allUserIds())['total']);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_accrued_interest_is_far_below_the_whole_remaining_schedule(): void
+    {
+        // The old card showed the full remaining schedule — «това ми извади
+        // акъла». A freshly funded loan has earned almost nothing yet, and the
+        // card must say so.
+        [$loan] = $this->activeLoan(PayoutType::InterestOnly, '16.00');
+
+        $accruedNow = $this->accrued()->accruedByPlan($this->allUserIds())['total'];
+        $wholeSchedule = $this->scheduleInterest($loan);
+
+        $this->assertGreaterThan((float) $accruedNow, (float) $wholeSchedule);
+        $this->assertLessThan((float) $wholeSchedule / 2, (float) $accruedNow);
+    }
+
+    public function test_accrued_interest_is_split_by_plan_and_sums_to_the_headline(): void
+    {
+        [, $amortizing] = $this->activeLoan(PayoutType::Amortizing, '12.00');
+        [, $interestOnly] = $this->activeLoan(PayoutType::InterestOnly, '16.00');
+        [, $capitalized] = $this->activeLoan(PayoutType::Capitalized, '20.00');
+
+        Carbon::setTestNow(Carbon::now()->addDays(100));
+
+        $result = $this->accrued()->accruedByPlan($this->allUserIds());
+
+        // Each plan carries its own investor's accrual…
+        $this->assertSame(
+            $this->accrued()->forUser($amortizing->id)['amount_daily'],
+            $result['by_plan']['amortizing'],
+        );
+        $this->assertSame(
+            $this->accrued()->forUser($interestOnly->id)['amount_daily'],
+            $result['by_plan']['interest_only'],
+        );
+        $this->assertSame(
+            $this->accrued()->forUser($capitalized->id)['amount_daily'],
+            $result['by_plan']['capitalized'],
+        );
+
+        // …and the three reconcile with the header, to the cent.
+        $sum = array_reduce(
+            $result['by_plan'],
+            fn (string $carry, string $amount) => bcadd($carry, $amount, 2),
+            '0.00',
+        );
+        $this->assertSame($sum, $result['total']);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_capital_at_work_is_split_by_plan_and_sums_to_the_headline(): void
     {
         [$amortizing] = $this->activeLoan(PayoutType::Amortizing, '12.00');
         [$interestOnly] = $this->activeLoan(PayoutType::InterestOnly, '16.00');
@@ -181,7 +271,7 @@ class PayoutLiabilityTest extends TestCase
 
         Livewire::test(UserMoneyOverview::class)
             ->assertOk()
-            ->assertSee('Лихви за плащане');
+            ->assertSee('Текущо начислени лихви');
 
         Livewire::test(InterestByPlanOverview::class)
             ->assertOk()

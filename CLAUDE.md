@@ -81,8 +81,12 @@ app/
                        OfferProjectionService, InvestmentScheduleGenerator, InvestmentService,
                        InvestmentContractService (dogovor snapshots + dompdf render), BonusService,
                        AmortizationService, DepositService, WithdrawalService, FeeService,
-                       APRCalculatorService, PayoutLiabilityService (display-only: unpaid
-                       interest+principal per plan, feeds the users-page cards),
+                       APRCalculatorService, PayoutLiabilityService (display-only: capital
+                       still at work per plan; the users-page cards pair it with
+                       AccruedEarningsService::accruedByPlan — «Текущо начислени
+                       лихви» MUST equal Σ of each investor's «Текуща печалба»,
+                       Reni 2026-08-19; the remaining SCHEDULE interest was
+                       explicitly rejected as a headline),
                        TelegramService, KycImageNormalizer,
                        AccountDeletionService
   Services/Loans/      InvestorDistributionService, Buyback{Calculation,Execution,Eligibility}Service,
