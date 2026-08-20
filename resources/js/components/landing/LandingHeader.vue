@@ -1,8 +1,9 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { sectionLink } from '../../utils/landingNav'
+import { loansPageRedirect } from '../../utils/publicGate'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -12,6 +13,10 @@ const mobileMenuOpen = ref(false)
 // too, so a section link has to carry the visitor back to «/» + hash from
 // there (resolved by the router's scrollBehavior).
 const section = (id) => sectionLink(id, route.path)
+
+// «Кредити» scrolls to the section like every other nav item — except for an
+// approved investor, who gets what Reni asked for: their own loans, one click.
+const loansTarget = computed(() => loansPageRedirect(auth.user) ?? section('loans'))
 </script>
 
 <template>
@@ -25,9 +30,9 @@ const section = (id) => sectionLink(id, route.path)
         <nav class="hidden md:flex items-center gap-4 lg:gap-8">
           <router-link :to="section('how-it-works')" class="text-[13px] lg:text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors whitespace-nowrap">Как работи</router-link>
           <router-link :to="section('advantages')" class="text-[13px] lg:text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors whitespace-nowrap">За инвеститори</router-link>
-          <router-link to="/loans" class="text-[13px] lg:text-sm font-medium transition-colors whitespace-nowrap"
+          <router-link :to="loansTarget" class="text-[13px] lg:text-sm font-medium transition-colors whitespace-nowrap"
             :class="route.path === '/loans' ? 'text-navy-700 font-semibold' : 'text-gray-600 hover:text-navy-700'">Кредити</router-link>
-          <router-link to="/originators" class="text-[13px] lg:text-sm font-medium transition-colors whitespace-nowrap"
+          <router-link :to="section('originators')" class="text-[13px] lg:text-sm font-medium transition-colors whitespace-nowrap"
             :class="route.path === '/originators' ? 'text-navy-700 font-semibold' : 'text-gray-600 hover:text-navy-700'">Оригинатори</router-link>
           <router-link :to="section('faq')" class="text-[13px] lg:text-sm font-medium text-gray-600 hover:text-navy-700 transition-colors whitespace-nowrap">Въпроси</router-link>
         </nav>
@@ -51,9 +56,9 @@ const section = (id) => sectionLink(id, route.path)
       <div v-if="mobileMenuOpen" class="md:hidden border-t border-gray-100 py-4 space-y-2">
         <router-link :to="section('how-it-works')" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">Как работи</router-link>
         <router-link :to="section('advantages')" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">За инвеститори</router-link>
-        <router-link to="/loans" class="block px-3 py-2 text-sm font-medium rounded-lg"
+        <router-link :to="loansTarget" class="block px-3 py-2 text-sm font-medium rounded-lg"
           :class="route.path === '/loans' ? 'text-navy-700 font-semibold bg-navy-50' : 'text-gray-600 hover:bg-gray-50'" @click="mobileMenuOpen = false">Кредити</router-link>
-        <router-link to="/originators" class="block px-3 py-2 text-sm font-medium rounded-lg"
+        <router-link :to="section('originators')" class="block px-3 py-2 text-sm font-medium rounded-lg"
           :class="route.path === '/originators' ? 'text-navy-700 font-semibold bg-navy-50' : 'text-gray-600 hover:bg-gray-50'" @click="mobileMenuOpen = false">Оригинатори</router-link>
         <router-link :to="section('faq')" class="block px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg" @click="mobileMenuOpen = false">Въпроси</router-link>
         <div class="flex gap-3 pt-3 border-t border-gray-100 px-3">

@@ -26,8 +26,8 @@ const section = (id) => sectionLink(id, route.path)
           <p class="text-sm font-semibold text-navy-700 mb-4">Платформа</p>
           <ul class="space-y-2.5">
             <li><router-link :to="section('how-it-works')" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Как работи</router-link></li>
-            <li><router-link to="/loans" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Кредити</router-link></li>
-            <li><router-link to="/originators" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Оригинатори</router-link></li>
+            <li><router-link :to="section('loans')" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Кредити</router-link></li>
+            <li><router-link :to="section('originators')" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Оригинатори</router-link></li>
             <li><router-link :to="section('faq')" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Въпроси</router-link></li>
             <li><a href="#" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">За нас</a></li>
           </ul>

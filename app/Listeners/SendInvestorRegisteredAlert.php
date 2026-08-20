@@ -158,7 +158,7 @@ class SendInvestorRegisteredAlert
     private function registrationsInWindow(): int
     {
         return User::where('role', 'investor')
-            ->whereBetween('created_at', [Carbon::now()->startOfHour(), Carbon::now()])
+            ->where('created_at', '>=', Carbon::now()->subSeconds(self::WINDOW_SECONDS))
             ->count();
     }
 

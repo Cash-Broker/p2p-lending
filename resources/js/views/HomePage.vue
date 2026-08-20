@@ -8,10 +8,13 @@ import HeroSection from '../components/landing/HeroSection.vue'
 import StatsBar from '../components/landing/StatsBar.vue'
 import HowItWorks from '../components/landing/HowItWorks.vue'
 import WhyUs from '../components/landing/WhyUs.vue'
-// No loans / originators section here on purpose: both are their own gated
-// pages now (/loans, /originators — Reni 2026-08-20). The placeholder-data
-// components that used to sit in this spot were pulled on 2026-08-19 and
-// deleted once the real pages shipped.
+// «Кредити» и «Оригинатори» стоят и тук, в потока на страницата (Йордан
+// 2026-08-20: «трябва да е и на самата страница, не да цъкам менюто»), и на
+// собствените си адреси /loans и /originators — един и същ компонент, за да
+// няма два текста. Тези секции НЕ заместват старите с измислени данни: те не
+// зареждат нищо и се съобразяват кой гледа.
+import LoansSection from '../components/landing/LoansSection.vue'
+import OriginatorsSection from '../components/landing/OriginatorsSection.vue'
 import FaqSection from '../components/landing/FaqSection.vue'
 import CtaSection from '../components/landing/CtaSection.vue'
 import LandingFooter from '../components/landing/LandingFooter.vue'
@@ -60,6 +63,8 @@ watch(() => route.hash, scrollToSection)
     <StatsBar />
     <HowItWorks />
     <WhyUs />
+    <LoansSection />
+    <OriginatorsSection />
     <FaqSection />
     <CtaSection />
     <LandingFooter />
