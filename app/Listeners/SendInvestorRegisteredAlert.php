@@ -9,6 +9,7 @@ use Filament\Actions\Action as FilamentAction;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Admin alert on a new investor registration (Reni 2026-08-20 — «за нови
@@ -38,24 +39,30 @@ use Illuminate\Support\Carbon;
  * database store, which is exactly what left the admin-login alert dead in
  * production (audit 2026-07-02, see SendAdminLoginAlert).
  *
- * REGISTRATION — read before adding an Event::listen line for this class.
- * Laravel auto-discovers listeners in app/Listeners, so this handler is
- * already subscribed by being here. Adding the explicit Event::listen that
- * the older listeners use would register it TWICE and every new account
- * would alert the admins twice. (Those older ones — SendAdminLoginAlert,
- * TelegramAdminLoginAlert, TelegramFailedLoginAlert — are in exactly that
- * state today: `app('events')->getRawListeners()` shows each of them twice,
- * so every admin login already sends two identical Telegram messages.
- * Reported to Yordan 2026-08-20; fixing it is a separate change because it
- * has to pick ONE mechanism for all of them.)
+ * The crossing is `>=`, not `==`, and it is claimed with `Cache::add` (review
+ * 2026-08-20 found both). Two registrations committing between two counts
+ * would make every observer see 12, and an equality test would then skip the
+ * summary entirely — silence with nobody told; while a paced drip that keeps
+ * the rolling count sitting on exactly 11 would re-send the summary, and its
+ * non-silent Telegram ping, over and over. The marker also holds the promise
+ * the summary makes: individual alerts do not resume for the rest of the
+ * window even if the count falls back below the threshold.
+ *
+ * Subscribed via Event::listen in AppServiceProvider — the only registration
+ * path in this app. Laravel's automatic discovery of app/Listeners is off
+ * (bootstrap/app.php, `->withEvents(discover: false)`): both mechanisms were
+ * live until 2026-08-20 and every listener fired twice.
  */
 class SendInvestorRegisteredAlert
 {
-    /** Registration number within the window that switches to one summary. */
+    /** Registrations in the window at which alerting collapses into one summary. */
     private const CONSOLIDATION_THRESHOLD = 11;
 
     /** Rolling window over which registrations are counted (seconds). */
     private const WINDOW_SECONDS = 3600;
+
+    /** Written once per window when the summary goes out; present = stay quiet. */
+    private const BURST_MARKER = 'registration_burst_notice';
 
     public function __construct(private TelegramService $telegram) {}
 
@@ -80,15 +87,24 @@ class SendInvestorRegisteredAlert
 
     private function alert(User $user): void
     {
-        $windowCount = $this->registrationsInWindow();
-
-        // Past the summary, the hour stays quiet — including the bell, which
-        // would otherwise bury the panel inbox under a scripted burst.
-        if ($windowCount > self::CONSOLIDATION_THRESHOLD) {
+        // A summary already went out for this window: it promised silence, so
+        // stay silent whatever the count does from here — including the bell,
+        // which would otherwise bury the panel inbox under a scripted burst.
+        if (Cache::has(self::BURST_MARKER)) {
             return;
         }
 
-        $isBurst = $windowCount === self::CONSOLIDATION_THRESHOLD;
+        $windowCount = $this->registrationsInWindow();
+        $isBurst = $windowCount >= self::CONSOLIDATION_THRESHOLD;
+
+        // Claim the summary. add() succeeds for exactly one caller, so a race
+        // between two crossings sends one summary, not two. When it fails we
+        // back off only if the marker is genuinely there — with a broken cache
+        // has() is false too, and a burst nobody is told about is a worse
+        // outcome than a repeated warning.
+        if ($isBurst && ! Cache::add(self::BURST_MARKER, 1, self::WINDOW_SECONDS) && Cache::has(self::BURST_MARKER)) {
+            return;
+        }
 
         try {
             $admins = User::where('role', 'admin')->get();

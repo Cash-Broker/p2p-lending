@@ -457,6 +457,56 @@ class AdminActionItemAlertsTest extends TestCase
         Notification::assertNotSentTo($admin, DatabaseNotification::class);
     }
 
+    /**
+     * The crossing is `>=`, not `==` (review 2026-08-20). Two accounts
+     * committing between two counts make every observer see 12 or 13, and an
+     * equality test would skip the summary entirely — the window would go
+     * silent without the one alert that says alerting is suspended.
+     */
+    public function test_burst_summary_fires_even_when_the_count_jumps_past_the_threshold(): void
+    {
+        Notification::fake();
+        $admin = $this->makeAdmin();
+        User::factory()->count(12)->create();
+
+        $this->postJson('/api/register', $this->registrationPayload())->assertStatus(201);
+
+        Notification::assertSentTo(
+            $admin,
+            InvestorRegisteredAdminNotification::class,
+            fn (InvestorRegisteredAdminNotification $n) => $n->consolidatedCount === 13
+                && $n->isConsolidated(),
+        );
+    }
+
+    /**
+     * The summary promises «отделните известия са спрени до края на часа», so
+     * the window must stay silent even when the rolling count falls back under
+     * the threshold — otherwise individual alerts resume minutes after the
+     * summary said they had stopped, and a paced drip re-sends the summary
+     * (and its non-silent Telegram ping) over and over.
+     */
+    public function test_one_summary_per_window_even_after_the_count_falls_back(): void
+    {
+        Notification::fake();
+        $admin = $this->makeAdmin();
+        $ballast = User::factory()->count(10)->create();
+
+        $this->postJson('/api/register', $this->registrationPayload(['email' => 'first@example.com']))
+            ->assertStatus(201);
+        Notification::assertSentTimes(InvestorRegisteredAdminNotification::class, 1);
+
+        // The window drains: the ballast ages out of the trailing hour.
+        User::whereIn('id', $ballast->pluck('id'))->update(['created_at' => now()->subHours(2)]);
+
+        Notification::fake();
+        $this->postJson('/api/register', $this->registrationPayload(['email' => 'second@example.com']))
+            ->assertStatus(201);
+
+        Notification::assertNotSentTo($admin, InvestorRegisteredAdminNotification::class);
+        Notification::assertNotSentTo($admin, DatabaseNotification::class);
+    }
+
     public function test_registrations_outside_the_window_do_not_consolidate(): void
     {
         Notification::fake();
