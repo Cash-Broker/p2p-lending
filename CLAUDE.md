@@ -413,6 +413,17 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
   `WithdrawalRequestedAdminNotification`, no IBAN in the email). Deposits have NO event alert
   (wire lands at the bank, off-platform — nothing to hook); buyback has its own 03:45 cron
   email. All event alerts added 2026-08-07 ("когато има какво, без час").
+  **New investor registration** joins them 2026-08-20 (Reni: «за нови регистрации на
+  инвеститори може ли да получавам известия»): `SendInvestorRegisteredAlert` on the
+  `Registered` event → sync bell + queued `InvestorRegisteredAdminNotification`
+  (mail + Web Push, no name on the lockscreen) + 🟡 Telegram. ⚠ It is the FIRST admin
+  alert a stranger can trigger — `/api/register` is public — so the listener counts the
+  investor rows of the rolling hour and past the 11th sends ONE «повишен брой
+  регистрации» summary (🟠 Telegram) and then stays silent for the rest of the hour,
+  bell included; the Users list + 09:00 digest stay the complete record. The window is
+  counted from `users.created_at`, NOT a cache counter — `Cache::increment` on a missing
+  key returns false with the database store, the exact bug that left the admin-login
+  alert dead in prod.
 - Upload `POST /api/profile/kyc` (throttle 6/1 + `consent.current`): `document_front`,
   `document_back`, `selfie` (plain upload — **live selfie capture was removed 2026-07-08**,
   client decision), `biometric_consent` (GDPR Art. 9 → ConsentRecord). Accepts
@@ -540,12 +551,32 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 - Single axios instance `resources/js/api/axios.js`: `baseURL '/api'`, credentials + XSRF,
   auto `X-Idempotency-Key` on invest POSTs, 403 `consent_required` → re-consent modal.
 - Router: no KYC gating client-side (server `kyc` middleware is authoritative; views render
-  verification prompts from `auth.user.kyc_status`). Admins hard-redirect to `/admin`.
+  verification prompts from `auth.user.kyc_status`). Admins hard-redirect to `/admin` — but
+  only from `meta.auth` routes; public routes stay browsable for an admin. The ONE
+  KYC-derived routing decision is the `/loans` `beforeEnter` below, and it only picks which
+  page an already-public route shows — it grants nothing.
 - Design: navy `#1B2A4A` primary, green `#22C55E` accent (Tailwind `@theme` palettes
   navy-_/accent-_), Inter self-hosted, `rounded-xl/2xl` cards, `bg-gray-50` background,
   loading spinners (`animate-spin` + «Зареждане», no skeletons) and empty states; BG toasts
   for every outcome in Filament, inline feedback in most SPA views.
 - `ChatbotWidget.vue` is canned Q&A (no API); its fallback contacts are stale placeholders.
+- **Public landing subpages `/loans` + `/originators`** (Reni 2026-08-20 — the 3-item nav
+  «стоеше голо»): guest ⇒ register-first gate and **zero data fetched** (the only request on
+  the page is the boot-time `/user` probe); approved investor on `/loans` ⇒ router
+  `beforeEnter` redirect to `/portfolio` (single source of truth for money — nothing
+  financial is re-rendered on a public page) «докато не направим публични нещата»;
+  unapproved ⇒ «чакаме одобрение» panel; admin ⇒ stays, with a «към администрацията» panel
+  (no forced bounce — Reni runs Filament and her investor profile in the same browser).
+  `/originators` loads nothing for ANYONE — static explanation for logged-in visitors, **no
+  partner names, no claims about partner contracts** (the fabricated originator/opportunity
+  cards were deleted in `7d5d0ed`; do not resurrect them, the guest teaser is shapes-only,
+  never numbers, and the originator definition is quoted verbatim from Общи условия so
+  marketing and contract cannot drift). Decisions live in unit-tested `utils/publicGate.js`.
+  ⚠ The header/footer now render off-homepage, so their `#section` links go through
+  `utils/landingNav.js` and **HomePage.vue scrolls to the hash itself** — a global router
+  `scrollBehavior` was tried and removed on purpose: defining one flips
+  `history.scrollRestoration` to 'manual' for the WHOLE SPA and restores position before
+  async pages have their rows. Sitemap entries are hand-maintained (`public/sitemap.xml`).
 
 ## Open product decisions — ask, don't invent
 
@@ -564,6 +595,19 @@ If a task brushes against these, surface the question — do not encode an assum
   the hardcoded Gmail. Fix belongs in config + .env, not in the command.
 - Six confirmed bugs from the 2026-07-02 audit were tracked; the buyback principal_only accrued
   leak IS fixed; verify the rest against `MEMORY` / audit notes before assuming.
+- **Event listeners: ONE registration path — `Event::listen` in `AppServiceProvider::boot()`.**
+  Laravel's automatic discovery of `app/Listeners` is switched OFF in `bootstrap/app.php`
+  (`->withEvents(discover: false)`). Until 2026-08-20 both were live, so every listener was
+  registered twice (discovery as `Class@handle`, the explicit call as `Class`) and each
+  admin login sent two identical Telegram messages. A new listener MUST be added to
+  AppServiceProvider or it never fires; `tests/Feature/EventListenerRegistrationTest.php`
+  asserts the exact set, exactly once each, and fails on either mistake.
+- `Cache::increment` **returns false on a missing key with the database store** (prod's
+  `CACHE_STORE`), while the array store used by the test suite returns 1 — a bug class that
+  passes every test and is dead in production. That is what killed the admin-login alert
+  (audit 2026-07-02, fixed 2026-08-20 with `Cache::add($key, 1, $ttl) ?: increment`).
+  Counters that must survive prod: `Cache::add` first, or count from the DB (see
+  `SendInvestorRegisteredAlert::registrationsInWindow`).
 - `envtest/` is a throwaway harness (backup-script fix proof) — candidate for deletion.
 - No CI exists (no `.github/`); "CI suite" wording in phpunit.xml is aspirational.
 - Docblocks referencing `DECISIONS.md` are dangling (file removed).

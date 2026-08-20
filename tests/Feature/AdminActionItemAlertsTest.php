@@ -4,9 +4,12 @@ namespace Tests\Feature;
 
 use App\Models\ConsentRecord;
 use App\Models\User;
+use App\Notifications\InvestorRegisteredAdminNotification;
 use App\Notifications\KycSubmittedAdminNotification;
 use App\Notifications\WithdrawalRequestedAdminNotification;
+use App\Services\TelegramService;
 use Filament\Notifications\DatabaseNotification;
+use Illuminate\Auth\Events\Registered;
 use Illuminate\Contracts\Notifications\Dispatcher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -331,6 +334,195 @@ class AdminActionItemAlertsTest extends TestCase
             'Bell row must be inserted synchronously, independent of the queue');
     }
 
+    // ── Investor registered (Reni 2026-08-20) ──
+
+    private function registrationPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'name' => 'Нов Инвеститор',
+            'email' => 'nov@example.com',
+            'password' => 'Password123!',
+            'password_confirmation' => 'Password123!',
+            'terms_accepted' => true,
+        ], $overrides);
+    }
+
+    public function test_registration_alerts_admins_only(): void
+    {
+        Notification::fake();
+        $admin = $this->makeAdmin();
+        $bystander = User::factory()->create(['email_verified_at' => now()]);
+
+        $this->postJson('/api/register', $this->registrationPayload())->assertStatus(201);
+
+        $registered = User::where('email', 'nov@example.com')->firstOrFail();
+
+        Notification::assertSentTo(
+            $admin,
+            InvestorRegisteredAdminNotification::class,
+            fn (InvestorRegisteredAdminNotification $n) => $n->investorId === $registered->id
+                && $n->investorName === 'Нов Инвеститор'
+                && $n->investorEmail === 'nov@example.com'
+                && $n->consolidatedCount === 1,
+        );
+        Notification::assertSentTo($admin, DatabaseNotification::class);
+
+        // Recipient boundary: neither the newcomer nor an unrelated investor
+        // learns that someone registered.
+        Notification::assertNotSentTo($bystander, InvestorRegisteredAdminNotification::class);
+        Notification::assertNotSentTo($bystander, DatabaseNotification::class);
+        Notification::assertNotSentTo($registered, InvestorRegisteredAdminNotification::class);
+        Notification::assertNotSentTo($registered, DatabaseNotification::class);
+    }
+
+    public function test_registration_alert_fans_out_to_every_admin(): void
+    {
+        Notification::fake();
+        $adminOne = $this->makeAdmin();
+        $adminTwo = $this->makeAdmin();
+
+        $this->postJson('/api/register', $this->registrationPayload())->assertStatus(201);
+
+        Notification::assertSentTo([$adminOne, $adminTwo], InvestorRegisteredAdminNotification::class);
+        Notification::assertSentTimes(InvestorRegisteredAdminNotification::class, 2);
+        Notification::assertSentTimes(DatabaseNotification::class, 2);
+    }
+
+    public function test_legal_entity_registration_is_labelled_as_such(): void
+    {
+        Notification::fake();
+        $admin = $this->makeAdmin();
+
+        $this->postJson('/api/register', [
+            'account_type' => 'legal_entity',
+            'first_name' => 'Мария',
+            'last_name' => 'Иванова',
+            'email' => 'firma@example.com',
+            'phone' => '+359 88 123 4567',
+            'password' => 'Password123!',
+            'password_confirmation' => 'Password123!',
+            'terms_accepted' => true,
+            'legal_name' => 'ВАМА АСЕТ',
+            'eik' => '201035515',
+        ])->assertStatus(201);
+
+        Notification::assertSentTo(
+            $admin,
+            InvestorRegisteredAdminNotification::class,
+            function (InvestorRegisteredAdminNotification $n) use ($admin) {
+                return $n->accountType === 'legal_entity'
+                    && str_contains((string) $n->toMail($admin)->render(), 'Юридическо лице');
+            },
+        );
+    }
+
+    /**
+     * /api/register is the only PUBLIC trigger for an admin alert — a script
+     * could otherwise page the inbox once per created account. Past the
+     * threshold the hour collapses into one summary and then goes silent,
+     * bell included; the Users list stays the complete record.
+     */
+    public function test_registration_burst_consolidates_then_goes_quiet(): void
+    {
+        Notification::fake();
+        $admin = $this->makeAdmin();
+        User::factory()->count(10)->create();
+
+        $this->postJson('/api/register', $this->registrationPayload(['email' => 'burst@example.com']))
+            ->assertStatus(201);
+
+        Notification::assertSentTo(
+            $admin,
+            InvestorRegisteredAdminNotification::class,
+            function (InvestorRegisteredAdminNotification $n) use ($admin) {
+                $mail = $n->toMail($admin);
+
+                // Render the burst branch of the template too — it is the one
+                // nobody sees until the day it matters.
+                return $n->consolidatedCount === 11
+                    && $n->isConsolidated()
+                    && str_contains($mail->subject, '11 нови регистрации')
+                    && str_contains((string) $mail->render(), '11');
+            },
+        );
+
+        // Fresh recorder: the next registration in the same hour must be
+        // completely silent — no email, no push, no bell.
+        Notification::fake();
+
+        $this->postJson('/api/register', $this->registrationPayload(['email' => 'after@example.com']))
+            ->assertStatus(201);
+
+        Notification::assertNotSentTo($admin, InvestorRegisteredAdminNotification::class);
+        Notification::assertNotSentTo($admin, DatabaseNotification::class);
+    }
+
+    public function test_registrations_outside_the_window_do_not_consolidate(): void
+    {
+        Notification::fake();
+        $admin = $this->makeAdmin();
+        // Well over the threshold, but two hours ago — the window is rolling.
+        User::factory()->count(15)->create(['created_at' => now()->subHours(2)]);
+
+        $this->postJson('/api/register', $this->registrationPayload())->assertStatus(201);
+
+        Notification::assertSentTo(
+            $admin,
+            InvestorRegisteredAdminNotification::class,
+            fn (InvestorRegisteredAdminNotification $n) => $n->consolidatedCount === 1,
+        );
+    }
+
+    /** An admin account must not page the admins about itself. */
+    public function test_admin_account_registration_alerts_nobody(): void
+    {
+        Notification::fake();
+        $admin = $this->makeAdmin();
+        $newAdmin = User::factory()->admin()->create();
+
+        event(new Registered($newAdmin));
+
+        Notification::assertNotSentTo($admin, InvestorRegisteredAdminNotification::class);
+        Notification::assertNotSentTo($admin, DatabaseNotification::class);
+    }
+
+    /**
+     * The alert is a side effect of registration, never a gate on it: the
+     * account and its wallet are already committed when the listener runs.
+     */
+    public function test_registration_survives_an_exploding_alert(): void
+    {
+        $this->makeAdmin();
+        $this->app->instance(
+            TelegramService::class,
+            Mockery::mock(TelegramService::class, function ($mock) {
+                $mock->shouldReceive('info')->andThrow(new RuntimeException('telegram down'));
+                $mock->shouldReceive('high')->andThrow(new RuntimeException('telegram down'));
+            }),
+        );
+
+        $this->postJson('/api/register', $this->registrationPayload())->assertStatus(201);
+
+        $registered = User::where('email', 'nov@example.com')->firstOrFail();
+        $this->assertDatabaseHas('wallets', ['user_id' => $registered->id]);
+        $this->assertDatabaseHas('consent_records', ['user_id' => $registered->id]);
+    }
+
+    /**
+     * The bell row must exist WITHOUT a queue worker: notifyNow bypasses
+     * ShouldQueue (Filament v5's DatabaseNotification is queued by default).
+     */
+    public function test_registration_bell_row_exists_without_queue_worker(): void
+    {
+        Queue::fake();
+        $admin = $this->makeAdmin();
+
+        $this->postJson('/api/register', $this->registrationPayload())->assertStatus(201);
+
+        $this->assertSame(1, $admin->notifications()->count(),
+            'Bell row must be inserted synchronously, independent of the queue');
+    }
+
     // ── Injection hardening (2026-08-07 security review) ──
 
     public function test_markdown_link_in_name_does_not_become_anchor_in_admin_mail(): void
@@ -342,6 +534,23 @@ class AdminActionItemAlertsTest extends TestCase
             applicantEmail: 'attacker@example.com',
             accountType: 'individual',
             submittedAt: now(),
+        );
+
+        $html = (string) $notification->toMail($admin)->render();
+
+        $this->assertStringNotContainsString('href="https://evil.example"', $html,
+            'User-controlled markdown must render as inert text (Markdown::withSecuredEncoding)');
+    }
+
+    public function test_markdown_link_in_name_does_not_become_anchor_in_registration_mail(): void
+    {
+        $admin = $this->makeAdmin();
+        $notification = new InvestorRegisteredAdminNotification(
+            investorId: 42,
+            investorName: '[Отворете профила](https://evil.example)',
+            investorEmail: 'attacker@example.com',
+            accountType: 'individual',
+            registeredAt: now(),
         );
 
         $html = (string) $notification->toMail($admin)->render();

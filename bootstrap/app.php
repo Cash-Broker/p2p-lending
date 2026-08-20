@@ -15,6 +15,13 @@ use Spatie\Csp\AddCspHeaders;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
+    // Event listeners are wired ONLY by the explicit Event::listen calls in
+    // AppServiceProvider::boot() — see the note there. Laravel's automatic
+    // discovery of app/Listeners is off, because with it on every listener
+    // was registered TWICE (discovery + the explicit call) and every admin
+    // login fired two identical Telegram alerts (found 2026-08-20). One
+    // mechanism, greppable, pinned by EventListenerRegistrationTest.
+    ->withEvents(discover: false)
     ->withSchedule(function (Schedule $schedule): void {
         // Ledger reconciliation — daily at 03:00, sends email alert on mismatch
         $schedule->command('ledger:reconcile --notify')

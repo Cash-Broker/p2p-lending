@@ -1,3 +1,14 @@
+<script setup>
+import { useRoute } from 'vue-router'
+import { sectionLink } from '../../utils/landingNav'
+
+const route = useRoute()
+
+// Same reason as in LandingHeader: the footer also renders on /loans and
+// /originators, where a bare `#faq` anchor would point at nothing.
+const section = (id) => sectionLink(id, route.path)
+</script>
+
 <template>
   <footer class="border-t border-gray-100 bg-gray-50/50">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -14,8 +25,10 @@
         <div>
           <p class="text-sm font-semibold text-navy-700 mb-4">Платформа</p>
           <ul class="space-y-2.5">
-            <li><a href="#how-it-works" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Как работи</a></li>
-            <li><a href="#faq" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Въпроси</a></li>
+            <li><router-link :to="section('how-it-works')" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Как работи</router-link></li>
+            <li><router-link to="/loans" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Кредити</router-link></li>
+            <li><router-link to="/originators" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Оригинатори</router-link></li>
+            <li><router-link :to="section('faq')" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">Въпроси</router-link></li>
             <li><a href="#" class="text-sm text-gray-500 hover:text-navy-700 transition-colors">За нас</a></li>
           </ul>
         </div>

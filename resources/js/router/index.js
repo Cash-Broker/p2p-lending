@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { loansPageRedirect } from '../utils/publicGate'
 import HomePage from '../views/HomePage.vue'
 import AppLayout from '../layouts/AppLayout.vue'
 
@@ -8,6 +9,28 @@ const routes = [
     path: '/',
     name: 'home',
     component: HomePage,
+  },
+
+  // Public landing subpages behind the «Кредити» / «Оригинатори» nav items
+  // (Reni 2026-08-20). Deliberately NOT meta.auth: a guest must reach them
+  // and be told to register, not be bounced to /login. Neither page calls a
+  // data endpoint — /loans redirects an approved investor to their own
+  // positions instead of re-rendering money on a public page.
+  {
+    path: '/loans',
+    name: 'public-loans',
+    component: () => import('../views/LoansPage.vue'),
+    // Runs after the global beforeEach, so the user is already fetched.
+    beforeEnter: () => {
+      const target = loansPageRedirect(useAuthStore().user)
+
+      return target ? { path: target } : true
+    },
+  },
+  {
+    path: '/originators',
+    name: 'public-originators',
+    component: () => import('../views/OriginatorsPage.vue'),
   },
 
   // Auth pages (no layout)
@@ -129,6 +152,13 @@ const routes = [
   },
 ]
 
+// No `scrollBehavior` here ON PURPOSE. The landing header/footer now render on
+// /loans and /originators too, so their «Как работи» / «Въпроси» links carry a
+// hash back to «/» — but handing vue-router a scrollBehavior flips
+// `history.scrollRestoration` to 'manual' for the WHOLE SPA, and its restore
+// fires before async pages (portfolio, transactions) have their rows, which
+// would quietly break back-button position everywhere. HomePage.vue scrolls to
+// the hash itself instead; the browser keeps owning restoration.
 const router = createRouter({
   history: createWebHistory(),
   routes,

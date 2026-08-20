@@ -3,10 +3,12 @@
 namespace App\Providers;
 
 use App\Listeners\SendAdminLoginAlert;
+use App\Listeners\SendInvestorRegisteredAlert;
 use App\Listeners\TelegramAdminLoginAlert;
 use App\Listeners\TelegramFailedLoginAlert;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
+use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Mail\Markdown;
 use Illuminate\Support\Facades\Event;
@@ -44,6 +46,15 @@ class AppServiceProvider extends ServiceProvider
                 ->symbols();
         });
 
+        // ── Event listeners ──────────────────────────────────────────────
+        // These Event::listen calls are the ONLY registration path: automatic
+        // discovery of app/Listeners is switched off in bootstrap/app.php
+        // (`->withEvents(discover: false)`). Both mechanisms were active until
+        // 2026-08-20, which registered every listener twice and made each
+        // admin login send two identical Telegram messages. Add a listener
+        // here or it will never fire; EventListenerRegistrationTest asserts
+        // the exact set, once each.
+
         // Email alert on every successful admin login. Compensating control for
         // the absence of 2FA — see DECISIONS.md.
         Event::listen(Login::class, SendAdminLoginAlert::class);
@@ -51,6 +62,12 @@ class AppServiceProvider extends ServiceProvider
         // Telegram mirrors of admin events (HIGH tier — push notification but
         // not blocking). Email remains primary; Telegram is faster signal.
         Event::listen(Login::class, TelegramAdminLoginAlert::class);
+
+        // Admin alert on every new investor registration (Reni 2026-08-20).
+        // Bell + email + Web Push, with an in-window consolidation guard —
+        // /api/register is public, so this is the one admin alert a stranger
+        // can trigger.
+        Event::listen(Registered::class, SendInvestorRegisteredAlert::class);
 
         // Telegram alert on suspicious failed-login patterns (CRITICAL tier).
         // Threshold: 5+ failures in 10 min from same IP. Distinguishes admin

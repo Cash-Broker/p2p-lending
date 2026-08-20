@@ -65,11 +65,25 @@ class SendAdminLoginAlert
         }
 
         $cacheKey = sprintf('admin_login_alert:%d:%s', $user->id, $ipAddress);
-        $count = Cache::increment($cacheKey);
-        if ($count === 1) {
-            // First hit — set the TTL.
-            Cache::put($cacheKey, 1, self::WINDOW_SECONDS);
-        }
+
+        // add() writes the key WITH its TTL only when it does not exist yet, so
+        // the first login of the window is the one that gets `true` — and
+        // increment() is never the first call on a missing key. That ordering
+        // is the whole fix: with the database cache store (prod) increment()
+        // returns FALSE on a missing key, so the old `Cache::increment()` →
+        // `$count === 1` path never matched, the TTL was never set and this
+        // alert never sent a single email in production (audit 2026-07-02).
+        // The array store used by the test suite returns 1 instead, which is
+        // why the tests passed the whole time — the regression test for this
+        // pins the database store on purpose.
+        //
+        // If increment() still fails (the window expired between the two
+        // calls, or the cache is broken) we count it as a first login and
+        // alert. This is a compensating control for the absence of admin 2FA:
+        // a duplicate email is noise, a silent one is a blind spot.
+        $count = Cache::add($cacheKey, 1, self::WINDOW_SECONDS)
+            ? 1
+            : (int) (Cache::increment($cacheKey) ?: 1);
 
         $consolidated = $count >= self::CONSOLIDATION_THRESHOLD;
 

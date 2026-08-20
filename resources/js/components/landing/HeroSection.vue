@@ -29,9 +29,13 @@ const auth = useAuthStore()
               {{ auth.isAuthenticated ? 'Към таблото' : 'Започни сега' }}
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="ml-2 size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
             </router-link>
-            <a href="#how-it-works" class="inline-flex items-center px-7 py-3.5 border border-gray-200 hover:border-navy-200 hover:bg-navy-50 text-navy-700 font-semibold rounded-xl transition-colors text-sm">
+            <!-- router-link, not a raw #anchor: the hero renders only on «/»,
+                 where HomePage watches route.hash and scrolls with the 80px
+                 header offset. A native anchor jumped flush under the fixed
+                 header and left the router's hash state behind. -->
+            <router-link :to="{ hash: '#how-it-works' }" class="inline-flex items-center px-7 py-3.5 border border-gray-200 hover:border-navy-200 hover:bg-navy-50 text-navy-700 font-semibold rounded-xl transition-colors text-sm">
               Научи повече
-            </a>
+            </router-link>
           </div>
         </div>
 

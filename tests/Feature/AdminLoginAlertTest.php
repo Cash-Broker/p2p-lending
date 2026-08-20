@@ -211,4 +211,67 @@ class AdminLoginAlertTest extends TestCase
 
         $response->assertStatus(404);
     }
+
+    // ── Prod cache store (regression, audit 2026-07-02) ──
+
+    /**
+     * The suite runs CACHE_STORE=array (phpunit.xml), whose increment() treats
+     * a missing key as 0 and returns 1 — so the counter bug that killed this
+     * alert in production was invisible here for months. Production runs the
+     * DATABASE store, where increment() on a missing key returns false. These
+     * tests pin the behaviour on the store that actually ships.
+     */
+    private function useDatabaseCacheStore(): void
+    {
+        config(['cache.default' => 'database']);
+        Cache::store('database')->flush();
+    }
+
+    public function test_first_login_alerts_on_the_database_cache_store(): void
+    {
+        $this->useDatabaseCacheStore();
+        $admin = $this->admin();
+
+        $this->fireLogin($admin, '198.51.100.30');
+
+        // Before the fix this was zero: Cache::increment() returned false on
+        // the missing key, so `$count === 1` never matched.
+        Mail::assertQueued(AdminLoginAlertMail::class, 1);
+    }
+
+    public function test_repeated_logins_consolidate_on_the_database_cache_store(): void
+    {
+        $this->useDatabaseCacheStore();
+        $admin = $this->admin();
+
+        // Logins 1..10 — only the first one emails.
+        for ($i = 0; $i < 10; $i++) {
+            $this->fireLogin($admin, '198.51.100.30');
+        }
+        Mail::assertQueued(AdminLoginAlertMail::class, 1);
+
+        // The 11th crosses the threshold and sends ONE consolidated email.
+        $this->fireLogin($admin, '198.51.100.30');
+        Mail::assertQueued(AdminLoginAlertMail::class, 2);
+        Mail::assertQueued(
+            AdminLoginAlertMail::class,
+            fn (AdminLoginAlertMail $mail) => $mail->consolidatedCount === 11,
+        );
+
+        // Everything after it stays quiet until the window expires.
+        $this->fireLogin($admin, '198.51.100.30');
+        Mail::assertQueued(AdminLoginAlertMail::class, 2);
+    }
+
+    /** A different IP is a different window — it must alert on its own. */
+    public function test_second_ip_alerts_separately_on_the_database_cache_store(): void
+    {
+        $this->useDatabaseCacheStore();
+        $admin = $this->admin();
+
+        $this->fireLogin($admin, '198.51.100.30');
+        $this->fireLogin($admin, '203.0.113.77');
+
+        Mail::assertQueued(AdminLoginAlertMail::class, 2);
+    }
 }
