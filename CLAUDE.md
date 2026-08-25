@@ -424,6 +424,23 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
   counted from `users.created_at`, NOT a cache counter — `Cache::increment` on a missing
   key returns false with the database store, the exact bug that left the admin-login
   alert dead in prod.
+- **Телефон задължителен при регистрация** (Reni 2026-08-25, ДВАТА типа акаунт):
+  `phone` е в base rules на `RegisterRequest` + нов `App\Rules\ValidPhone`
+  (permissive intl: +/( в произволен ред, цифри+разделители, 6–15 цифри);
+  `UpdateProfileRequest` също го изисква (не може да се изтрие), а `name` там е
+  `sometimes` — модалът праща САМО phone (ко-submit на legacy име, падащо на
+  control-char regex-а от 2026-08-07, би заключил акаунта завинаги). Заварени
+  акаунти без телефон: блокиращ `PhoneRequiredModal` в AppLayout — gate
+  `utils/phoneGate.js` (unit-tested), показва се САМО на verified инвеститори
+  (PUT /profile е зад `investor` middleware, иначе 403 dead-end); чака
+  consent-пробата (`consentChecked`) и consent-модалът има приоритет; фонът е
+  `inert` (иначе Tab минава зад overlay-а), има «Изход» (блокиран е ДОСТЪПЪТ,
+  не сесията — на shared устройство изходът трябва да остане). Админ recovery:
+  `UserResource::phoneAction()` («Редактирай телефон» на ViewUser, същият
+  ValidPhone). `users.phone` остава nullable в DB — пълни се през модала, НЕ
+  през миграция. ⚠ Enforcement за заварени акаунти е САМО клиентски (директно
+  API извикване минава без телефон) — вярно на буквалната заявка; сървърен
+  gate = отворен въпрос за Рени, не го добавяй мълчаливо.
 - Upload `POST /api/profile/kyc` (throttle 6/1 + `consent.current`): `document_front`,
   `document_back`, `selfie` (plain upload — **live selfie capture was removed 2026-07-08**,
   client decision), `biometric_consent` (GDPR Art. 9 → ConsentRecord). Accepts

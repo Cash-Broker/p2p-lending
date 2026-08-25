@@ -110,6 +110,7 @@ class SecurityTest extends TestCase
         $response = $this->postJson('/api/register', [
             'name' => 'Test',
             'email' => 'strong@test.com',
+            'phone' => '+359 88 123 4567',
             'password' => 'Str0ng!Pass',
             'password_confirmation' => 'Str0ng!Pass',
             'terms_accepted' => true,

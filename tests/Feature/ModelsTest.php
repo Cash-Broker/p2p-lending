@@ -47,6 +47,7 @@ class ModelsTest extends TestCase
         $response = $this->postJson('/api/register', [
             'name' => 'Wallet Test',
             'email' => 'wallettest@example.com',
+            'phone' => '+359 88 123 4567',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
             'terms_accepted' => true,

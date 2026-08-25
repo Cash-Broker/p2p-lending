@@ -2,7 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Models\SavedIban;
+use App\Models\ConsentRecord;
+use App\Models\Transaction;
 use App\Models\User;
 use App\Services\KycImageNormalizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -19,6 +20,7 @@ class ProfileTest extends TestCase
     {
         $user = User::factory()->create(['email_verified_at' => now()]);
         $user->wallet()->create();
+
         return $user;
     }
 
@@ -58,6 +60,64 @@ class ProfileTest extends TestCase
 
         $this->assertEquals('Нов Име', $user->fresh()->name);
         $this->assertEquals('+359888123456', $user->fresh()->phone);
+    }
+
+    public function test_update_profile_accepts_phone_without_name(): void
+    {
+        // The PhoneRequiredModal's exact contract: it submits ONLY the phone.
+        // Requiring the name here would hard-lock legacy accounts whose
+        // stored name fails the 2026-08-07 control-char regex — the modal
+        // has no name field and no dismiss.
+        $user = $this->createVerifiedInvestor();
+        $originalName = $user->name;
+
+        $response = $this->actingAs($user)->putJson('/api/profile', [
+            'phone' => '+359 88 555 0101',
+        ]);
+
+        $response->assertOk();
+        $this->assertEquals('+359 88 555 0101', $user->fresh()->phone);
+        $this->assertEquals($originalName, $user->fresh()->name);
+    }
+
+    public function test_update_profile_requires_phone(): void
+    {
+        // Mandatory since 2026-08-25 — a profile update may not omit the
+        // contact number (this is also what forces legacy accounts through
+        // the blocking PhoneRequiredModal).
+        $user = $this->createVerifiedInvestor();
+
+        $response = $this->actingAs($user)->putJson('/api/profile', [
+            'name' => 'Само Име',
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('phone');
+    }
+
+    public function test_update_profile_cannot_clear_phone(): void
+    {
+        $user = $this->createVerifiedInvestor();
+        $user->forceFill(['phone' => '+359888123456'])->save();
+
+        $response = $this->actingAs($user)->putJson('/api/profile', [
+            'name' => $user->name,
+            'phone' => '',
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('phone');
+        $this->assertEquals('+359888123456', $user->fresh()->phone);
+    }
+
+    public function test_update_profile_rejects_invalid_phone(): void
+    {
+        $user = $this->createVerifiedInvestor();
+
+        $this->actingAs($user)->putJson('/api/profile', [
+            'name' => 'Тест Тестов',
+            'phone' => 'без телефон',
+        ])->assertStatus(422)->assertJsonValidationErrors('phone');
+
+        $this->assertNull($user->fresh()->phone);
     }
 
     // ── Change password ──
@@ -105,9 +165,9 @@ class ProfileTest extends TestCase
     private function fakePdf(string $name = 'id-card.pdf'): UploadedFile
     {
         $pdfContent = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
-                    . "2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n"
-                    . "xref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n"
-                    . "trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n110\n%%EOF\n";
+                    ."2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n"
+                    ."xref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n"
+                    ."trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n110\n%%EOF\n";
 
         return UploadedFile::fake()->createWithContent($name, $pdfContent);
     }
@@ -148,8 +208,8 @@ class ProfileTest extends TestCase
         // Explicit biometric consent (Art. 9(2)(a)) recorded.
         $this->assertDatabaseHas('consent_records', [
             'user_id' => $user->id,
-            'type' => \App\Models\ConsentRecord::TYPE_BIOMETRIC,
-            'version' => \App\Models\ConsentRecord::CURRENT_BIOMETRIC_VERSION,
+            'type' => ConsentRecord::TYPE_BIOMETRIC,
+            'version' => ConsentRecord::CURRENT_BIOMETRIC_VERSION,
         ]);
     }
 
@@ -476,7 +536,7 @@ class ProfileTest extends TestCase
 
         // SVG with embedded XSS payload — must be rejected.
         $svgContent = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" '
-                    . 'onload="alert(document.domain)"><script>alert(1)</script></svg>';
+                    .'onload="alert(document.domain)"><script>alert(1)</script></svg>';
         $svg = UploadedFile::fake()->createWithContent('id-card.svg', $svgContent);
 
         $response = $this->actingAs($user)->postJson('/api/profile/kyc', [
@@ -773,7 +833,7 @@ class ProfileTest extends TestCase
             'password' => bcrypt('Password123!'),
         ]);
         $user->wallet()->create();
-        \App\Models\Transaction::factory()->create(['user_id' => $user->id]);
+        Transaction::factory()->create(['user_id' => $user->id]);
 
         $this->actingAs($user)->postJson('/api/profile/delete', [
             'password' => 'Password123!',

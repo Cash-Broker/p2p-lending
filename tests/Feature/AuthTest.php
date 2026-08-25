@@ -2,8 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\SendPasswordResetEmail;
 use App\Models\User;
+use Illuminate\Cache\RateLimiter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
+use Laravel\Sanctum\PersonalAccessToken;
 use Tests\TestCase;
 
 class AuthTest extends TestCase
@@ -14,7 +18,7 @@ class AuthTest extends TestCase
     {
         parent::setUp();
         // Clear rate limiter between tests — prevents cross-test poisoning
-        app(\Illuminate\Cache\RateLimiter::class)->clear('127.0.0.1');
+        app(RateLimiter::class)->clear('127.0.0.1');
     }
 
     private function validRegistrationData(array $overrides = []): array
@@ -22,6 +26,7 @@ class AuthTest extends TestCase
         return array_merge([
             'name' => 'Test User',
             'email' => 'test@example.com',
+            'phone' => '+359 88 123 4567',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
             'terms_accepted' => true,
@@ -94,6 +99,40 @@ class AuthTest extends TestCase
         $user = User::where('email', 'noaccounttype@example.com')->first();
         $this->assertNotNull($user, 'User was not created');
         $this->assertSame(User::TYPE_INDIVIDUAL, $user->account_type);
+    }
+
+    public function test_registration_requires_phone_for_individuals(): void
+    {
+        // Mandatory for BOTH account types since 2026-08-25 — the legal-entity
+        // branch has its own mirror test in LegalEntityRegistrationTest.
+        $payload = $this->validRegistrationData();
+        unset($payload['phone']);
+
+        $response = $this->postJson('/api/register', $payload);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('phone');
+        $this->assertDatabaseMissing('users', ['email' => 'test@example.com']);
+    }
+
+    public function test_registration_persists_phone(): void
+    {
+        $this->postJson('/api/register', $this->validRegistrationData([
+            'email' => 'phone@example.com',
+            'phone' => '+359 88 700 1234',
+        ]))->assertStatus(201);
+
+        $user = User::where('email', 'phone@example.com')->first();
+        $this->assertSame('+359 88 700 1234', $user->phone);
+    }
+
+    public function test_registration_rejects_garbage_phone(): void
+    {
+        // The field is a real contact channel — free text must not satisfy it.
+        $response = $this->postJson('/api/register', $this->validRegistrationData([
+            'phone' => 'нямам телефон',
+        ]));
+
+        $response->assertStatus(422)->assertJsonValidationErrors('phone');
     }
 
     public function test_registration_rejects_invalid_account_type(): void
@@ -178,7 +217,7 @@ class AuthTest extends TestCase
 
     public function test_forgot_password_returns_generic_response_for_existing_email(): void
     {
-        \Illuminate\Support\Facades\Queue::fake();
+        Queue::fake();
         User::factory()->create(['email' => 'real@example.com']);
 
         $response = $this->postJson('/api/forgot-password', ['email' => 'real@example.com']);
@@ -186,7 +225,7 @@ class AuthTest extends TestCase
         $response->assertOk()->assertJson([
             'message' => 'Ако този имейл съществува в системата, ще получите линк за смяна на парола.',
         ]);
-        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SendPasswordResetEmail::class);
+        Queue::assertPushed(SendPasswordResetEmail::class);
     }
 
     public function test_password_reset_named_route_resolves(): void
@@ -216,14 +255,14 @@ class AuthTest extends TestCase
         // CRITICAL we just fixed.
         User::factory()->create(['email' => 'real@example.com']);
 
-        \App\Jobs\SendPasswordResetEmail::dispatchSync('real@example.com');
+        SendPasswordResetEmail::dispatchSync('real@example.com');
 
         $this->assertTrue(true); // No exception above = pass.
     }
 
     public function test_forgot_password_returns_same_response_for_unknown_email(): void
     {
-        \Illuminate\Support\Facades\Queue::fake();
+        Queue::fake();
 
         $response = $this->postJson('/api/forgot-password', ['email' => 'unknown@example.com']);
 
@@ -231,12 +270,12 @@ class AuthTest extends TestCase
             'message' => 'Ако този имейл съществува в системата, ще получите линк за смяна на парола.',
         ]);
         // Job IS dispatched even for unknown emails — keeps response time constant.
-        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SendPasswordResetEmail::class);
+        Queue::assertPushed(SendPasswordResetEmail::class);
     }
 
     public function test_forgot_password_response_time_is_consistent_across_known_and_unknown_emails(): void
     {
-        \Illuminate\Support\Facades\Queue::fake();
+        Queue::fake();
         User::factory()->create(['email' => 'real@example.com']);
 
         // Warm up — first request always slower due to bootstrap.
@@ -359,7 +398,7 @@ class AuthTest extends TestCase
 
         // Backdate the token past the 7-day window. created_at is not in
         // PersonalAccessToken::$fillable, so use forceFill rather than update().
-        $row = \Laravel\Sanctum\PersonalAccessToken::find($tokenInstance->accessToken->id);
+        $row = PersonalAccessToken::find($tokenInstance->accessToken->id);
         $row->forceFill(['created_at' => now()->subDays(8)])->save();
 
         $response = $this->withHeader('Authorization', "Bearer {$token}")

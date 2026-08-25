@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\BeneficialOwner;
 use App\Models\LegalEntityProfile;
 use App\Models\User;
+use Illuminate\Cache\RateLimiter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -15,7 +16,7 @@ class LegalEntityRegistrationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        app(\Illuminate\Cache\RateLimiter::class)->clear('127.0.0.1');
+        app(RateLimiter::class)->clear('127.0.0.1');
     }
 
     /**
@@ -28,16 +29,16 @@ class LegalEntityRegistrationTest extends TestCase
     private function validLegalEntityPayload(array $overrides = []): array
     {
         return array_merge([
-            'account_type'           => 'legal_entity',
-            'first_name'             => 'Иван',
-            'last_name'              => 'Иванов',
-            'email'                  => 'rep@vamaasset.bg',
-            'phone'                  => '+359 88 123 4567',
-            'password'               => 'Password123!',
-            'password_confirmation'  => 'Password123!',
-            'terms_accepted'         => true,
-            'legal_name'             => 'ВАМА АСЕТ',
-            'eik'                    => '201035515',
+            'account_type' => 'legal_entity',
+            'first_name' => 'Иван',
+            'last_name' => 'Иванов',
+            'email' => 'rep@vamaasset.bg',
+            'phone' => '+359 88 123 4567',
+            'password' => 'Password123!',
+            'password_confirmation' => 'Password123!',
+            'terms_accepted' => true,
+            'legal_name' => 'ВАМА АСЕТ',
+            'eik' => '201035515',
         ], $overrides);
     }
 
@@ -93,7 +94,7 @@ class LegalEntityRegistrationTest extends TestCase
     {
         $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
             'first_name' => '',
-            'last_name'  => '',
+            'last_name' => '',
         ]));
 
         $response->assertStatus(422)->assertJsonValidationErrors(['first_name', 'last_name']);
@@ -109,11 +110,22 @@ class LegalEntityRegistrationTest extends TestCase
         $response->assertStatus(422)->assertJsonValidationErrors(['phone']);
     }
 
+    public function test_legal_entity_registration_rejects_invalid_phone(): void
+    {
+        // Phone moved to the shared base rules (2026-08-25) — the format rule
+        // must keep applying on the legal-entity branch too.
+        $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
+            'phone' => 'обадете се на офиса',
+        ]));
+
+        $response->assertStatus(422)->assertJsonValidationErrors(['phone']);
+    }
+
     public function test_legal_entity_registration_requires_legal_name_and_eik(): void
     {
         $response = $this->postJson('/api/register', $this->validLegalEntityPayload([
             'legal_name' => '',
-            'eik'        => '',
+            'eik' => '',
         ]));
 
         $response->assertStatus(422)->assertJsonValidationErrors(['legal_name', 'eik']);
@@ -124,12 +136,13 @@ class LegalEntityRegistrationTest extends TestCase
         // Sanity: the single-name-field individual path is unaffected by the
         // legal-entity simplification.
         $response = $this->postJson('/api/register', [
-            'account_type'          => 'individual',
-            'name'                  => 'John Doe',
-            'email'                 => 'john@example.com',
-            'password'              => 'Password123!',
+            'account_type' => 'individual',
+            'name' => 'John Doe',
+            'email' => 'john@example.com',
+            'phone' => '+359 88 123 4567',
+            'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
-            'terms_accepted'        => true,
+            'terms_accepted' => true,
         ]);
 
         $response->assertStatus(201);
@@ -150,11 +163,12 @@ class LegalEntityRegistrationTest extends TestCase
         // eik requirement, no profile row). Rule::in still rejects a value
         // that is present but invalid (see AuthTest).
         $response = $this->postJson('/api/register', [
-            'name'                  => 'Legacy Client',
-            'email'                 => 'legacy@example.com',
-            'password'              => 'Password123!',
+            'name' => 'Legacy Client',
+            'email' => 'legacy@example.com',
+            'phone' => '0888123456',
+            'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
-            'terms_accepted'        => true,
+            'terms_accepted' => true,
         ]);
 
         $response->assertStatus(201);

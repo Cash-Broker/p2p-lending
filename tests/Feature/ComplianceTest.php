@@ -22,6 +22,7 @@ class ComplianceTest extends TestCase
         $this->postJson('/api/register', [
             'name' => 'Consent User',
             'email' => 'consent@test.com',
+            'phone' => '+359 88 123 4567',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
             'terms_accepted' => true,
@@ -44,6 +45,7 @@ class ComplianceTest extends TestCase
         $this->postJson('/api/register', [
             'name' => 'IP User',
             'email' => 'ip@test.com',
+            'phone' => '+359 88 123 4567',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
             'terms_accepted' => true,
@@ -89,6 +91,7 @@ class ComplianceTest extends TestCase
         $this->postJson('/api/register', [
             'name' => 'Audit User',
             'email' => 'audit@test.com',
+            'phone' => '+359 88 123 4567',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
             'terms_accepted' => true,
@@ -107,6 +110,7 @@ class ComplianceTest extends TestCase
         $this->postJson('/api/register', [
             'name' => 'Redact User',
             'email' => 'redact@test.com',
+            'phone' => '+359 88 123 4567',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
             'terms_accepted' => true,

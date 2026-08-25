@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\User;
 use App\Rules\ValidEik;
+use App\Rules\ValidPhone;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
@@ -64,6 +65,13 @@ class RegisterRequest extends FormRequest
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users'],
             'password' => ['required', 'confirmed', Password::defaults()],
 
+            // Phone — mandatory for BOTH account types (client decision
+            // 2026-08-25): the platform must be able to reach an investor
+            // about their money. Saved on users.phone so the contact channel
+            // is on the user record; the AML "company_phone" stays a separate
+            // legal-entity concern for future deeper KYC.
+            'phone' => ['required', 'string', 'max:32', new ValidPhone],
+
             'terms_accepted' => ['required', 'accepted'],
         ];
 
@@ -77,11 +85,6 @@ class RegisterRequest extends FormRequest
             // raw inputs so empty strings produce clear field-level errors.
             'first_name' => ['required', 'string', 'max:120'],
             'last_name' => ['required', 'string', 'max:120'],
-
-            // Phone — saved on users.phone so the contact channel is on the
-            // user record, not the profile. AML "company_phone" stays for
-            // future deeper KYC.
-            'phone' => ['required', 'string', 'max:32'],
 
             // Company identity — the only company-level data captured at
             // registration. Everything else (address, AML declarations, UBO,

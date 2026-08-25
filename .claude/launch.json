@@ -5,7 +5,16 @@
       "name": "app",
       "runtimeExecutable": "php",
       "runtimeArgs": ["artisan", "serve", "--host=127.0.0.1", "--port=8123"],
-      "cwd": ".",
+      "port": 8123
+    },
+    {
+      "name": "app-local-session",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:APP_URL='http://127.0.0.1:8123'; $env:SESSION_DOMAIN='null'; $env:SANCTUM_STATEFUL_DOMAINS='127.0.0.1:8123'; $env:SESSION_SECURE_COOKIE='false'; Set-Location public; php -S 127.0.0.1:8123 ../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php"
+      ],
       "port": 8123
     }
   ]

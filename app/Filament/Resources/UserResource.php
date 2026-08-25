@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Notifications\BonusCreditedNotification;
 use App\Notifications\BonusGrantedAdminNotification;
 use App\Notifications\KycStatusNotification;
+use App\Rules\ValidPhone;
 use App\Services\BonusService;
 use App\Services\TelegramService;
 use App\Support\Money;
@@ -172,6 +173,41 @@ class UserResource extends Resource
      * The money lands as a TYPE_BONUS ledger row (investor sees «Бонус»
      * in transactions) + a mail/bell notification.
      */
+    /**
+     * Support tool (2026-08-25, same release as the mandatory-phone rule):
+     * the ONLY investor-side write path for the now-mandatory phone is the
+     * self-service PUT /api/profile — an investor phoning in a correction,
+     * or stuck at the blocking modal with a format ValidPhone refuses, has
+     * no other recourse. The action applies the SAME ValidPhone rule as the
+     * API, so the admin cannot store a value the investor couldn't.
+     */
+    public static function phoneAction(): Action
+    {
+        return Action::make('edit_phone')
+            ->label('Редактирай телефон')
+            ->icon('heroicon-o-phone')
+            ->color('gray')
+            ->visible(fn (User $record) => $record->isInvestor())
+            ->modalHeading('Редактирай телефон')
+            ->form([
+                TextInput::make('phone')
+                    ->label('Телефон')
+                    ->required()
+                    ->maxLength(32)
+                    ->rules([new ValidPhone])
+                    ->default(fn (User $record) => $record->phone),
+            ])
+            ->action(function (User $record, array $data): void {
+                try {
+                    $record->update(['phone' => trim((string) $data['phone'])]);
+                    Notification::make()->title('Телефонът е записан.')->success()->send();
+                } catch (\Throwable $e) {
+                    report($e);
+                    Notification::make()->title('Грешка при запис на телефона.')->danger()->send();
+                }
+            });
+    }
+
     public static function bonusAction(): Action
     {
         return Action::make('grant_bonus')

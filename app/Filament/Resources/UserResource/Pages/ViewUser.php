@@ -19,6 +19,7 @@ class ViewUser extends ViewRecord
         return [
             ...UserResource::kycStatusActions(),
             UserResource::bonusAction(),
+            UserResource::phoneAction(),
         ];
     }
 }

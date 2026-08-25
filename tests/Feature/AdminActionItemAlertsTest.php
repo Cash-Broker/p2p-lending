@@ -341,6 +341,7 @@ class AdminActionItemAlertsTest extends TestCase
         return array_merge([
             'name' => 'Нов Инвеститор',
             'email' => 'nov@example.com',
+            'phone' => '+359 88 123 4567',
             'password' => 'Password123!',
             'password_confirmation' => 'Password123!',
             'terms_accepted' => true,

@@ -5,6 +5,8 @@ import { useAuthStore } from '../stores/auth'
 import { useConsentStore } from '../stores/consent'
 import ChatbotWidget from '../components/ChatbotWidget.vue'
 import ReConsentModal from '../components/ReConsentModal.vue'
+import PhoneRequiredModal from '../components/PhoneRequiredModal.vue'
+import { needsPhonePrompt } from '../utils/phoneGate'
 import api from '../api/axios'
 // Static import on purpose: a dynamic import() on the logout path can REJECT
 // after a deploy rotates chunk hashes, and that would abort logout before the
@@ -27,6 +29,20 @@ watch(() => consent.promptNonce, () => { consentDismissed.value = false })
 async function acceptConsent() {
   await consent.accept()
 }
+
+// Mandatory phone (client decision 2026-08-25): accounts created before the
+// requirement get a BLOCKING modal until they add one. The consent modal wins
+// when both apply — it gates financial actions server-side, while the phone
+// save itself is not consent-gated, so it can wait its turn. We also wait for
+// the consent probe to finish before mounting: otherwise a user needing BOTH
+// would get the phone modal on first paint only to have it torn down (typed
+// digits lost) when /consents/pending resolves and the consent modal takes
+// over. A failed probe still unblocks — the phone requirement must not hang
+// on a consent-endpoint hiccup.
+const consentChecked = ref(false)
+const showPhonePrompt = computed(() =>
+  consentChecked.value && !showConsent.value && needsPhonePrompt(auth.user)
+)
 
 // Notifications
 const notifications = ref([])
@@ -71,7 +87,7 @@ async function deleteAllNotifications() {
 
 onMounted(() => {
   loadNotifications()
-  consent.check()
+  Promise.resolve(consent.check()).finally(() => { consentChecked.value = true })
   // Claim this device's push subscription for the investor now using it —
   // the admin panel does the same on its pages, so ownership follows the
   // active session on a shared browser.
@@ -310,5 +326,7 @@ async function logout() {
       @accept="acceptConsent"
       @later="consentDismissed = true"
     />
+
+    <PhoneRequiredModal v-if="showPhonePrompt" :logging-out="loggingOut" @logout="logout" />
   </div>
 </template>

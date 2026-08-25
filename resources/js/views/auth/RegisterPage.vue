@@ -50,7 +50,8 @@ async function submit() {
     } else {
       // Strip legal-entity fields to keep the body small and avoid sending
       // empty PII fields the backend doesn't expect for individuals.
-      const keep = ['account_type', 'name', 'email', 'password', 'password_confirmation', 'terms_accepted']
+      // Phone stays: mandatory for BOTH account types since 2026-08-25.
+      const keep = ['account_type', 'name', 'email', 'phone', 'password', 'password_confirmation', 'terms_accepted']
       Object.keys(payload).forEach(k => { if (!keep.includes(k)) delete payload[k] })
     }
 
@@ -180,7 +181,7 @@ async function submit() {
             </div>
           </template>
 
-          <!-- ── Email + Phone (phone shown only for legal entity) ── -->
+          <!-- ── Email + Phone (both account types — phone mandatory 2026-08-25) ── -->
           <div>
             <label for="email" class="block text-sm font-medium text-navy-700 mb-1">Имейл</label>
             <input
@@ -196,7 +197,7 @@ async function submit() {
             <p v-if="errors.email" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.email[0] }}</p>
           </div>
 
-          <div v-if="isLegal">
+          <div>
             <label for="phone" class="block text-sm font-medium text-navy-700 mb-1">Телефон</label>
             <input
               id="phone"
