@@ -26,6 +26,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Validation\ValidationException;
 use Livewire\Livewire;
+use Tests\Support\CreatesSavedIbans;
 use Tests\TestCase;
 
 /**
@@ -40,7 +41,7 @@ use Tests\TestCase;
  */
 class BonusLockTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesSavedIbans, RefreshDatabase;
 
     private function investor(string $available = '0.00'): User
     {
@@ -282,10 +283,10 @@ class BonusLockTest extends TestCase
         $this->assertSame('300.00', $user->wallet->fresh()->available);
         $this->assertSame('200.00', app(WalletService::class)->withdrawableBalance($user->wallet->fresh()));
 
-        app(WithdrawalService::class)->createRequest($user->id, '200.00', 'BG80BNBG96611020345678');
+        app(WithdrawalService::class)->createRequest($user->id, '200.00', $this->confirmedIban($user));
 
         $this->expectException(ValidationException::class);
-        app(WithdrawalService::class)->createRequest($user->id, '0.01', 'BG80BNBG96611020345678');
+        app(WithdrawalService::class)->createRequest($user->id, '0.01', $this->confirmedIban($user));
     }
 
     public function test_a_locked_bonus_can_be_invested_immediately(): void
@@ -378,7 +379,16 @@ class BonusLockTest extends TestCase
 
         // A locked bonus must not trap the investor inside the platform:
         // unlocking it would require investing.
-        app(AccountDeletionService::class)->deleteAccount($user, 'secret-password');
+        // SEC-22: the request-time check uses the WITHDRAWABLE balance, so the
+        // locked bonus inside `available` does not refuse the request; the
+        // forfeit itself happens at finalisation.
+        $service = app(AccountDeletionService::class);
+        $service->requestDeletion($user, 'secret-password');
+        $this->assertDatabaseMissing('transactions', ['user_id' => $user->id, 'type' => Transaction::TYPE_BONUS_CANCELLED]);
+        $service->confirm($user->fresh());
+        Carbon::setTestNow(now()->addDays(8));
+        $this->assertSame('finalized', $service->finalize($user->fresh()));
+        Carbon::setTestNow();
 
         $this->assertSame(BonusGrant::STATUS_CANCELLED, $grant->fresh()->status);
         $this->assertDatabaseHas('transactions', [
@@ -404,7 +414,7 @@ class BonusLockTest extends TestCase
         $user->wallet->forceFill(['available' => '0.00', 'invested' => '50.00'])->save();
 
         $this->expectException(ValidationException::class);
-        app(AccountDeletionService::class)->deleteAccount($user, 'secret-password');
+        app(AccountDeletionService::class)->requestDeletion($user, 'secret-password');
     }
 
     // ── What the admin sees ──

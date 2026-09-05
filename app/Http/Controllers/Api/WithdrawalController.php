@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WithdrawalRequest;
 use App\Notifications\WithdrawalRequestedAdminNotification;
+use App\Notifications\WithdrawalRequestedNotification;
 use App\Services\WithdrawalService;
 use App\Support\Money;
 use Filament\Actions\Action as FilamentAction;
@@ -26,14 +27,11 @@ class WithdrawalController extends Controller
     {
         $this->authorize('create', WithdrawalRequest::class);
         // Resolve IBAN: either from saved IBAN (server-side, never exposed) or raw input
-        if ($request->filled('saved_iban_id')) {
-            $savedIban = SavedIban::where('id', $request->saved_iban_id)
-                ->where('user_id', $request->user()->id)
-                ->firstOrFail();
-            $iban = $savedIban->iban;
-        } else {
-            $iban = $request->iban;
-        }
+        // SEC-01 (owner 2026-09-03): withdrawals go only to a saved IBAN the owner
+        // confirmed by e-mail and past the cooling-off; the service re-checks under lock.
+        $savedIban = SavedIban::where('id', $request->saved_iban_id)
+            ->where('user_id', $request->user()->id)
+            ->firstOrFail();
 
         try {
             // bcmath-safe ingress — never float-cast user input.
@@ -42,11 +40,27 @@ class WithdrawalController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        // Optional client retry key — the SPA sends one on every POST /withdrawal
+        // (audit 2026-09-01, PAY-03). A replay returns the first request.
+        $idempotencyKey = $request->header('X-Idempotency-Key');
+        if ($idempotencyKey !== null && ($idempotencyKey === '' || strlen($idempotencyKey) > 64)) {
+            return response()->json(['message' => 'Invalid X-Idempotency-Key header.'], 422);
+        }
+
         $withdrawal = $this->withdrawalService->createRequest(
             $request->user()->id,
             $amount,
-            $iban
+            $savedIban,
+            $idempotencyKey,
         );
+
+        if (! $withdrawal->wasRecentlyCreated) {
+            // Replay of an earlier submit — the admins were told the first time.
+            return response()->json([
+                'message' => 'Withdrawal request created successfully.',
+                'withdrawal' => new WithdrawalRequestResource($withdrawal),
+            ], 201);
+        }
 
         // Alert the reviewers — the money is already reserved and committed
         // by the service, so notifications come strictly after (money first).
@@ -62,6 +76,17 @@ class WithdrawalController extends Controller
 
         $reviewUrl = url('/admin/withdrawal-requests');
         $requestedAt = now();
+
+        // SEC-01: the OWNER hears about the request now, not at approval when the
+        // money has already left. Same best-effort wrapper as the admin legs.
+        $safeNotify($request->user(), new WithdrawalRequestedNotification(
+            withdrawalId: $withdrawal->id,
+            amount: $amount,
+            maskedIban: $withdrawal->maskedIban(),
+            ibanLabel: $savedIban->label,
+            requestedAt: $requestedAt,
+            ipAddress: $request->ip(),
+        ));
         try {
             $admins = User::where('role', 'admin')->get();
         } catch (\Throwable $e) {

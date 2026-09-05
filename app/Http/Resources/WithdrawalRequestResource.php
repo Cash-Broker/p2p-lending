@@ -12,6 +12,7 @@ class WithdrawalRequestResource extends JsonResource
         return [
             'id' => $this->id,
             'amount' => $this->amount,
+            'fee_quoted' => $this->fee_quoted,
             'iban' => $this->maskedIban(),
             'status' => $this->status,
             'processed_at' => $this->processed_at,

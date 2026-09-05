@@ -15,7 +15,7 @@ class LoanStatusSelectionTest extends TestCase
 {
     private function loanInStatus(string $status): Loan
     {
-        $loan = new Loan();
+        $loan = new Loan;
         $loan->status = $status;
 
         return $loan;
@@ -70,8 +70,32 @@ class LoanStatusSelectionTest extends TestCase
             [Loan::STATUS_DRAFT, Loan::STATUS_FUNDING],
             $this->loanInStatus(Loan::STATUS_PUBLISHED)->selectableStatusTransitions(),
         );
+        // funding → funded by hand is gone (audit 2026-09-01, PAY-36): since the
+        // last euro activates the loan automatically, `funded` is a state no
+        // loan rests in — parking one there by hand left it unable to take money
+        // or to activate, while the payout engine kept paying it.
         $this->assertSame(
-            [Loan::STATUS_FUNDED, Loan::STATUS_DRAFT],
+            [Loan::STATUS_DRAFT],
+            $this->loanInStatus(Loan::STATUS_FUNDING)->selectableStatusTransitions(),
+        );
+    }
+
+    public function test_funding_loan_cannot_be_manually_marked_funded(): void
+    {
+        $this->assertNotContains(
+            Loan::STATUS_FUNDED,
+            $this->loanInStatus(Loan::STATUS_FUNDING)->selectableStatusTransitions(),
+            'funded is reached only by the last investment; a manual funded loan is a dead end',
+        );
+    }
+
+    public function test_funding_loan_cannot_be_manually_marked_repaid(): void
+    {
+        // PAY-30: funding → repaid exists for the system (auto-close, full early
+        // closure) and stays behind MANUAL_STATUS_BLOCKLIST for the admin Select.
+        $this->assertContains(Loan::STATUS_REPAID, Loan::ALLOWED_TRANSITIONS[Loan::STATUS_FUNDING]);
+        $this->assertNotContains(
+            Loan::STATUS_REPAID,
             $this->loanInStatus(Loan::STATUS_FUNDING)->selectableStatusTransitions(),
         );
     }

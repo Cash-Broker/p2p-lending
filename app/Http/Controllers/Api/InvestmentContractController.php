@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
 use App\Models\Investment;
+use App\Models\InvestmentContract;
 use App\Models\Loan;
 use App\Models\LoanOffer;
 use App\Services\InvestmentContractService;
@@ -36,6 +38,11 @@ class InvestmentContractController extends Controller
 
         $contract = $investment->contract;
         abort_if($contract === null, 404, 'No contract exists for this investment.');
+
+        AuditLog::recordAccess(InvestmentContract::class, $contract->id, [
+            'document' => 'investment_contract',
+            'investment_id' => $investment->id,
+        ]);
 
         return $this->pdfResponse(
             $service->renderPdf($contract),

@@ -20,11 +20,12 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Validation\ValidationException;
+use Tests\Support\CreatesSavedIbans;
 use Tests\TestCase;
 
 class AuditFixesTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesSavedIbans, RefreshDatabase;
 
     private function createVerifiedInvestor(array $walletBalances = []): User
     {
@@ -136,7 +137,7 @@ class AuditFixesTest extends TestCase
     {
         $investor = $this->createVerifiedInvestor(['available' => '5000.00']);
 
-        app(WithdrawalService::class)->createRequest($investor->id, '1000.00', 'BG80BNBG96611020345678');
+        app(WithdrawalService::class)->createRequest($investor->id, '1000.00', $this->confirmedIban($investor));
 
         $wallet = $investor->wallet->fresh();
         $this->assertEquals('4000.00', $wallet->available);
@@ -150,7 +151,7 @@ class AuditFixesTest extends TestCase
 
         Notification::fake();
 
-        $withdrawal = app(WithdrawalService::class)->createRequest($investor->id, '1000.00', 'BG80BNBG96611020345678');
+        $withdrawal = app(WithdrawalService::class)->createRequest($investor->id, '1000.00', $this->confirmedIban($investor));
         app(WithdrawalService::class)->reject($withdrawal->id, $admin->id);
 
         $wallet = $investor->wallet->fresh();
@@ -163,12 +164,12 @@ class AuditFixesTest extends TestCase
         $investor = $this->createVerifiedInvestor(['available' => '1000.00']);
 
         // First withdrawal of 800 should succeed
-        app(WithdrawalService::class)->createRequest($investor->id, '800.00', 'BG80BNBG96611020345678');
+        app(WithdrawalService::class)->createRequest($investor->id, '800.00', $this->confirmedIban($investor));
 
         // Second withdrawal of 500 should fail — only 200 available
         $this->expectException(ValidationException::class);
 
-        app(WithdrawalService::class)->createRequest($investor->id, '500.00', 'BG80BNBG96611020345678');
+        app(WithdrawalService::class)->createRequest($investor->id, '500.00', $this->confirmedIban($investor));
     }
 
     // ── Finding 2.1: Invest idempotency ──

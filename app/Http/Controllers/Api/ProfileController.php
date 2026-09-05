@@ -11,9 +11,11 @@ use App\Models\ConsentRecord;
 use App\Models\SavedIban;
 use App\Models\User;
 use App\Notifications\KycSubmittedAdminNotification;
+use App\Notifications\SavedIbanConfirmationNotification;
 use App\Rules\ValidIban;
 use App\Services\AccountDeletionService;
 use App\Services\KycImageNormalizer;
+use App\Services\WithdrawalService;
 use Filament\Actions\Action as FilamentAction;
 use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Http\JsonResponse;
@@ -321,38 +323,99 @@ class ProfileController extends Controller
     public function ibans(Request $request): JsonResponse
     {
         $ibans = $request->user()->savedIbans()->latest()->get();
+        $cooldown = WithdrawalService::newIbanCooldownHours();
 
         return response()->json([
-            'data' => $ibans->map(fn (SavedIban $iban) => [
-                'id' => $iban->id,
-                'iban' => $iban->maskedIban(),
-                'label' => $iban->label,
-                'created_at' => $iban->created_at,
-            ]),
+            'data' => $ibans->map(fn (SavedIban $iban) => self::ibanPayload($iban, $cooldown)),
+            // So the SPA copy («тегления … след N ч.») follows the admin setting.
+            'cooldown_hours' => $cooldown,
         ]);
     }
 
     public function storeIban(Request $request): JsonResponse
     {
+        // Same normalisation as WithdrawalRequest — one canonical form at rest.
+        if (is_string($request->input('iban'))) {
+            $request->merge(['iban' => strtoupper(preg_replace('/\s+/', '', $request->input('iban')))]);
+        }
+
         $request->validate([
             // Format/checksum/SEPA-country validation in one rule.
             'iban' => ['required', 'string', 'min:15', 'max:34', new ValidIban],
             'label' => ['nullable', 'string', 'max:100'],
         ]);
 
-        $iban = $request->user()->savedIbans()->create([
-            'iban' => $request->iban,
-            'label' => $request->label,
-        ]);
+        // SEC-01: the same account twice is a mistake, not a second destination.
+        // Encrypted column → compare in memory (a handful of rows per investor).
+        $duplicate = $request->user()->savedIbans()->get()
+            ->contains(fn (SavedIban $row) => $row->iban === $request->iban);
+        if ($duplicate) {
+            throw ValidationException::withMessages(['iban' => ['Този IBAN вече е добавен към профила ви.']]);
+        }
+
+        // Stored UNCONFIRMED (owner 2026-09-03): the token hash, sent_at and
+        // expires_at land in the same insert; the plain token lives only in the mail.
+        $iban = new SavedIban(['iban' => $request->iban, 'label' => $request->label]);
+        $iban->user_id = $request->user()->id;
+        $plainToken = $iban->issueConfirmationToken();
+        $iban->save();
+
+        $this->sendIbanConfirmation($request->user(), $iban, $plainToken);
 
         return response()->json([
-            'message' => 'IBAN saved successfully.',
-            'iban' => [
-                'id' => $iban->id,
-                'iban' => $iban->maskedIban(),
-                'label' => $iban->label,
-            ],
+            'message' => 'IBAN saved. Confirmation e-mail sent.',
+            'iban' => self::ibanPayload($iban, WithdrawalService::newIbanCooldownHours()),
         ], 201);
+    }
+
+    /**
+     * SEC-01: a fresh confirmation link (the previous one stops working).
+     * Throttled per route; refused once the IBAN is confirmed.
+     */
+    public function resendIbanConfirmation(Request $request, SavedIban $iban): JsonResponse
+    {
+        $this->authorize('view', $iban);
+
+        if ($iban->isConfirmed()) {
+            throw ValidationException::withMessages(['iban' => ['IBAN-ът вече е потвърден.']]);
+        }
+
+        $plainToken = $iban->issueConfirmationToken();
+        $iban->save();
+
+        $this->sendIbanConfirmation($request->user(), $iban, $plainToken);
+
+        return response()->json([
+            'message' => 'Confirmation e-mail sent.',
+            'iban' => self::ibanPayload($iban, WithdrawalService::newIbanCooldownHours()),
+        ]);
+    }
+
+    /** Best-effort, after the row is committed: a mail failure never fails the request. */
+    private function sendIbanConfirmation(User $user, SavedIban $iban, string $plainToken): void
+    {
+        try {
+            $user->notify(new SavedIbanConfirmationNotification($iban->id, $iban->maskedIban(), $iban->label, $plainToken));
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private static function ibanPayload(SavedIban $iban, int $cooldownHours): array
+    {
+        return [
+            'id' => $iban->id,
+            'iban' => $iban->maskedIban(),
+            'label' => $iban->label,
+            'created_at' => $iban->created_at,
+            'confirmed' => $iban->isConfirmed(),
+            'confirmed_at' => $iban->confirmedAt()?->toIso8601String(),
+            'withdrawable_from' => $iban->withdrawableFrom($cooldownHours)?->toIso8601String(),
+            'withdrawable_now' => $iban->isWithdrawableAt(now(), $cooldownHours),
+            'confirmation_expired' => $iban->confirmationExpired(),
+            'legacy' => $iban->isLegacy(),
+        ];
     }
 
     public function destroyIban(Request $request, SavedIban $iban): JsonResponse
@@ -364,21 +427,35 @@ class ProfileController extends Controller
         return response()->json(['message' => 'IBAN removed.']);
     }
 
+    /**
+     * SEC-22 (owner 2026-09-03): no longer anonymises in the request. It records
+     * the request and mails a confirmation link; the account stays usable and
+     * the closure happens `account_deletion_waiting_days` after confirmation.
+     */
     public function deleteAccount(Request $request, AccountDeletionService $service): JsonResponse
     {
         $request->validate([
             'password' => ['required', 'string'],
         ]);
 
-        $service->deleteAccount($request->user(), $request->password);
+        $user = $service->requestDeletion($request->user(), $request->password, $request->ip(), $request->userAgent());
 
-        auth()->guard('web')->logout();
+        return response()->json([
+            'message' => 'Deletion confirmation e-mail sent.',
+            'user' => new UserResource($user->fresh()->load(['wallet', 'legalEntityProfile'])),
+        ], 202);
+    }
 
-        if ($request->hasSession()) {
-            $request->session()->invalidate();
-            $request->session()->regenerateToken();
+    /** SEC-22: cancelling is the safe direction — no password needed. */
+    public function cancelDeletion(Request $request, AccountDeletionService $service): JsonResponse
+    {
+        if (! $service->cancel($request->user(), 'self')) {
+            return response()->json(['message' => 'No pending deletion request.'], 422);
         }
 
-        return response()->json(['message' => 'Account deleted successfully.']);
+        return response()->json([
+            'message' => 'Deletion request cancelled.',
+            'user' => new UserResource($request->user()->fresh()->load(['wallet', 'legalEntityProfile'])),
+        ]);
     }
 }

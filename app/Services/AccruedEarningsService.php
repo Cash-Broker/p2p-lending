@@ -381,6 +381,7 @@ class AccruedEarningsService
         $share = bcdiv($userInvested, $totalInvested, self::SCALE);
 
         $rows = $loan->amortizationSchedules()
+            ->legacyPlan() // PAY-13: never the borrower tracker's informational interest
             ->orderBy('due_date')
             ->orderBy('id')
             ->get();

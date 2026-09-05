@@ -6,9 +6,11 @@ use App\Listeners\SendAdminLoginAlert;
 use App\Listeners\SendInvestorRegisteredAlert;
 use App\Listeners\TelegramAdminLoginAlert;
 use App\Listeners\TelegramFailedLoginAlert;
+use App\Listeners\TelegramQueueBusyAlert;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Registered;
+use Illuminate\Queue\Events\QueueBusy;
 use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
 
@@ -35,6 +37,7 @@ class EventListenerRegistrationTest extends TestCase
             Login::class => [SendAdminLoginAlert::class, TelegramAdminLoginAlert::class],
             Failed::class => [TelegramFailedLoginAlert::class],
             Registered::class => [SendInvestorRegisteredAlert::class],
+            QueueBusy::class => [TelegramQueueBusyAlert::class],
         ];
     }
 

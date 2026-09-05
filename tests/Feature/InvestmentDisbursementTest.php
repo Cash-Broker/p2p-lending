@@ -57,7 +57,10 @@ class InvestmentDisbursementTest extends TestCase
     {
         [$loan, $user] = $this->activeLoanWithSplitInvestor();
 
-        $this->assertSame(0, $loan->amortizationSchedules()->count(), 'offer loan must NOT use the legacy per-loan schedule');
+        $this->assertSame(0, $loan->amortizationSchedules()->legacyPlan()->count(), 'offer loan must NOT use the legacy per-loan schedule');
+        // PAY-13: the borrower tracker is NOT generated on its own — `borrower_tracker_auto_generate`
+        // ships OFF (owner 2026-09-05: nobody records borrower installments by hand yet).
+        $this->assertSame(0, $loan->amortizationSchedules()->borrowerTracker()->count(), 'PAY-13 auto-generation is off by default');
 
         $byType = $loan->investments()->with('schedules')->get()
             ->keyBy(fn ($i) => $i->payout_type->value);
@@ -79,7 +82,7 @@ class InvestmentDisbursementTest extends TestCase
         [$loan, $user] = $this->activeLoanWithSplitInvestor();
 
         // Expected profit = Σ summary interest across the three offers.
-        $proj = new OfferProjectionService();
+        $proj = new OfferProjectionService;
         $expectedEarned = '0.00';
         foreach ([[PayoutType::Amortizing, '12.00'], [PayoutType::InterestOnly, '16.00'], [PayoutType::Capitalized, '20.00']] as [$type, $rate]) {
             $expectedEarned = bcadd($expectedEarned, $proj->summary('1000.00', $rate, 12, $type)['total_interest'], 2);

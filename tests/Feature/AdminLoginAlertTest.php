@@ -10,6 +10,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\URL;
 use Tests\TestCase;
 
 /**
@@ -169,16 +170,38 @@ class AdminLoginAlertTest extends TestCase
     {
         $admin = $this->admin();
 
-        $url = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+        $url = URL::temporarySignedRoute(
             'admin.trust-ip',
             now()->addDays(7),
             ['user' => $admin->id, 'ip' => '198.51.100.5'],
         );
 
-        $response = $this->get($url);
+        $response = $this->actingAs($admin)->get($url);
 
         $response->assertOk();
         $this->assertDatabaseHas('admin_trusted_ips', [
+            'user_id' => $admin->id,
+            'ip_address' => '198.51.100.5',
+        ]);
+    }
+
+    public function test_trust_ip_link_requires_the_addressed_admin_to_be_signed_in(): void
+    {
+        $admin = $this->admin();
+
+        $url = URL::temporarySignedRoute(
+            'admin.trust-ip',
+            now()->addDays(7),
+            ['user' => $admin->id, 'ip' => '198.51.100.5'],
+        );
+
+        // A leaked / forwarded link opened by a guest…
+        $this->get($url)->assertStatus(403);
+
+        // …or by a different admin does nothing.
+        $this->actingAs($this->admin())->get($url)->assertStatus(403);
+
+        $this->assertDatabaseMissing('admin_trusted_ips', [
             'user_id' => $admin->id,
             'ip_address' => '198.51.100.5',
         ]);
@@ -201,7 +224,7 @@ class AdminLoginAlertTest extends TestCase
     {
         $investor = $this->investor();
 
-        $url = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+        $url = URL::temporarySignedRoute(
             'admin.trust-ip',
             now()->addDays(7),
             ['user' => $investor->id, 'ip' => '198.51.100.5'],

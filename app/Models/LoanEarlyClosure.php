@@ -29,6 +29,8 @@ class LoanEarlyClosure extends Model
         'is_full',
         'as_of',
         'note',
+        'request_token',
+        'accrued_written_off',
     ];
 
     protected function casts(): array
@@ -36,6 +38,7 @@ class LoanEarlyClosure extends Model
         return [
             'principal_amount' => 'decimal:2',
             'interest_amount' => 'decimal:2',
+            'accrued_written_off' => 'decimal:2',
             'ratio' => 'decimal:10',
             'is_full' => 'boolean',
             'as_of' => 'date',

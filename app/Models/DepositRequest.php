@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\Auditable;
 use Database\Factories\DepositRequestFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -11,7 +12,7 @@ use Illuminate\Support\Str;
 class DepositRequest extends Model
 {
     /** @use HasFactory<DepositRequestFactory> */
-    use \App\Traits\Auditable, HasFactory;
+    use Auditable, HasFactory;
 
     protected $fillable = [
         'user_id',
@@ -20,6 +21,7 @@ class DepositRequest extends Model
         'bank_reference',
         'status',
         'admin_note',
+        'approved_by',
         'confirmed_at',
         'expires_at',
         'ip_address',

@@ -38,6 +38,13 @@ class ReportPayoutExposure extends Command
             ->where('payout_mode', Loan::PAYOUT_MODE_AUTOMATIC)
             ->count();
 
+        // PAY-13: paused loans (stamp + setting) are no longer fronted.
+        $pausedLoans = Loan::query()
+            ->whereIn('status', [Loan::STATUS_LATE, Loan::STATUS_DEFAULT])
+            ->where('payout_mode', Loan::PAYOUT_MODE_AUTOMATIC)
+            ->whereNotNull('payouts_paused_at')
+            ->count();
+
         // Funding-stage fronting (2026-08-14, follows the «олихвяването
         // тръгва от инвестицията» decision): loans that are NOT active have
         // no borrower servicing at all, yet the engine pays their investors
@@ -51,17 +58,28 @@ class ReportPayoutExposure extends Command
             ->whereHas('investmentSchedules')
             ->count();
 
+        // PAY-30: a partially funded loan that closed (repaid from funding) keeps
+        // counting — the interest the platform fronted on it must not vanish
+        // from this report the night it closes.
         $frontedInterest = (string) (InvestmentSchedule::query()
             ->where('status', 'paid')
-            ->whereHas('loan', fn ($q) => $q->whereIn('status', $fundingStageStatuses))
+            ->whereHas('loan', fn ($q) => $q->where(fn ($w) => $w
+                ->whereIn('status', $fundingStageStatuses)
+                ->orWhere(fn ($r) => $r->where('status', Loan::STATUS_REPAID)->where('closed_from_status', Loan::STATUS_FUNDING))))
             ->sum('interest') ?? '0.00');
+        $closedPartiallyFunded = Loan::query()
+            ->where('status', Loan::STATUS_REPAID)
+            ->where('closed_from_status', Loan::STATUS_FUNDING)
+            ->count();
         $frontedInterest = number_format((float) $frontedInterest, 2, '.', '');
 
         $this->info('Payout exposure');
         $this->line("  Locked promise (Σ accrued):            {$lockedPromise} €");
         $this->line("  At-risk auto loans (late/default):     {$atRiskLoans}");
+        $this->line("  … of which with fronting PAUSED:       {$pausedLoans} (paused loans add no new exposure)");
         $this->line("  Funding-stage auto loans on the clock: {$fundingStageLoans}");
         $this->line("  Funding-stage fronted interest paid:   {$frontedInterest} €");
+        $this->line("  Closed without full funding (PAY-30):  {$closedPartiallyFunded}");
 
         if ($atRiskLoans > 0) {
             $this->warn('  ⚠ These loans keep paying investors on schedule while the borrower is not servicing.');

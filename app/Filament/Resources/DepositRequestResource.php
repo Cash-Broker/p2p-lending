@@ -193,6 +193,10 @@ class DepositRequestResource extends Resource
                                     return "⚠️ Акаунтът на {$deposit->user->name} е закрит — кодът не може да бъде кредитиран.";
                                 }
 
+                                if ($deposit->user->kyc_status !== 'approved') {
+                                    return "⚠️ {$deposit->user->name} ({$deposit->user->email}) — KYC не е одобрен ({$deposit->user->kyc_status}). Кредитирането ще бъде отказано, докато верификацията не бъде одобрена.";
+                                }
+
                                 return "✓ {$deposit->user->name} ({$deposit->user->email})";
                             }),
                         Forms\Components\TextInput::make('amount')

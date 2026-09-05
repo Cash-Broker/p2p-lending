@@ -39,14 +39,21 @@ const statusClasses = {
 }
 // «Закрита» = вноската е отменена от предсрочно погасяване по кредита —
 // главницата вече е върната, тази вноска няма да бъде плащана (2026-08-18).
-const scheduleStatusLabels = { pending: 'Предстои', paid: 'Платено', late: 'Закъснение', default: 'Просрочено', closed: 'Закрита предсрочно' }
+// «Задържана» (PAY-13) = the row is due but the platform paused this loan's
+// payouts — derived server-side (`withheld`), the DB status stays `pending`.
+const scheduleStatusLabels = { pending: 'Предстои', paid: 'Платено', late: 'Закъснение', default: 'Просрочено', closed: 'Закрита предсрочно', withheld: 'Задържана' }
 const scheduleStatusClasses = {
   pending: 'bg-gray-100 text-gray-500',
   paid: 'bg-green-50 text-green-600',
   late: 'bg-amber-50 text-amber-600',
   default: 'bg-red-50 text-red-600',
   closed: 'bg-blue-50 text-blue-600',
+  withheld: 'bg-red-50 text-red-600',
 }
+const scheduleKey = (r) => (r.withheld ? 'withheld' : r.status)
+const scheduleLabel = (r) => scheduleStatusLabels[scheduleKey(r)] || r.status
+const scheduleClass = (r) => scheduleStatusClasses[scheduleKey(r)]
+const scheduleDot = (r) => scheduleStatusDotClasses[scheduleKey(r)] || 'bg-gray-300'
 // Mobile schedule rows compress the status pill to a colored dot next to the
 // date (five text columns don't fit 375px; principal/interest/total must stay).
 const scheduleStatusDotClasses = {
@@ -55,6 +62,7 @@ const scheduleStatusDotClasses = {
   late: 'bg-amber-500',
   default: 'bg-red-500',
   closed: 'bg-blue-500',
+  withheld: 'bg-red-500',
 }
 
 const loan = computed(() => props.investment?.loan ?? null)
@@ -170,8 +178,18 @@ onBeforeUnmount(() => {
             v-if="loan.status === 'late' && loan.days_overdue_max != null"
             class="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700"
           >
-            Най-старата непогасена вноска е забавена с <strong>{{ loan.days_overdue_max }} дни</strong>.
+            Кредитополучателят е забавил вноска с <strong>{{ loan.days_overdue_max }} дни</strong>.
             Оригинаторът работи по събирането.
+          </div>
+
+          <!-- PAY-13: the platform stopped fronting this loan's payouts -->
+          <div
+            v-if="loan.payouts_paused"
+            class="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
+          >
+            Плащанията по този кредит са <strong>временно спрени</strong><template v-if="loan.payouts_paused_at"> от {{ formatDate(loan.payouts_paused_at) }}</template>:
+            кредитополучателят е в закъснение над допустимия срок. Дължимите Ви вноски остават в плана и ще бъдат изплатени
+            след постъпване на плащане от кредитополучателя или при обратно изкупуване от оригинатора.
           </div>
 
           <!-- Key figures -->
@@ -252,16 +270,16 @@ onBeforeUnmount(() => {
                       <td class="px-2 sm:px-2.5 py-2 text-gray-600 whitespace-nowrap">
                         <span
                           class="sm:hidden inline-block size-2 rounded-full mr-1.5 align-middle"
-                          :class="scheduleStatusDotClasses[r.status] || 'bg-gray-300'"
-                          :title="scheduleStatusLabels[r.status] || r.status"
-                        ></span><span class="sm:hidden sr-only">{{ scheduleStatusLabels[r.status] || r.status }} · </span>{{ formatDate(r.due_date) }}
+                          :class="scheduleDot(r)"
+                          :title="scheduleLabel(r)"
+                        ></span><span class="sm:hidden sr-only">{{ scheduleLabel(r) }} · </span>{{ formatDate(r.due_date) }}
                       </td>
                       <td class="px-2 sm:px-2.5 py-2 text-right text-navy-700 whitespace-nowrap">{{ formatAmount(r.principal) }}</td>
                       <td class="px-2 sm:px-2.5 py-2 text-right text-accent-500 whitespace-nowrap">{{ formatAmount(r.interest) }}</td>
                       <td class="px-2 sm:px-2.5 py-2 text-right font-semibold text-navy-700 whitespace-nowrap">{{ formatAmount(r.total) }}</td>
                       <td class="px-2.5 py-2 text-right hidden sm:table-cell">
-                        <span class="px-1.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap" :class="scheduleStatusClasses[r.status]">
-                          {{ scheduleStatusLabels[r.status] || r.status }}
+                        <span class="px-1.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap" :class="scheduleClass(r)">
+                          {{ scheduleLabel(r) }}
                         </span>
                       </td>
                     </tr>

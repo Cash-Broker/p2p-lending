@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Loan;
+use App\Services\Loans\LoanStatusUpdaterService;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Log;
 
@@ -20,6 +21,7 @@ class ScheduledPayoutService
     public function __construct(
         private PayoutAccrualService $accrual,
         private RepaymentService $repayment,
+        private LoanStatusUpdaterService $statusUpdater,
     ) {}
 
     /**
@@ -32,7 +34,16 @@ class ScheduledPayoutService
         $asOf = $asOf ?? now();
 
         if ($loan->usesOffers()) {
-            return ['type' => 'offer'] + $this->accrual->processLoan($loan->id, $asOf);
+            $result = ['type' => 'offer'] + $this->accrual->processLoan($loan->id, $asOf);
+
+            // PAY-30 (owner 2026-09-03): a partially funded loan whose last
+            // investor row was just paid must not stay investable until the
+            // 03:30 sweep of the next night — close it right here.
+            if ($loan->fresh()->status === Loan::STATUS_FUNDING) {
+                $result['auto_repaid'] = $this->statusUpdater->autoRepayLoanIfComplete($loan->id);
+            }
+
+            return $result;
         }
 
         // Legacy world keeps the pre-2026-08-13 scope: «олихвяването тръгва
@@ -67,25 +78,34 @@ class ScheduledPayoutService
      * invest moment). One loan's failure is logged and skipped — it must not
      * stop the rest of the batch.
      *
-     * @return array{loans_processed:int, loans_failed:int}
+     * Paused loans (PAY-13) are counted, not failed — they must not trip the
+     * PayoutRunFailedAdminNotification.
+     *
+     * @return array{loans_processed:int, loans_failed:int, loans_paused:int, failed_loan_ids:array<int,int>}
      */
     public function runAllAutomatic(?CarbonInterface $asOf = null): array
     {
         $asOf = $asOf ?? now();
         $processed = 0;
         $failed = 0;
+        $paused = 0;
+        $failedLoanIds = [];
 
         Loan::query()
             ->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES)
             ->where('payout_mode', Loan::PAYOUT_MODE_AUTOMATIC)
             ->orderBy('id')
-            ->chunkById(100, function ($loans) use ($asOf, &$processed, &$failed) {
+            ->chunkById(100, function ($loans) use ($asOf, &$processed, &$failed, &$paused, &$failedLoanIds) {
                 foreach ($loans as $loan) {
                     try {
-                        $this->runForLoan($loan, $asOf);
+                        $result = $this->runForLoan($loan, $asOf);
+                        if (($result['paused'] ?? false) === true) {
+                            $paused++;
+                        }
                         $processed++;
                     } catch (\Throwable $e) {
                         $failed++;
+                        $failedLoanIds[] = (int) $loan->id;
                         Log::error('Scheduled payout failed for loan', [
                             'loan_id' => $loan->id,
                             'error' => $e->getMessage(),
@@ -94,6 +114,6 @@ class ScheduledPayoutService
                 }
             });
 
-        return ['loans_processed' => $processed, 'loans_failed' => $failed];
+        return ['loans_processed' => $processed, 'loans_failed' => $failed, 'loans_paused' => $paused, 'failed_loan_ids' => $failedLoanIds];
     }
 }

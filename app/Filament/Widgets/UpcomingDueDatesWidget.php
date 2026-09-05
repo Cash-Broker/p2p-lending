@@ -21,12 +21,15 @@ class UpcomingDueDatesWidget extends BaseWidget
 {
     protected static ?int $sort = 3;
 
-    protected int | string | array $columnSpan = 'full';
+    protected int|string|array $columnSpan = 'full';
 
     /** Extracted so it can be asserted directly in tests (no Livewire harness). */
     public static function dueInstallmentsQuery(): Builder
     {
         return AmortizationSchedule::query()
+            // PAY-13: «падежи за разплащане» lists installments the admin must
+            // PAY — a borrower tracker row is never paid by the admin.
+            ->legacyPlan()
             ->whereIn('status', ['pending', 'late'])
             ->whereDate('due_date', '<=', now()->addDays(7))
             ->whereHas('loan', fn (Builder $query) => $query->whereIn('status', [Loan::STATUS_ACTIVE, Loan::STATUS_LATE]));

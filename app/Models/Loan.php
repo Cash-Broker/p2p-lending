@@ -6,6 +6,7 @@ use App\Enums\PayoutType;
 use App\Services\AmortizationService;
 use App\Services\APRCalculatorService;
 use App\Services\InvestmentScheduleGenerator;
+use App\Services\Loans\PayoutPauseService;
 use App\Traits\Auditable;
 use Database\Factories\LoanFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -122,7 +123,10 @@ class Loan extends Model
         // ONLY when funded_amount == 0. Guards partial investors from
         // being left stranded. The funded_amount check is enforced in
         // the booted() updating hook below, not in canTransitionTo.
-        self::STATUS_FUNDING => [self::STATUS_FUNDED, self::STATUS_DRAFT],
+        // PAY-30 (owner 2026-09-03): a partially funded loan ends when every
+        // investor's own plan has run or was closed early. System-driven only —
+        // MANUAL_STATUS_BLOCKLIST keeps `repaid` out of the admin Select.
+        self::STATUS_FUNDING => [self::STATUS_FUNDED, self::STATUS_DRAFT, self::STATUS_REPAID],
         self::STATUS_FUNDED => [self::STATUS_ACTIVE],
         self::STATUS_ACTIVE => [self::STATUS_LATE, self::STATUS_REPAID],
         self::STATUS_LATE => [self::STATUS_ACTIVE, self::STATUS_DEFAULT, self::STATUS_REPAID, self::STATUS_BOUGHT_BACK],
@@ -198,13 +202,26 @@ class Loan extends Model
                 // partial investors MUST NOT be stranded by an abandon.
                 // If funded_amount > 0, the admin must process refunds
                 // (manual compensating transactions) before resetting.
-                if ($from === self::STATUS_FUNDING
+                // published → draft gets the same guard (audit 2026-09-01,
+                // PAY-38): an investment committed while the edit form was
+                // open moves the loan to funding, and a stale save must not
+                // land a loan with money in it back in draft.
+                if (in_array($from, [self::STATUS_FUNDING, self::STATUS_PUBLISHED], true)
                     && $to === self::STATUS_DRAFT
                     && bccomp((string) $loan->funded_amount, '0', 2) > 0) {
                     throw new \LogicException(
                         "Cannot abandon loan #{$loan->id} to draft while funded_amount > 0 "
                         ."(current funded_amount = {$loan->funded_amount}). "
                         ."Process investor refunds first — see CLAUDE.md 'Partial-funded abandon' procedure."
+                    );
+                }
+
+                // PAY-30 (owner 2026-09-03): funding → repaid is reachable only
+                // when every investor position is settled — no caller may park
+                // principal behind a terminal status.
+                if ($from === self::STATUS_FUNDING && $to === self::STATUS_REPAID && $loan->hasOpenInvestorPositions()) {
+                    throw new \LogicException(
+                        "Cannot close loan #{$loan->id} from funding while investor schedule rows are still open."
                     );
                 }
             }
@@ -239,6 +256,26 @@ class Loan extends Model
      *
      * @return list<string>
      */
+    /**
+     * PAY-30: an offer investment with pending/late rows, or one without any
+     * rows at all (pre-2026-08-13 data gap), keeps the loan open. Zero
+     * investments ⇒ false (an empty funding loan has nothing to strand).
+     */
+    public function hasOpenInvestorPositions(): bool
+    {
+        return $this->investmentSchedules()->whereNotIn('status', ['paid', 'closed'])->exists()
+            || $this->investments()
+                ->whereNotNull('loan_offer_id')
+                ->whereNotExists(fn ($q) => $q->from('investment_schedules')
+                    ->whereColumn('investment_schedules.investment_id', 'investments.id'))
+                ->exists();
+    }
+
+    public function wasClosedWithoutFullFunding(): bool
+    {
+        return $this->status === self::STATUS_REPAID && $this->closed_from_status === self::STATUS_FUNDING;
+    }
+
     public function selectableStatusTransitions(): array
     {
         $allowed = self::ALLOWED_TRANSITIONS[$this->status] ?? [];
@@ -250,6 +287,15 @@ class Loan extends Model
 
             // funded → active must go through the activate action (schedule gen).
             if ($target === self::STATUS_ACTIVE && $this->status === self::STATUS_FUNDED) {
+                return false;
+            }
+
+            // funding → funded by hand is a dead end (audit 2026-09-01, PAY-36):
+            // since 2026-08-13 the last euro activates the loan automatically,
+            // `funded` is FUNDABLE no more and has no manual exit — a loan parked
+            // there can neither take money nor become active, while the payout
+            // engine keeps paying it.
+            if ($target === self::STATUS_FUNDED) {
                 return false;
             }
 
@@ -331,6 +377,10 @@ class Loan extends Model
         'buyback_dismissed_by',
         'early_repaid_at',
         'early_repayment_amount',
+        'closed_from_status',
+        'closed_at',
+        // PAY-13: stamped/cleared only by PayoutPauseService.
+        'payouts_paused_at',
     ];
 
     protected function casts(): array
@@ -349,6 +399,8 @@ class Loan extends Model
             'buyback_dismissed_at' => 'datetime',
             'early_repaid_at' => 'datetime',
             'early_repayment_amount' => 'decimal:2',
+            'closed_at' => 'datetime',
+            'payouts_paused_at' => 'datetime',
         ];
     }
 
@@ -484,8 +536,11 @@ class Loan extends Model
      */
     public function fundingCap(): string
     {
-        if ($this->amortizationSchedules()->exists()) {
+        // PAY-13: borrower tracker rows (plan_kind = borrower_tracker) are a
+        // late-detection input on OFFER loans — never a funding cap.
+        if ($this->amortizationSchedules()->legacyPlan()->exists()) {
             return $this->amortizationSchedules()
+                ->legacyPlan()
                 ->whereIn('status', ['pending', 'late'])
                 ->get(['principal'])
                 ->reduce(fn (string $carry, $row) => bcadd($carry, (string) $row->principal, 2), '0.00');
@@ -527,6 +582,17 @@ class Loan extends Model
      * has loan_offer_id = null) keep the per-loan amortization schedule + the
      * existing pro-rata RepaymentService, byte-identical to before the feature.
      */
+    /**
+     * PAY-13 — the ONE definition of «авансирането е спряно»: the reconciler's
+     * stamp AND the setting. Turning the setting off frees the money at the very
+     * next payout run without waiting for a reconcile; the engine, the API and
+     * Filament all read this.
+     */
+    public function isPayoutPaused(): bool
+    {
+        return $this->payouts_paused_at !== null && PayoutPauseService::isEnabled();
+    }
+
     public function usesOffers(): bool
     {
         return $this->investments()->whereNotNull('loan_offer_id')->exists();

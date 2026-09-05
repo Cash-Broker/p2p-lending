@@ -51,6 +51,7 @@ class InvestmentContract extends Model
         'party_snapshot',
         'terms_snapshot',
         'template_version',
+        'template_hash',
         'accepted_at',
         'ip_address',
         'user_agent',

@@ -2,22 +2,29 @@
 
 namespace App\Filament\Pages;
 
+use App\Models\AmortizationSchedule;
 use App\Models\Loan;
 use App\Services\RepaymentService;
 use BackedEnum;
 use Filament\Forms;
-use Filament\Schemas\Schema;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Schema;
 use UnitEnum;
 
 class ProcessRepayment extends Page
 {
-    protected static string | BackedEnum | null $navigationIcon = 'heroicon-o-currency-dollar';
+    protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-currency-dollar';
+
     protected static ?string $navigationLabel = 'Погашения';
+
     protected static ?string $title = 'Обработка на погашение';
-    protected static string | UnitEnum | null $navigationGroup = 'Финанси';
+
+    protected static string|UnitEnum|null $navigationGroup = 'Финанси';
+
     protected static ?int $navigationSort = 4;
+
     protected string $view = 'filament.pages.process-repayment';
 
     public ?array $data = [];
@@ -31,10 +38,17 @@ class ProcessRepayment extends Page
     {
         return $form
             ->schema([
-                \Filament\Schemas\Components\Section::make('Въведете погашение')->schema([
+                Section::make('Въведете погашение')->schema([
                     Forms\Components\Select::make('loan_id')->label('Кредит')
-                        ->options(Loan::where('status', Loan::STATUS_ACTIVE)->with('originator')->get()
-                            ->mapWithKeys(fn(Loan $loan) => [$loan->id => "#{$loan->id} — {$loan->originator->name} — {$loan->amount} € ({$loan->type})"]))
+                        // Legacy loans only: an offer-based loan pays its
+                        // investors from their own schedules, and posting a
+                        // borrower installment on it would pay them twice
+                        // (RepaymentService refuses it too — this just keeps
+                        // the option out of the admin's reach).
+                        ->options(Loan::where('status', Loan::STATUS_ACTIVE)
+                            ->whereDoesntHave('investments', fn ($q) => $q->whereNotNull('loan_offer_id'))
+                            ->with('originator')->get()
+                            ->mapWithKeys(fn (Loan $loan) => [$loan->id => "#{$loan->id} — {$loan->originator->name} — {$loan->amount} € ({$loan->type})"]))
                         ->searchable()->required()->live(),
                     // Amounts are NEVER typed by the admin (audit CRITICAL fix).
                     // The installment IS the amount: RepaymentService derives
@@ -45,14 +59,16 @@ class ProcessRepayment extends Page
                     Forms\Components\Select::make('amortization_schedule_id')->label('Вноска от погасителен план')
                         ->options(function (callable $get) {
                             $loanId = $get('loan_id');
-                            if (! $loanId) return [];
-                            return \App\Models\AmortizationSchedule::where('loan_id', $loanId)
+                            if (! $loanId) {
+                                return [];
+                            }
+
+                            return AmortizationSchedule::where('loan_id', $loanId)
                                 ->whereIn('status', ['pending', 'late'])
                                 ->orderBy('due_date')
                                 ->get()
-                                ->mapWithKeys(fn($s) => [$s->id =>
-                                    $s->due_date->format('d.m.Y')
-                                    . " — главница {$s->principal} € + лихва {$s->interest} € = {$s->total} €",
+                                ->mapWithKeys(fn ($s) => [$s->id => $s->due_date->format('d.m.Y')
+                                    ." — главница {$s->principal} € + лихва {$s->interest} € = {$s->total} €",
                                 ]);
                         })
                         ->required()
@@ -65,7 +81,7 @@ class ProcessRepayment extends Page
                             if (! $id) {
                                 return '—';
                             }
-                            $s = \App\Models\AmortizationSchedule::find($id);
+                            $s = AmortizationSchedule::find($id);
                             if (! $s) {
                                 return '—';
                             }
@@ -81,17 +97,19 @@ class ProcessRepayment extends Page
     {
         $data = $this->form->getState();
 
-        $schedule = \App\Models\AmortizationSchedule::find($data['amortization_schedule_id'] ?? null);
+        $schedule = AmortizationSchedule::find($data['amortization_schedule_id'] ?? null);
         if (! $schedule) {
             Notification::make()->title('Грешка')
                 ->body('Изберете валидна вноска от погасителния план.')
                 ->danger()->send();
+
             return;
         }
         if ($schedule->status === 'paid') {
             Notification::make()->title('Грешка')
                 ->body('Тази вноска вече е платена.')
                 ->danger()->send();
+
             return;
         }
 

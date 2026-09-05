@@ -2,11 +2,13 @@
 
 namespace App\Console\Commands\Ops;
 
+use App\Models\AmortizationSchedule;
 use App\Models\DepositRequest;
 use App\Models\Loan;
 use App\Models\User;
 use App\Models\WithdrawalRequest;
 use App\Notifications\AdminActionItemsNotification;
+use App\Services\Loans\BorrowerPlanService;
 use App\Services\TelegramService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -59,7 +61,26 @@ class TelegramDigest extends Command
             ->whereNull('buyback_dismissed_at')
             ->count();
 
-        $needsAttention = $kycPending > 0 || $depositsPending > 0 || $withdrawalsPending > 0 || $buybackQueue > 0;
+        // PAY-13: the new admin duty — record the borrower's installments. An
+        // overdue tracker row nobody recorded makes the loan late at 03:30, so it
+        // is an ACTION item (drives the e-mail); the other two are context.
+        $payoutsPaused = Loan::whereNotNull('payouts_paused_at')
+            ->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES)
+            ->count();
+        // pending OR late — a row the 03:30 run already flipped to `late` is still
+        // past due and unrecorded; the reminder must not fall silent exactly then.
+        $trackerOverdueUnrecorded = AmortizationSchedule::borrowerTracker()
+            ->whereIn('status', ['pending', 'late'])
+            ->whereDate('due_date', '<', $runAt->toDateString())
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', [Loan::STATUS_ACTIVE, Loan::STATUS_LATE]))
+            ->count();
+        $offerLoansWithoutTracker = Loan::whereIn('status', [Loan::STATUS_ACTIVE, Loan::STATUS_LATE])
+            ->whereHas('investments', fn ($i) => $i->whereNotNull('loan_offer_id'))
+            ->whereDoesntHave('amortizationSchedules', fn ($s) => $s->borrowerTracker())
+            ->count();
+
+        $needsAttention = $kycPending > 0 || $depositsPending > 0 || $withdrawalsPending > 0 || $buybackQueue > 0
+            || $trackerOverdueUnrecorded > 0;
 
         if ($telegram->isConfigured()) {
             $lastLateCheck = DB::table('platform_metrics')
@@ -91,7 +112,11 @@ class TelegramDigest extends Command
                 ."• Депозити чакащи потвърждение: $depositsPending\n"
                 ."• Тегления чакащи обработка: $withdrawalsPending\n"
                 ."• Late / default кредити: $loansLate\n"
-                ."• Buyback queue: $buybackQueue\n\n"
+                ."• Buyback queue: $buybackQueue\n"
+                ."• Кредити със спряно авансиране: $payoutsPaused\n"
+                ."• Вноски на кредитополучатели с изтекъл падеж, неотбелязани: $trackerOverdueUnrecorded\n"
+                .(BorrowerPlanService::autoGenerateEnabled() ? "• Активни офертни кредити без план на кредитополучателя: $offerLoansWithoutTracker\n" : '')
+                ."\n"
                 ."🤖 Нощни cron-и:\n"
                 .'• F1 (last run): '.($lastLateCheck ?? 'не е работил').' — '.$lastLateMarked." вноски маркирани late\n"
                 .'• F2 (last run): '.($lastBuybackCheck ?? 'не е работил').' — '.$lastBuybackEligible.' нови buyback';

@@ -3,12 +3,17 @@
 namespace Tests\Feature;
 
 use App\Models\ConsentRecord;
+use App\Models\KycRetention;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Notifications\AccountDeletionRequestedNotification;
+use App\Services\AccountDeletionService;
 use App\Services\KycImageNormalizer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -695,8 +700,11 @@ class ProfileTest extends TestCase
 
     // ── Account deletion (GDPR) ──
 
-    public function test_delete_account_anonymizes_user(): void
+    public function test_delete_request_sends_confirmation_mail_and_does_not_anonymize(): void
     {
+        // SEC-22 (owner 2026-09-03): the request only records itself and mails a
+        // confirmation link; anonymisation happens after the waiting period.
+        Notification::fake();
         $user = User::factory()->create([
             'email_verified_at' => now(),
             'password' => bcrypt('Password123!'),
@@ -708,17 +716,20 @@ class ProfileTest extends TestCase
             'password' => 'Password123!',
         ]);
 
-        $response->assertOk();
-
+        $response->assertStatus(202)->assertJsonPath('user.deletion.state', 'awaiting_confirmation');
         $user->refresh();
-        $this->assertStringStartsWith('Изтрит потребител', $user->name);
-        $this->assertStringContainsString('deleted_', $user->email);
-        $this->assertNull($user->phone);
-        $this->assertNull($user->wallet);
-        $this->assertEquals(0, $user->savedIbans()->count());
+        $this->assertNotNull($user->deletion_requested_at);
+        $this->assertNull($user->deletion_confirmed_at);
+        $this->assertStringStartsNotWith('Изтрит потребител', $user->name);
+        $this->assertNotNull($user->wallet);
+        $this->assertEquals(1, $user->savedIbans()->count());
+        Notification::assertSentTo($user, AccountDeletionRequestedNotification::class);
+
+        // The session stays valid — the owner may still look around and cancel.
+        $this->actingAs($user)->getJson('/api/user')->assertOk();
     }
 
-    public function test_delete_account_erases_kyc_files_from_disk(): void
+    public function test_finalised_deletion_moves_kyc_files_to_the_retained_container(): void
     {
         Storage::fake('local');
         $user = User::factory()->create([
@@ -726,7 +737,6 @@ class ProfileTest extends TestCase
             'password' => bcrypt('Password123!'),
         ]);
         $user->wallet()->create();
-
         $files = [
             UploadedFile::fake()->image('front.jpg')->store('kyc-documents', 'local'),
             UploadedFile::fake()->image('back.jpg')->store('kyc-documents', 'local'),
@@ -740,17 +750,19 @@ class ProfileTest extends TestCase
         ])->save();
         Storage::disk('local')->assertExists($files);
 
-        $this->actingAs($user)->postJson('/api/profile/delete', [
-            'password' => 'Password123!',
-        ])->assertOk();
+        $this->assertSame('finalized', $this->closeAccountFully($user, 'Password123!'));
 
-        // Files erased (GDPR Art. 17 / biometric selfie under Art. 9) and the
-        // DB references cleared.
+        // The originals leave kyc-documents/ after the commit (GDPR Art. 17) …
         Storage::disk('local')->assertMissing($files);
         $fresh = $user->fresh();
         $this->assertNull($fresh->kyc_document_front_path);
         $this->assertNull($fresh->kyc_document_back_path);
         $this->assertNull($fresh->kyc_selfie_path);
+
+        // … and live on in the SEC-16 archive with the ЗМИП clock.
+        $row = KycRetention::where('user_id', $user->id)->firstOrFail();
+        $this->assertStringStartsWith('kyc-retained/'.$user->id.'/', $row->kyc_document_front_path);
+        Storage::disk('local')->assertExists([$row->kyc_document_front_path, $row->kyc_document_back_path, $row->kyc_selfie_path]);
     }
 
     public function test_failed_deletion_keeps_kyc_files_on_disk(): void
@@ -774,6 +786,7 @@ class ProfileTest extends TestCase
         // only delete after the anonymization transaction commits.
         Storage::disk('local')->assertExists($selfie);
         $this->assertNotNull($user->fresh()->kyc_selfie_path);
+        $this->assertDatabaseMissing('kyc_retentions', ['user_id' => $user->id]);
     }
 
     public function test_delete_account_fails_with_wrong_password(): void
@@ -835,11 +848,25 @@ class ProfileTest extends TestCase
         $user->wallet()->create();
         Transaction::factory()->create(['user_id' => $user->id]);
 
-        $this->actingAs($user)->postJson('/api/profile/delete', [
-            'password' => 'Password123!',
-        ]);
+        $this->assertSame('finalized', $this->closeAccountFully($user, 'Password123!'));
 
         // Transaction record preserved even after account deletion
         $this->assertDatabaseHas('transactions', ['user_id' => $user->id]);
+        $this->assertStringStartsWith('Изтрит потребител', $user->fresh()->name);
+    }
+
+    /** SEC-22 flow in one call: request → e-mail confirmation → waiting period → finalisation. */
+    private function closeAccountFully(User $user, string $password): string
+    {
+        $service = app(AccountDeletionService::class);
+        $service->requestDeletion($user, $password);
+        $service->confirm($user->fresh());
+        Carbon::setTestNow(now()->addDays(8));
+
+        try {
+            return $service->finalize($user->fresh());
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 }

@@ -72,7 +72,13 @@ class LoanResource extends JsonResource
             // Snapshot from withMax() in PortfolioController. May be null if
             // the loan was loaded without that withMax (e.g. loan detail
             // endpoint) — frontend should treat null as "unknown".
+            // For OFFER loans this is the BORROWER's tracker delay (PAY-13) — the
+            // investor's own rows may be fully paid.
             'days_overdue_max' => $this->max_days_late_late_only ?? null,
+
+            // PAY-13 — investor-facing pause flag (stamp AND setting). No threshold exposed.
+            'payouts_paused' => $this->isPayoutPaused(),
+            'payouts_paused_at' => $this->when($this->isPayoutPaused(), $this->payouts_paused_at),
 
             // F2 — buyback context for the investor UI:
             //   is_eligible_for_buyback : whether the loan's originator has
@@ -103,6 +109,10 @@ class LoanResource extends JsonResource
                 $this->status === 'bought_back',
                 $this->bought_back_at,
             ),
+
+            // PAY-30: «приключен без пълно финансиране» is visible to holders.
+            'closed_from_status' => $this->when($this->status === 'repaid', $this->closed_from_status),
+            'closed_at' => $this->when($this->status === 'repaid', $this->closed_at),
         ];
     }
 }

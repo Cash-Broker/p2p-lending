@@ -19,6 +19,14 @@ const auth = useAuthStore()
 // the impression the app broke (PWA fix, Reni 2026-08-16).
 const sessionExpired = ref(route.query.expired === '1')
 
+// SEC-22: landing from the account-deletion e-mail links.
+const deletionNotice = ref(route.query.deletion ?? null)
+const deletionNotices = {
+  cancelled: 'Заявката за закриване е отменена и всички сесии бяха прекратени. Ако не сте я подавали вие, сменете паролата си.',
+  confirmed: 'Закриването е потвърдено. Влезте, за да видите датата или да го отмените.',
+  invalid: 'Линкът вече не е валиден.',
+}
+
 const form = ref({
   email: '',
   password: '',
@@ -71,6 +79,15 @@ async function submit() {
           role="status"
         >
           Сесията ви изтече след период на неактивност. Влезте отново — ще ви върнем там, откъдето спряхте.
+        </div>
+
+        <div
+          v-if="deletionNotice && deletionNotices[deletionNotice]"
+          class="mb-4 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800"
+          role="status"
+        >
+          {{ deletionNotices[deletionNotice] }}
+          <RouterLink v-if="deletionNotice === 'cancelled'" to="/forgot-password" class="ml-1 underline">Смяна на паролата</RouterLink>
         </div>
 
         <form @submit.prevent="submit" class="space-y-4">

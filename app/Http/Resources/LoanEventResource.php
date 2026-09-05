@@ -64,6 +64,15 @@ class LoanEventResource extends JsonResource
         // or `default` at the moment of early close (investor timeline
         // display). `executed_by_admin_id` stays admin-only (F2 policy).
         'from_status',
+
+        // PAY-13 — payouts_paused / payouts_resumed (status_changed with NULL
+        // statuses, written by PayoutPauseService). All non-PII, no admin ids.
+        'kind',
+        'threshold_days',
+        'days_late',
+        'oldest_late_since',
+        'resume_reason',
+        'paused_since',
     ];
 
     public function toArray(Request $request): array

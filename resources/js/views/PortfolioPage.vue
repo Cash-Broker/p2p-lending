@@ -295,9 +295,17 @@ onMounted(() => load())
                   <span
                     v-if="inv.loan?.status === 'late' && inv.loan?.days_overdue_max != null"
                     class="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700"
-                    :title="`Най-старата непогасена вноска е забавена с ${inv.loan.days_overdue_max} дни`"
+                    :title="`Кредитополучателят е забавил вноска с ${inv.loan.days_overdue_max} дни (${inv.loan.payouts_paused ? 'плащанията по кредита са временно спрени' : 'вашите плащания се извършват по вашия план'})`"
                   >
                     {{ inv.loan.days_overdue_max }}д закъснение
+                  </span>
+                  <!-- PAY-13: the platform stopped fronting this loan's payouts -->
+                  <span
+                    v-if="inv.loan?.payouts_paused"
+                    class="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600"
+                    title="Плащанията по този кредит са временно спрени, докато кредитополучателят не изплати дължимите вноски"
+                  >
+                    плащанията са спрени
                   </span>
                 </td>
                 <td class="px-2 sm:px-6 py-3">

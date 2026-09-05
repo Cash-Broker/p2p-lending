@@ -163,11 +163,14 @@ class BonusService
      */
     public function qualifiedInvestedAmount(int $userId, CarbonInterface $since, int $requiredInstallments): string
     {
+        // Only installments that actually carried money count as RECEIVED —
+        // a row settled at 0.00 (a position closed early down to nothing) is
+        // not a payout the investor received (audit 2026-09-01, PAY-46).
         $investments = Investment::where('user_id', $userId)
             ->where('invested_at', '>=', $since)
             ->withCount([
                 'schedules as installments_total',
-                'schedules as installments_paid' => fn ($query) => $query->where('status', 'paid'),
+                'schedules as installments_paid' => fn ($query) => $query->where('status', 'paid')->where('total', '>', 0),
             ])
             ->get();
 
@@ -196,9 +199,12 @@ class BonusService
         $paid = (int) ($investment->installments_paid ?? 0);
 
         if ($total === 0) {
-            $total = AmortizationSchedule::where('loan_id', $investment->loan_id)->count();
-            $paid = AmortizationSchedule::where('loan_id', $investment->loan_id)
+            // PAY-13: borrower tracker rows recorded `paid` by the admin are NOT
+            // received payouts — they must never unlock a conditional bonus.
+            $total = AmortizationSchedule::legacyPlan()->where('loan_id', $investment->loan_id)->count();
+            $paid = AmortizationSchedule::legacyPlan()->where('loan_id', $investment->loan_id)
                 ->where('status', 'paid')
+                ->where('total', '>', 0)
                 ->count();
         }
 

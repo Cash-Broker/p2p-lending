@@ -66,8 +66,11 @@ class LoanOverhaulUiAndFeesTest extends TestCase
 
         $draftLoan = Loan::factory()->create(['status' => 'draft']);
         $draftRow = $draftLoan->amortizationSchedules()->create(['due_date' => now(), 'principal' => '100.00', 'interest' => '10.00', 'total' => '110.00', 'status' => 'pending']);
+        // PAY-13: a borrower tracker row is never paid by the admin — not a «падеж за разплащане».
+        $trackerRow = $activeLoan->amortizationSchedules()->create(['plan_kind' => 'borrower_tracker', 'due_date' => now(), 'principal' => '100.00', 'interest' => '10.00', 'total' => '110.00', 'status' => 'pending']);
 
         $ids = UpcomingDueDatesWidget::dueInstallmentsQuery()->pluck('id')->all();
+        $this->assertNotContains($trackerRow->id, $ids);  // borrower tracker → excluded (PAY-13)
 
         $this->assertContains($today->id, $ids);        // today, active, pending → shown
         $this->assertNotContains($far->id, $ids);       // 60 days out → excluded

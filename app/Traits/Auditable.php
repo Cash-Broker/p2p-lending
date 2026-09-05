@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Models\AuditLog;
+use App\Models\User;
 
 /**
  * Automatically logs create/update/delete events on a model.
@@ -41,10 +42,18 @@ trait Auditable
         // Strip sensitive fields from audit log — we log THAT it changed, not the value.
         // Borrower PII (full_name, address, phone) is encrypted at rest; redacting
         // it from audit logs avoids re-exposure when auditors / support read logs.
+        // Audit 2026-09-01: extended with the legal-entity identifiers, KYC file
+        // paths and bank references — audit_logs is the one table an auditor
+        // reads in bulk, so it must not become a second copy of the PII.
         $sensitiveFields = [
             'password', 'remember_token',
             'personal_id', 'iban',
             'full_name', 'address', 'phone',
+            'eik', 'vat_number', 'legal_name', 'representative_egn', 'national_id',
+            'kyc_document_front_path', 'kyc_document_back_path', 'kyc_selfie_path',
+            'bank_reference',
+            'confirmation_token_hash',
+            'consent_snapshot', 'subject_snapshot',
         ];
         foreach ($sensitiveFields as $field) {
             if (isset($oldValues[$field])) {
@@ -52,6 +61,28 @@ trait Auditable
             }
             if (isset($newValues[$field])) {
                 $newValues[$field] = '[REDACTED]';
+            }
+        }
+
+        // E-mail changes are exactly what an account-takeover investigation needs
+        // to see, so keep the shape (first character + domain) and mask the rest.
+        if (isset($oldValues['email']) && is_string($oldValues['email'])) {
+            $oldValues['email'] = self::maskEmailForAudit($oldValues['email']);
+        }
+        if (isset($newValues['email']) && is_string($newValues['email'])) {
+            $newValues['email'] = self::maskEmailForAudit($newValues['email']);
+        }
+
+        // The investor's own name (review 2026-09-05): an anonymised account must
+        // not stay reconstructible from this immutable table — initials keep the
+        // account-takeover value («И*** П***»). Company/borrower names have their
+        // own redacted columns above.
+        if ($this instanceof User) {
+            if (isset($oldValues['name']) && is_string($oldValues['name'])) {
+                $oldValues['name'] = self::maskNameForAudit($oldValues['name']);
+            }
+            if (isset($newValues['name']) && is_string($newValues['name'])) {
+                $newValues['name'] = self::maskNameForAudit($newValues['name']);
             }
         }
 
@@ -65,5 +96,22 @@ trait Auditable
             'ip_address' => request()?->ip(),
             'user_agent' => request()?->userAgent(),
         ]);
+    }
+
+    protected static function maskEmailForAudit(string $email): string
+    {
+        $at = strrpos($email, '@');
+        if ($at === false || $at === 0) {
+            return '[REDACTED]';
+        }
+
+        return mb_substr($email, 0, 1).'***'.substr($email, $at);
+    }
+
+    protected static function maskNameForAudit(string $name): string
+    {
+        $words = preg_split('/\s+/u', trim($name)) ?: [];
+
+        return implode(' ', array_map(fn (string $word) => $word === '' ? '' : mb_substr($word, 0, 1).'***', $words));
     }
 }

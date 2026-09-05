@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Borrower;
 use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\Originator;
@@ -9,13 +10,16 @@ use App\Models\SavedIban;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Services\InvestmentService;
+use Database\Factories\BorrowerAnonymizedProfileFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\URL;
+use Tests\Support\CreatesSavedIbans;
 use Tests\TestCase;
 
 class PreLaunchFixesTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesSavedIbans, RefreshDatabase;
 
     private function createVerifiedInvestor(array $walletBalances = []): User
     {
@@ -24,6 +28,7 @@ class PreLaunchFixesTest extends TestCase
         if ($walletBalances) {
             $wallet->forceFill($walletBalances)->save();
         }
+
         return $user;
     }
 
@@ -91,7 +96,7 @@ class PreLaunchFixesTest extends TestCase
 
         $response = $this->actingAs($admin)->postJson('/api/withdrawal', [
             'amount' => 100,
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($admin)->id,
         ]);
 
         // Admin should be blocked by 'investor' middleware before reaching policy
@@ -104,8 +109,8 @@ class PreLaunchFixesTest extends TestCase
     {
         $investor = $this->createVerifiedInvestor(['available' => '5000.00']);
         $originator = Originator::factory()->create();
-        $borrower = \App\Models\Borrower::factory()->create();
-        $borrower->anonymizedProfile()->create(\Database\Factories\BorrowerAnonymizedProfileFactory::new()->definition());
+        $borrower = Borrower::factory()->create();
+        $borrower->anonymizedProfile()->create(BorrowerAnonymizedProfileFactory::new()->definition());
 
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
@@ -116,7 +121,7 @@ class PreLaunchFixesTest extends TestCase
         ]);
 
         $service = app(InvestmentService::class);
-        $key = 'race-test-' . uniqid();
+        $key = 'race-test-'.uniqid();
 
         // First investment succeeds
         $investment1 = $service->invest($investor, $loan, '500.00', $key);
@@ -137,8 +142,8 @@ class PreLaunchFixesTest extends TestCase
     {
         $investor = $this->createVerifiedInvestor(['available' => '99999.00']);
         $originator = Originator::factory()->create();
-        $borrower = \App\Models\Borrower::factory()->create();
-        $borrower->anonymizedProfile()->create(\Database\Factories\BorrowerAnonymizedProfileFactory::new()->definition());
+        $borrower = Borrower::factory()->create();
+        $borrower->anonymizedProfile()->create(BorrowerAnonymizedProfileFactory::new()->definition());
 
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
@@ -153,7 +158,7 @@ class PreLaunchFixesTest extends TestCase
         for ($i = 0; $i < 11; $i++) {
             $lastResponse = $this->actingAs($investor)->postJson("/api/loans/{$loan->id}/invest", [
                 'amount' => 50,
-            ], ['X-Idempotency-Key' => 'rate-limit-' . $i]);
+            ], ['X-Idempotency-Key' => 'rate-limit-'.$i]);
         }
 
         // The 11th request should be rate limited
@@ -168,7 +173,7 @@ class PreLaunchFixesTest extends TestCase
         for ($i = 0; $i < 6; $i++) {
             $lastResponse = $this->actingAs($investor)->postJson('/api/withdrawal', [
                 'amount' => 10,
-                'iban' => 'BG80BNBG96611020345678',
+                'saved_iban_id' => $this->confirmedIban($investor)->id,
             ]);
         }
 
@@ -205,7 +210,7 @@ class PreLaunchFixesTest extends TestCase
 
         $sha1Hash = sha1($user->getEmailForVerification());
 
-        $url = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+        $url = URL::temporarySignedRoute(
             'verification.verify',
             now()->addMinutes(60),
             ['id' => $user->id, 'hash' => $sha1Hash]
@@ -224,7 +229,7 @@ class PreLaunchFixesTest extends TestCase
         // Generate new HMAC hash
         $hmacHash = hash_hmac('sha256', $user->getEmailForVerification(), config('app.key'));
 
-        $url = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+        $url = URL::temporarySignedRoute(
             'verification.verify',
             now()->addMinutes(60),
             ['id' => $user->id, 'hash' => $hmacHash]
@@ -240,7 +245,7 @@ class PreLaunchFixesTest extends TestCase
     {
         $user = User::factory()->create(['email_verified_at' => null]);
 
-        $url = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+        $url = URL::temporarySignedRoute(
             'verification.verify',
             now()->addMinutes(60),
             ['id' => $user->id, 'hash' => 'completely-wrong-hash']

@@ -137,6 +137,18 @@ class DepositService
                 throw new \DomainException("Cannot approve deposit #{$deposit->id}: the account has been closed (no wallet).");
             }
 
+            // Owner decision 2026-09-03 (audit PAY-31): «без одобрен KYC няма
+            // депозит». The code is issued before verification so the investor
+            // can see the bank details; the wire is credited only once the
+            // identity is approved. Until then it stays unallocated at the bank.
+            $investor = User::find($deposit->user_id);
+            if ($investor === null || $investor->kyc_status !== 'approved') {
+                $kycStatus = $investor?->kyc_status ?? 'unknown';
+                throw new \DomainException(
+                    "Депозит #{$deposit->id} не може да бъде кредитиран: KYC на инвеститора не е одобрен (статус: {$kycStatus}). Преводът остава неразпределен до одобрение на верификацията."
+                );
+            }
+
             // Bank-reference uniqueness — closes audit H5. The DB UNIQUE
             // constraint already prevents duplicate inserts, but we check
             // here too so the error is a clean DomainException instead of
@@ -169,6 +181,7 @@ class DepositService
             $deposit->update([
                 'status' => 'approved',
                 'confirmed_at' => now(),
+                'approved_by' => $adminId,
                 'admin_note' => "Approved by admin #{$adminId}",
             ]);
 

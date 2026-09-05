@@ -2,13 +2,14 @@
 
 namespace App\Services\Loans;
 
+use App\Models\Investment;
 use App\Models\InvestmentSchedule;
 use App\Models\Loan;
 use App\Models\LoanEvent;
-use App\Models\Transaction;
 use App\Models\User;
 use App\Services\TelegramService;
 use App\Services\WalletService;
+use App\Support\Loans\AccruedInterestLedger;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -332,7 +333,7 @@ class BuybackExecutionService
      * not fund it, so paying it out would hand the investor un-backed money.
      *
      * @return array{0: array<int, array{user_id:int, user:User, principal:string, interest:string, total:string}>, 1: string}
-     *         [distributions, total accrued interest reversed]
+     *                                                                                                                         [distributions, total accrued interest reversed]
      */
     private function creditOfferBuyback(Loan $loan, string $coverage): array
     {
@@ -344,6 +345,23 @@ class BuybackExecutionService
 
         $result = [];
         $totalAccruedReversed = '0.00';
+
+        // Coverage guard (audit 2026-09-01, PAY-27): an investment with NO
+        // schedule rows at all is not "fully paid out" — it was never given a
+        // plan (pre-2026-08-13 data that was not backfilled). Skipping it and
+        // then moving the loan to the terminal `bought_back` would strand that
+        // investor's principal in `invested` forever. Same rule the auto-close
+        // path already applies (LoanStatusUpdaterService::autoRepayOfferLoan).
+        $uncovered = $investments->filter(
+            fn (Investment $investment) => ! InvestmentSchedule::where('investment_id', $investment->id)->exists()
+        );
+        if ($uncovered->isNotEmpty()) {
+            throw new InvalidArgumentException(
+                "Cannot execute buyback on loan #{$loan->id}: investment(s) #"
+                .$uncovered->pluck('id')->implode(', #')
+                .' have no payout schedule rows. Run loans:backfill-investment-schedules first.'
+            );
+        }
 
         foreach ($investments as $investment) {
             $unpaid = InvestmentSchedule::where('investment_id', $investment->id)
@@ -427,25 +445,9 @@ class BuybackExecutionService
         return [$result, $totalAccruedReversed];
     }
 
-    /** Net interest accrued for one investment (Σ accrued − Σ released − Σ reversed), from the immutable ledger. */
+    /** Net interest accrued for one investment, from the immutable ledger — shared definition. */
     private function accruedToDate(int $loanId, int $investmentId): string
     {
-        $rows = Transaction::query()
-            ->where('reference', 'like', "loan:{$loanId}:investment:{$investmentId}:%")
-            ->whereIn('type', [
-                Transaction::TYPE_INTEREST_ACCRUED,
-                Transaction::TYPE_INTEREST_RELEASED,
-                Transaction::TYPE_INTEREST_ACCRUAL_REVERSED,
-            ])
-            ->get(['type', 'amount']);
-
-        $net = '0.00';
-        foreach ($rows as $row) {
-            $net = $row->type === Transaction::TYPE_INTEREST_ACCRUED
-                ? bcadd($net, (string) $row->amount, 2)
-                : bcsub($net, (string) $row->amount, 2);
-        }
-
-        return $net;
+        return AccruedInterestLedger::netFor($loanId, $investmentId);
     }
 }

@@ -6,11 +6,13 @@ use App\Listeners\SendAdminLoginAlert;
 use App\Listeners\SendInvestorRegisteredAlert;
 use App\Listeners\TelegramAdminLoginAlert;
 use App\Listeners\TelegramFailedLoginAlert;
+use App\Listeners\TelegramQueueBusyAlert;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Mail\Markdown;
+use Illuminate\Queue\Events\QueueBusy;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
@@ -73,6 +75,10 @@ class AppServiceProvider extends ServiceProvider
         // Threshold: 5+ failures in 10 min from same IP. Distinguishes admin
         // vs investor vs scanner-bot patterns.
         Event::listen(Failed::class, TelegramFailedLoginAlert::class);
+
+        // Audit 2026-09-01 (A3): queue backlog (raised by the scheduled
+        // queue:monitor) → 🟠 Telegram + health metric.
+        Event::listen(QueueBusy::class, TelegramQueueBusyAlert::class);
 
         // Build password reset email URL directly, bypassing Laravel's default
         // route('password.reset', [...]) lookup. This decouples the password

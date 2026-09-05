@@ -9,6 +9,7 @@ use App\Http\Resources\UserResource;
 use App\Jobs\SendPasswordResetEmail;
 use App\Models\ConsentRecord;
 use App\Models\User;
+use App\Services\AccountDeletionService;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\JsonResponse;
@@ -19,6 +20,7 @@ use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password as PasswordRule;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthController extends Controller
 {
@@ -33,10 +35,10 @@ class AuthController extends Controller
     {
         $user = DB::transaction(function () use ($request) {
             $user = User::create([
-                'name'         => $request->name,
-                'email'        => $request->email,
-                'password'     => $request->password,
-                'phone'        => $request->input('phone'),
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => $request->password,
+                'phone' => $request->input('phone'),
                 'account_type' => $request->input('account_type', User::TYPE_INDIVIDUAL),
             ]);
 
@@ -50,7 +52,7 @@ class AuthController extends Controller
             if ($user->isLegalEntity()) {
                 $user->legalEntityProfile()->create([
                     'legal_name' => $request->input('legal_name'),
-                    'eik'        => $request->input('eik'),
+                    'eik' => $request->input('eik'),
                 ]);
             }
 
@@ -106,7 +108,7 @@ class AuthController extends Controller
         // so it cannot be reused. SPA cookie auth returns a TransientToken
         // here which has no delete(), so we type-check first.
         $token = $request->user()?->currentAccessToken();
-        if ($token instanceof \Laravel\Sanctum\PersonalAccessToken) {
+        if ($token instanceof PersonalAccessToken) {
             $token->delete();
         }
 
@@ -175,6 +177,12 @@ class AuthController extends Controller
             'password' => ['required', 'confirmed', PasswordRule::defaults()],
         ]);
 
+        // SEC-22: a closed account cannot be reclaimed through a reset — same
+        // message as an unknown address.
+        if (User::where('email', $request->string('email')->toString())->first()?->isClosed()) {
+            throw ValidationException::withMessages(['email' => [__('passwords.user')]]);
+        }
+
         $status = Password::reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),
             function (User $user, string $password) {
@@ -183,6 +191,10 @@ class AuthController extends Controller
                 ])->setRememberToken(Str::random(60));
 
                 $user->save();
+
+                // SEC-22: a reset is the e-mail-proven «I am reclaiming this account»
+                // act — it cancels a pending deletion request (no-op otherwise).
+                app(AccountDeletionService::class)->cancel($user, 'password_reset');
 
                 event(new PasswordReset($user));
             }

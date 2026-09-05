@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\InsufficientBalanceException;
 use App\Models\BonusGrant;
 use App\Models\Transaction;
 use App\Models\Wallet;
@@ -31,6 +32,8 @@ class WalletService
      */
     public function credit(int $userId, string $amount, string $type, string $description, ?string $reference = null): Transaction
     {
+        $this->assertKnownType($type);
+
         if (bccomp($amount, '0', 2) <= 0) {
             throw new InvalidArgumentException('Credit amount must be positive.');
         }
@@ -60,6 +63,8 @@ class WalletService
      */
     public function debit(int $userId, string $amount, string $type, string $description, ?string $reference = null): Transaction
     {
+        $this->assertKnownType($type);
+
         if (bccomp($amount, '0', 2) <= 0) {
             throw new InvalidArgumentException('Debit amount must be positive.');
         }
@@ -68,7 +73,7 @@ class WalletService
             $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
 
             if (bccomp($wallet->available, $amount, 2) < 0) {
-                throw new InvalidArgumentException('Insufficient available balance.');
+                throw new InsufficientBalanceException('Insufficient available balance.');
             }
 
             $wallet->forceFill([
@@ -161,12 +166,12 @@ class WalletService
 
             if (bccomp($withdrawable, $amount, 2) < 0) {
                 if (bccomp($lockedBonus, '0', 2) > 0 && bccomp($wallet->available, $amount, 2) >= 0) {
-                    throw new InvalidArgumentException(
+                    throw new InsufficientBalanceException(
                         "Insufficient withdrawable balance: {$lockedBonus} € are a bonus awaiting its condition."
                     );
                 }
 
-                throw new InvalidArgumentException('Insufficient available balance.');
+                throw new InsufficientBalanceException('Insufficient available balance.');
             }
 
             $wallet->forceFill([
@@ -229,6 +234,8 @@ class WalletService
      */
     public function debitReserved(int $userId, string $amount, string $type, string $description, ?string $reference = null): Transaction
     {
+        $this->assertKnownType($type);
+
         if (bccomp($amount, '0', 2) <= 0) {
             throw new InvalidArgumentException('Debit amount must be positive.');
         }
@@ -270,7 +277,7 @@ class WalletService
             $wallet = Wallet::where('user_id', $userId)->lockForUpdate()->firstOrFail();
 
             if (bccomp($wallet->available, $amount, 2) < 0) {
-                throw new InvalidArgumentException('Insufficient available balance.');
+                throw new InsufficientBalanceException('Insufficient available balance.');
             }
 
             $wallet->forceFill([
@@ -579,6 +586,19 @@ class WalletService
                 'user_agent' => request()?->userAgent(),
             ]);
         });
+    }
+
+    /**
+     * The ledger has no DB CHECK on `type` (adding one needs sign-off), so the
+     * gateway is where an unknown or misspelled type is refused. A row with a
+     * type outside Transaction::TYPES would be live, spendable balance until
+     * the nightly ReconcileLedger hard-fails on it (audit 2026-09-01, PAY-32).
+     */
+    private function assertKnownType(string $type): void
+    {
+        if (! in_array($type, Transaction::TYPES, true)) {
+            throw new InvalidArgumentException("Unknown ledger transaction type '{$type}'.");
+        }
     }
 
     /**

@@ -33,6 +33,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Operations alert recipient
+    |--------------------------------------------------------------------------
+    | Ledger mismatches, failed scheduled commands, failed payout runs and the
+    | queue-backlog alarm go here (audit 2026-09-01, A3). Set ADMIN_ALERT_EMAIL
+    | in .env; the default is the platform owner's address (Yordan, 2026-09-03).
+    */
+    // `?:` on purpose: a present-but-empty ADMIN_ALERT_EMAIL= would otherwise
+    // override the default with '' and mute every ops alert (review 2026-09-05).
+    'admin_email' => env('ADMIN_ALERT_EMAIL') ?: 'yordanyordanov0104@gmail.com',
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------
     |

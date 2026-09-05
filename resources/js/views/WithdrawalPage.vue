@@ -1,16 +1,21 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '../api/axios'
+import { ibanOptionState } from '../utils/ibanEligibility'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
+const ibanCooldownHours = ref(24) // live admin setting from /profile/ibans
 const loading = ref(true)
 const withdrawals = ref([])
 const meta = ref({ current_page: 1, last_page: 1, total: 0 })
 
 const savedIbans = ref([])
-const selectedIbanId = ref('') // '' = manual input, number = saved iban id
-const form = ref({ amount: '', iban: '' })
+const selectedIbanId = ref('')
+const form = ref({ amount: '' })
+// SEC-01: only saved, e-mail-confirmed IBANs past the cooling-off are selectable.
+const ibanOptions = computed(() => savedIbans.value.map(i => ({ ...i, ...ibanOptionState(i) })))
+const hasEligibleIban = computed(() => ibanOptions.value.some(i => i.selectable))
 const errors = ref({})
 const submitLoading = ref(false)
 const showConfirm = ref(false)
@@ -68,6 +73,7 @@ async function loadHistory(page = 1) {
 async function loadIbans() {
   try {
     const { data } = await api.get('/profile/ibans')
+    ibanCooldownHours.value = data.cooldown_hours ?? 24
     savedIbans.value = data.data
   } catch {
     // Intentional: 403 expected for pre-KYC users.
@@ -80,14 +86,6 @@ async function loadFeeConfig() {
     const { data } = await api.get('/fees/config')
     feeConfig.value = data
   } catch { /* Endpoint unreachable — fall back to disabled-fee defaults. */ }
-}
-
-function onIbanSelect() {
-  if (selectedIbanId.value === '') {
-    form.value.iban = ''
-  }
-  // When a saved IBAN is selected, we don't set form.iban here —
-  // we send the full IBAN from savedIbans in submitWithdrawal
 }
 
 async function load() {
@@ -110,8 +108,8 @@ function openConfirm() {
     errors.value = { amount: [`Сумата трябва да надвишава таксата (${feeAmount.value} €).`] }
     return
   }
-  if (!selectedIbanId.value && (!form.value.iban || form.value.iban.replace(/\s/g, '').length < 15)) {
-    errors.value = { iban: ['Изберете запазен IBAN или въведете нов.'] }
+  if (!selectedIbanId.value) {
+    errors.value = { saved_iban_id: ['Изберете потвърден IBAN от профила си.'] }
     return
   }
   showConfirm.value = true
@@ -121,15 +119,10 @@ async function submitWithdrawal() {
   submitLoading.value = true
   errors.value = {}
   try {
-    const payload = { amount: form.value.amount }
-    if (selectedIbanId.value) {
-      payload.saved_iban_id = selectedIbanId.value
-    } else {
-      payload.iban = form.value.iban.replace(/\s/g, '').toUpperCase()
-    }
+    const payload = { amount: form.value.amount, saved_iban_id: selectedIbanId.value }
     await api.post('/withdrawal', payload)
     success.value = true
-    form.value = { amount: '', iban: '' }
+    form.value = { amount: '' }
     selectedIbanId.value = ''
     showConfirm.value = false
     await auth.fetchUser()
@@ -253,35 +246,30 @@ onMounted(() => load())
 
               <div>
                 <label class="block text-sm font-medium text-navy-700 mb-1">IBAN</label>
-                <!-- Saved IBANs dropdown -->
+                <!-- SEC-01: only saved, e-mail-confirmed IBANs past the 24 h cooling-off -->
                 <select
                   v-if="savedIbans.length"
                   v-model="selectedIbanId"
-                  @change="onIbanSelect"
                   class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400 mb-2"
-                  :class="errors.iban || errors.saved_iban_id ? 'border-red-400' : ''"
+                  :class="errors.saved_iban_id ? 'border-red-400' : ''"
                 >
-                  <option value="">Въведи нов IBAN</option>
-                  <option v-for="iban in savedIbans" :key="iban.id" :value="iban.id">
-                    {{ iban.iban }}{{ iban.label ? ` — ${iban.label}` : '' }}
+                  <option value="">Изберете IBAN</option>
+                  <option v-for="iban in ibanOptions" :key="iban.id" :value="iban.id" :disabled="!iban.selectable">
+                    {{ iban.iban }}{{ iban.label ? ` — ${iban.label}` : '' }}{{ iban.suffix }}
                   </option>
                 </select>
-                <!-- Manual IBAN input (shown when no saved IBAN selected) -->
-                <input
-                  v-if="!selectedIbanId"
-                  v-model="form.iban"
-                  type="text"
-                  class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-accent-400/50 focus:border-accent-400"
-                  :class="errors.iban ? 'border-red-400' : ''"
-                  placeholder="BG80BNBG96611020345678"
-                />
-                <p v-if="errors.iban" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.iban[0] }}</p>
+                <p v-if="!hasEligibleIban" class="mt-1 text-xs text-gray-500">
+                  Нямате потвърден IBAN, готов за теглене. Добавете IBAN от
+                  <RouterLink to="/profile" class="text-accent-600 underline">профила си</RouterLink>
+                  и го потвърдете през имейла; тегления към нов IBAN са възможни {{ ibanCooldownHours }} ч. след потвърждаването.
+                </p>
                 <p v-if="errors.saved_iban_id" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.saved_iban_id[0] }}</p>
+                <p v-if="errors.iban" role="alert" aria-live="polite" class="mt-1 text-xs text-red-500">{{ errors.iban[0] }}</p>
               </div>
 
               <button
                 type="submit"
-                :disabled="submitLoading || !isKycApproved"
+                :disabled="submitLoading || !isKycApproved || !hasEligibleIban"
                 class="w-full py-2.5 bg-navy-700 hover:bg-navy-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
               >
                 {{ !isKycApproved ? 'KYC верификация необходима' : submitLoading ? 'Обработка...' : 'Заяви теглене' }}
@@ -339,7 +327,7 @@ onMounted(() => load())
           <p class="text-sm text-gray-500 mb-4">
             Сигурни ли сте, че искате да изтеглите
             <strong class="text-navy-700">{{ formatAmount(form.amount) }} €</strong>
-            към <strong class="text-navy-700 font-mono text-xs">{{ selectedIbanId ? savedIbans.find(i => i.id === selectedIbanId)?.iban : form.iban }}</strong>?
+            към <strong class="text-navy-700 font-mono text-xs">{{ savedIbans.find(i => i.id === selectedIbanId)?.iban }}</strong>?
           </p>
 
           <div

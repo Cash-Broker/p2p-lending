@@ -29,16 +29,25 @@ class InvestmentResource extends JsonResource
             // Per-installment breakdown the investor must always be able to see:
             // each row's principal / interest / total per their plan (boss req).
             // Offer-based investments only; empty for legacy (pro-rata) positions.
-            'schedule' => $this->whenLoaded('schedules', fn () => $this->schedules
-                ->sortBy('due_date')
-                ->values()
-                ->map(fn ($row) => [
-                    'due_date' => $row->due_date?->toDateString(),
-                    'principal' => $row->principal,
-                    'interest' => $row->interest,
-                    'total' => $row->total,
-                    'status' => $row->status,
-                ])),
+            'schedule' => $this->whenLoaded('schedules', function () {
+                // PAY-13: while the loan's payouts are paused, due rows stay `pending`
+                // in the DB — «задържана» is derived here so rows falling due DURING
+                // the pause render correctly too.
+                $paused = $this->relationLoaded('loan') && $this->loan !== null && $this->loan->isPayoutPaused();
+                $today = now()->toDateString();
+
+                return $this->schedules
+                    ->sortBy('due_date')
+                    ->values()
+                    ->map(fn ($row) => [
+                        'due_date' => $row->due_date?->toDateString(),
+                        'principal' => $row->principal,
+                        'interest' => $row->interest,
+                        'total' => $row->total,
+                        'status' => $row->status,
+                        'withheld' => $paused && $row->status === 'pending' && $row->due_date !== null && $row->due_date->toDateString() <= $today,
+                    ]);
+            }),
         ];
     }
 }

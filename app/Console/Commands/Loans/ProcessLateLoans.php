@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Loans;
 
+use App\Models\InvestmentSchedule;
 use App\Models\Loan;
 use App\Models\LoanEvent;
 use App\Models\PlatformMetric;
@@ -10,6 +11,7 @@ use App\Models\User;
 use App\Notifications\LoanWentLateNotification;
 use App\Services\Loans\LateDetectionService;
 use App\Services\Loans\LoanStatusUpdaterService;
+use App\Services\TelegramService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
@@ -66,6 +68,7 @@ class ProcessLateLoans extends Command
     protected $description = 'Detect newly-late schedule items, transition loan statuses, dispatch notifications';
 
     private const LOCK_KEY = 'loans:process-late';
+
     private const LOCK_TTL_SECONDS = 600;
 
     public function handle(LateDetectionService $detection, LoanStatusUpdaterService $updater): int
@@ -88,6 +91,7 @@ class ProcessLateLoans extends Command
             if (! $dryRun) {
                 $this->writeMetrics(['last_late_check_status' => 'disabled']);
             }
+
             return self::SUCCESS;
         }
 
@@ -95,6 +99,7 @@ class ProcessLateLoans extends Command
         $lock = Cache::lock(self::LOCK_KEY, self::LOCK_TTL_SECONDS);
         if (! $lock->get()) {
             $this->error('Another loans:process-late instance is already running. Exit.');
+
             return self::FAILURE;
         }
 
@@ -108,10 +113,11 @@ class ProcessLateLoans extends Command
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            $this->error('Failed: ' . $e->getMessage());
+            $this->error('Failed: '.$e->getMessage());
             if (! $dryRun) {
                 $this->writeMetrics(['last_late_check_status' => 'failure']);
             }
+
             return self::FAILURE;
         } finally {
             $lock->release();
@@ -133,6 +139,7 @@ class ProcessLateLoans extends Command
         DB::beginTransaction();
         try {
             $exitCode = $work();
+
             return $exitCode;
         } finally {
             DB::rollBack();
@@ -183,20 +190,29 @@ class ProcessLateLoans extends Command
                 }
             }
         }
+        if (! $dryRun && $transitions['newly_late'] !== []) {
+            $this->announceNewlyLate($transitions['newly_late']);
+        }
 
         // 3b. Phase 3 P3-F5 — auto-close cleanly-completing active loans
         // (never went late). Iterates status=active loans and transitions
         // any with all-paid schedules to `repaid`. Mirrors the late-recovery
         // rule R1 tiebreaker pattern. See DECISIONS.md P3-02.
         $autoRepay = $updater->autoRepayCompletedLoans($loanIdsFilter);
+        $fundingClosed = $autoRepay['auto_repaid_funding'] ?? [];
         $this->line(sprintf(
-            '  auto-repaid: %d completed active loan(s)',
+            '  auto-repaid: %d completed loan(s), of which %d partially funded (PAY-30)',
             count($autoRepay['auto_repaid']),
+            count($fundingClosed),
         ));
         if ($verbose) {
             foreach ($autoRepay['auto_repaid'] as $loanId) {
-                $this->line("    loan #{$loanId} → repaid (all schedules paid)");
+                $why = in_array($loanId, $fundingClosed, true) ? 'partially funded — every investor plan ran' : 'all schedules paid';
+                $this->line("    loan #{$loanId} → repaid ({$why})");
             }
+        }
+        if (! $dryRun && $fundingClosed !== []) {
+            $this->announcePartiallyFundedClosures($fundingClosed);
         }
 
         // 4. Notifications — dispatch LoanWentLateNotification to every
@@ -262,7 +278,17 @@ class ProcessLateLoans extends Command
                 // Investor's pro-rata share of the outstanding principal —
                 // their slice of what the borrower still owes the loan as
                 // a whole. bcdiv at scale 10 then rounded to 2 for display.
-                if (bccomp($loanFundedAmount, '0', 2) > 0) {
+                if ($loan->usesOffers()) {
+                    // PAY-13: on an offer loan the borrower tracker's amounts are
+                    // NOT the investor's money — their outstanding is the unpaid
+                    // principal of their OWN plan rows.
+                    $investorOutstandingPrincipal = InvestmentSchedule::query()
+                        ->where('loan_id', $loanId)
+                        ->whereIn('status', ['pending', 'late'])
+                        ->whereIn('investment_id', $loan->investments()->where('user_id', $user->id)->select('id'))
+                        ->get(['principal'])
+                        ->reduce(fn (string $carry, $row) => bcadd($carry, (string) $row->principal, 2), '0.00');
+                } elseif (bccomp($loanFundedAmount, '0', 2) > 0) {
                     $share = bcdiv($investorAmount, $loanFundedAmount, 10);
                     $investorOutstandingPrincipal = bcmul($loanOutstandingPrincipal, $share, 2);
                 } else {
@@ -311,6 +337,7 @@ class ProcessLateLoans extends Command
             // without going late). Ops can watch this over time to estimate
             // loan completion rate.
             'last_late_check_auto_repaid' => (string) count($autoRepay['auto_repaid']),
+            'last_late_check_auto_repaid_funding' => (string) count($autoRepay['auto_repaid_funding'] ?? []),
             // Surfaces the safeguard hit count so support sees it in the
             // dashboard without grepping logs (see LoanStatusUpdaterService).
             'last_late_check_recovery_skipped_default' => (string) count($transitions['recovery_skipped_default']),
@@ -319,11 +346,12 @@ class ProcessLateLoans extends Command
         if (! $dryRun) {
             $this->writeMetrics($stats);
         } else {
-            $this->info('[DRY-RUN] Skipping metric writes. Would record: ' . json_encode($stats));
+            $this->info('[DRY-RUN] Skipping metric writes. Would record: '.json_encode($stats));
         }
 
         Log::info('loans:process-late completed', $stats);
         $this->info('Done.');
+
         return self::SUCCESS;
     }
 
@@ -331,6 +359,68 @@ class ProcessLateLoans extends Command
      * Upsert a batch of metrics. last_late_check_run_at is set with the
      * current `measured_at` automatically by PlatformMetric::record.
      */
+    /**
+     * PAY-30: one silent 🟡 line per partially funded loan the sweep closed —
+     * best-effort, after the transaction, never affects the run.
+     *
+     * @param  array<int, int>  $loanIds
+     */
+    private function announcePartiallyFundedClosures(array $loanIds): void
+    {
+        foreach ($loanIds as $loanId) {
+            try {
+                $loan = Loan::find($loanId);
+                if ($loan === null) {
+                    continue;
+                }
+                app(TelegramService::class)->info(
+                    'Приключен частично финансиран кредит',
+                    sprintf(
+                        'Кредит #%d: всички инвеститори са изплатени (%s от %s €); не приема нови инвестиции.',
+                        $loan->id,
+                        (string) $loan->funded_amount,
+                        (string) $loan->investableAmount(),
+                    ),
+                    ['loan_id' => $loan->id],
+                );
+            } catch (Throwable $e) {
+                Log::warning('PAY-30 Telegram announce failed', ['loan_id' => $loanId, 'error' => $e->getMessage()]);
+            }
+        }
+    }
+
+    /**
+     * PAY-13: one 🟠 Telegram line per loan that went late tonight (the audit
+     * found no ops signal at all — only the investors were told). Best-effort.
+     *
+     * @param  array<int, int>  $loanIds
+     */
+    private function announceNewlyLate(array $loanIds): void
+    {
+        foreach ($loanIds as $loanId) {
+            try {
+                $loan = Loan::find($loanId);
+                if ($loan === null) {
+                    continue;
+                }
+                $daysLate = (int) ($loan->amortizationSchedules()->where('status', 'late')->max('days_late') ?? 0);
+                $buybackDays = (int) ($loan->originator?->buyback_trigger_days ?? PlatformSetting::get('buyback_default_trigger_days', 60));
+                app(TelegramService::class)->high(
+                    'Кредит стана закъснял',
+                    sprintf(
+                        'Кредит #%d — %d дни закъснение по плана на кредитополучателя. Инвеститорите са уведомени; buyback след %d дни.',
+                        $loan->id,
+                        $daysLate,
+                        $buybackDays,
+                    ),
+                    ['loan_id' => $loan->id, 'days_late' => $daysLate],
+                );
+            } catch (Throwable $e) {
+                Log::warning('Newly-late Telegram announce failed', ['loan_id' => $loanId, 'error' => $e->getMessage()]);
+            }
+        }
+    }
+
     private function writeMetrics(array $stats): void
     {
         foreach ($stats as $key => $value) {

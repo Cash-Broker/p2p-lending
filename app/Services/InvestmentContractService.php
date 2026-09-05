@@ -61,6 +61,7 @@ class InvestmentContractService
             'party_snapshot' => $this->buildPartySnapshot($user),
             'terms_snapshot' => $this->buildTermsSnapshot($loan, $offer, (string) $investment->amount, $acceptedAt),
             'template_version' => InvestmentContract::TEMPLATE_VERSION_V1,
+            'template_hash' => self::templateHash(InvestmentContract::TEMPLATE_VERSION_V1),
             'accepted_at' => $acceptedAt,
             'ip_address' => request()?->ip(),
             'user_agent' => request()?->userAgent(),
@@ -72,6 +73,8 @@ class InvestmentContractService
      */
     public function renderPdf(InvestmentContract $contract): string
     {
+        $this->assertTemplateUnchanged($contract);
+
         return $this->pdf($contract->template_version, [
             'party' => $contract->party_snapshot,
             'terms' => $contract->terms_snapshot,
@@ -209,6 +212,48 @@ class InvestmentContractService
         ]);
 
         return $parts === [] ? null : implode(', ', $parts);
+    }
+
+    /**
+     * sha256 of the Blade template file a contract was concluded under.
+     *
+     * The snapshot freezes the DATA of the agreement; the wording lives in the
+     * template file, pinned by `template_version` only by convention («wording
+     * changes ⇒ new v2 file, never edit v1»). Storing the hash makes a silent
+     * edit of v1 detectable — {@see assertTemplateUnchanged()}.
+     */
+    public static function templateHash(string $templateVersion): string
+    {
+        return hash_file('sha256', self::templatePath($templateVersion));
+    }
+
+    /**
+     * Refuse to render a concluded contract with wording that differs from the
+     * wording the investor accepted. Contracts concluded before the hash was
+     * recorded (null) render unchecked — there is nothing to compare against
+     * and evidence is never fabricated retroactively.
+     */
+    private function assertTemplateUnchanged(InvestmentContract $contract): void
+    {
+        if ($contract->template_hash === null) {
+            return;
+        }
+
+        if (! hash_equals($contract->template_hash, self::templateHash($contract->template_version))) {
+            throw new LogicException(sprintf(
+                'Contract template %s was modified after contract #%d was concluded. Wording changes require a new template version; restore the original file.',
+                $contract->template_version,
+                $contract->id,
+            ));
+        }
+    }
+
+    private static function templatePath(string $templateVersion): string
+    {
+        return match ($templateVersion) {
+            InvestmentContract::TEMPLATE_VERSION_V1 => resource_path('views/contracts/investment-v1.blade.php'),
+            default => throw new LogicException("Unknown contract template version: {$templateVersion}"),
+        };
     }
 
     private function pdf(string $templateVersion, array $data): string

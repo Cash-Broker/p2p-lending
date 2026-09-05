@@ -2,13 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\EnsureKycApproved;
 use App\Models\AuditLog;
 use App\Models\Borrower;
 use App\Models\ConsentRecord;
-use App\Models\Transaction;
 use App\Models\User;
+use App\Models\Wallet;
 use App\Models\WithdrawalRequest;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Tests\TestCase;
 
 class ComplianceTest extends TestCase
@@ -102,7 +104,11 @@ class ComplianceTest extends TestCase
             ->first();
 
         $this->assertNotNull($log);
-        $this->assertEquals('audit@test.com', $log->new_values['email']);
+        // Audit 2026-09-01 (A4): the trail records THAT an e-mail was set and its
+        // shape, never the address itself — audit_logs must not be a second
+        // copy of the PII it exists to protect.
+        $this->assertSame('a***@test.com', $log->new_values['email']);
+        $this->assertStringNotContainsString('audit@test.com', json_encode($log->new_values));
     }
 
     public function test_audit_log_redacts_password(): void
@@ -130,7 +136,7 @@ class ComplianceTest extends TestCase
 
         $wallet->forceFill(['available' => 100.00])->save();
 
-        $log = AuditLog::where('model_type', \App\Models\Wallet::class)
+        $log = AuditLog::where('model_type', Wallet::class)
             ->where('action', 'updated')
             ->first();
 
@@ -183,9 +189,9 @@ class ComplianceTest extends TestCase
 
         // Currently no endpoints behind 'kyc' middleware are active,
         // but we test the middleware directly
-        $middleware = new \App\Http\Middleware\EnsureKycApproved();
+        $middleware = new EnsureKycApproved;
 
-        $request = \Illuminate\Http\Request::create('/test', 'GET');
+        $request = Request::create('/test', 'GET');
         $request->setUserResolver(fn () => $user);
 
         $response = $middleware->handle($request, fn () => response()->json(['ok' => true]));
@@ -198,9 +204,9 @@ class ComplianceTest extends TestCase
     {
         $user = User::factory()->kycApproved()->create();
 
-        $middleware = new \App\Http\Middleware\EnsureKycApproved();
+        $middleware = new EnsureKycApproved;
 
-        $request = \Illuminate\Http\Request::create('/test', 'GET');
+        $request = Request::create('/test', 'GET');
         $request->setUserResolver(fn () => $user);
 
         $response = $middleware->handle($request, fn () => response()->json(['ok' => true]));

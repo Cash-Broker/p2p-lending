@@ -56,8 +56,46 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
         return [
             'email_verified_at' => 'datetime',
             'dashboard_seen_at' => 'datetime',
+            // SEC-22 deletion state machine (written only via forceFill in AccountDeletionService)
+            'deletion_requested_at' => 'datetime',
+            'deletion_confirmed_at' => 'datetime',
+            'deletion_scheduled_for' => 'datetime',
+            'deletion_finalized_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    /** SEC-22: a deletion request that is neither cancelled nor finalised. */
+    public function hasOpenDeletionRequest(): bool
+    {
+        return $this->deletion_requested_at !== null && $this->deletion_finalized_at === null;
+    }
+
+    /**
+     * SEC-22 (review 2026-09-05): an anonymised account — the new placeholder
+     * domain or the pre-2026-09 one — must never authenticate or reset its
+     * password again, whoever controls the placeholder domain's mail.
+     */
+    public function isClosed(): bool
+    {
+        $email = (string) $this->email;
+
+        return $this->deletion_finalized_at !== null
+            || str_ends_with($email, '@deleted.invalid')
+            || str_ends_with($email, '@removed.p2pinvest.bg');
+    }
+
+    /** @return null|'awaiting_confirmation'|'scheduled'|'finalized' */
+    public function deletionState(): ?string
+    {
+        if ($this->deletion_finalized_at !== null) {
+            return 'finalized';
+        }
+        if ($this->deletion_requested_at === null) {
+            return null;
+        }
+
+        return $this->deletion_confirmed_at === null ? 'awaiting_confirmation' : 'scheduled';
     }
 
     public function canAccessPanel(Panel $panel): bool

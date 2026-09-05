@@ -78,6 +78,7 @@ class LateDetectionService
                     ])->save();
                     $marked->push($schedule);
                 }
+
                 return $marked;
             });
 
@@ -100,7 +101,12 @@ class LateDetectionService
         $today = $today ? $today->copy()->startOfDay() : Carbon::now(config('app.timezone'))->startOfDay();
         $updated = 0;
 
+        // PAY-13: only rows of LIVE loans tick — a borrower tracker left `late`
+        // on a loan that ended (auto-repay, full early closure, buyback) would
+        // otherwise count forever (zombie counters). `default` stays live: the
+        // admin still watches those rows.
         AmortizationSchedule::where('status', 'late')
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', [Loan::STATUS_ACTIVE, Loan::STATUS_LATE, Loan::STATUS_DEFAULT]))
             ->chunkById(200, function ($schedules) use ($today, &$updated) {
                 foreach ($schedules as $schedule) {
                     $daysLate = $this->daysBetween($schedule->due_date, $today);
@@ -125,6 +131,7 @@ class LateDetectionService
         if ($due->greaterThanOrEqualTo($now)) {
             return 0;
         }
+
         return (int) abs($due->diffInDays($now));
     }
 }

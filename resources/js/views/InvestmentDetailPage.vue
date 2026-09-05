@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/auth'
 import api from '../api/axios'
 import FreeCapacityBadge from '../components/FreeCapacityBadge.vue'
 import { formatRelativeBg } from '../utils/relativeTime'
+import { canInvest } from '../utils/investGate'
 
 const route = useRoute()
 const router = useRouter()
@@ -99,7 +100,20 @@ const headerRateDisplay = computed(() => {
 })
 
 const typeLabels = { consumer: 'Потребителски', business: 'Бизнес', mortgage: 'Ипотечен', bridge: 'Мостов' }
-const scheduleStatusLabels = { pending: 'Предстои', paid: 'Платено', late: 'Закъснение', default: 'Просрочено' }
+// «Задържана» (PAY-13) = due row while the loan's payouts are paused — derived
+// server-side (`withheld`); the DB status stays `pending`. Same maps as the portfolio modal.
+const scheduleStatusLabels = { pending: 'Предстои', paid: 'Платено', late: 'Закъснение', default: 'Просрочено', closed: 'Закрита предсрочно', withheld: 'Задържана' }
+const scheduleStatusClasses = {
+  pending: 'bg-gray-100 text-gray-500',
+  paid: 'bg-green-50 text-green-600',
+  late: 'bg-amber-50 text-amber-600',
+  default: 'bg-red-50 text-red-600',
+  closed: 'bg-blue-50 text-blue-600',
+  withheld: 'bg-red-50 text-red-600',
+}
+const scheduleKey = (row) => (row.withheld ? 'withheld' : row.status)
+const scheduleLabel = (row) => scheduleStatusLabels[scheduleKey(row)] || row.status
+const scheduleClass = (row) => scheduleStatusClasses[scheduleKey(row)] || 'bg-gray-100 text-gray-500'
 
 const riskBadgeClass = {
   A: 'bg-green-100 text-green-700 border-green-200',
@@ -130,6 +144,13 @@ const eventTypeLabels = {
   fee_applied: 'Приложена такса',
   status_changed: 'Статус променен',
 }
+// PAY-13: pause/resume ride `status_changed` with metadata.kind.
+const statusChangedKinds = {
+  payouts_paused: { label: 'Плащанията са спрени', cls: 'bg-red-50 text-red-700 ring-red-200' },
+  payouts_resumed: { label: 'Плащанията са възобновени', cls: 'bg-green-50 text-green-700 ring-green-200' },
+}
+const eventLabel = (evt) => statusChangedKinds[evt.metadata?.kind]?.label || eventTypeLabels[evt.event_type] || evt.event_type
+const eventClass = (evt) => statusChangedKinds[evt.metadata?.kind]?.cls || eventTypeClass[evt.event_type] || 'bg-gray-50 text-gray-700 ring-gray-200'
 const eventTypeClass = {
   went_late: 'bg-amber-50 text-amber-700 ring-amber-200',
   recovered_from_late: 'bg-green-50 text-green-700 ring-green-200',
@@ -387,6 +408,16 @@ async function confirmInvest() {
               </span>
             </div>
 
+            <!-- PAY-13: the platform stopped fronting this loan's payouts -->
+            <div
+              v-if="loan.payouts_paused"
+              class="mb-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
+            >
+              Плащанията по този кредит са <strong>временно спрени</strong><template v-if="loan.payouts_paused_at"> от {{ new Date(loan.payouts_paused_at).toLocaleDateString('bg-BG') }}</template>:
+              кредитополучателят е в закъснение над допустимия срок. Дължимите Ви вноски остават в плана и ще бъдат изплатени
+              след постъпване на плащане от кредитополучателя или при обратно изкупуване от оригинатора.
+            </div>
+
             <!-- ГПР deliberately NOT shown — it is the borrower's cost of
                  credit, not investor information (Reni 2026-08-10). -->
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 border-y border-gray-100">
@@ -492,14 +523,8 @@ async function confirmInvest() {
                         <td class="px-3 py-2 text-right text-accent-500 whitespace-nowrap">{{ formatAmount(row.interest) }}</td>
                         <td class="px-3 py-2 text-right font-semibold text-navy-700 whitespace-nowrap">{{ formatAmount(row.total) }}</td>
                         <td class="px-3 py-2 text-right">
-                          <span class="px-1.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap"
-                            :class="{
-                              'bg-gray-100 text-gray-500': row.status === 'pending',
-                              'bg-green-50 text-green-600': row.status === 'paid',
-                              'bg-amber-50 text-amber-600': row.status === 'late',
-                              'bg-red-50 text-red-600': row.status === 'default',
-                            }">
-                            {{ scheduleStatusLabels[row.status] || row.status }}
+                          <span class="px-1.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap" :class="scheduleClass(row)">
+                            {{ scheduleLabel(row) }}
                           </span>
                         </td>
                       </tr>
@@ -581,14 +606,8 @@ async function confirmInvest() {
                     <td class="px-5 py-2 text-accent-500">{{ formatAmount(row.interest) }} €</td>
                     <td class="px-5 py-2 font-semibold text-navy-700">{{ formatAmount(row.total) }} €</td>
                     <td class="px-5 py-2">
-                      <span class="px-2 py-0.5 rounded-full text-xs font-medium"
-                        :class="{
-                          'bg-gray-100 text-gray-500': row.status === 'pending',
-                          'bg-green-50 text-green-600': row.status === 'paid',
-                          'bg-amber-50 text-amber-600': row.status === 'late',
-                          'bg-red-50 text-red-600': row.status === 'default',
-                        }">
-                        {{ scheduleStatusLabels[row.status] }}
+                      <span class="px-2 py-0.5 rounded-full text-xs font-medium" :class="scheduleClass(row)">
+                        {{ scheduleLabel(row) }}
                       </span>
                       <!-- days_late visible only for late rows; the field is
                            always present but only meaningful when status='late'. -->
@@ -615,8 +634,8 @@ async function confirmInvest() {
               <li v-for="evt in events" :key="evt.id" class="px-5 py-3 flex items-start gap-3">
                 <span
                   class="px-2 py-0.5 rounded-full text-xs font-semibold ring-1 shrink-0"
-                  :class="eventTypeClass[evt.event_type] || 'bg-gray-50 text-gray-700 ring-gray-200'"
-                >{{ eventTypeLabels[evt.event_type] || evt.event_type }}</span>
+                  :class="eventClass(evt)"
+                >{{ eventLabel(evt) }}</span>
                 <div class="flex-1 min-w-0">
                   <p class="text-sm text-navy-700">
                     <span v-if="evt.from_status && evt.to_status">{{ evt.from_status }} → {{ evt.to_status }}</span>
@@ -698,7 +717,7 @@ async function confirmInvest() {
             </div>
 
             <!-- Invest form -->
-            <template v-else-if="loan.funded_percentage < 100">
+            <template v-else-if="canInvest(loan)">
               <div class="flex items-center justify-between text-sm mb-4 p-3 rounded-xl bg-gray-50">
                 <span class="text-gray-500">Свободен баланс</span>
                 <span class="font-semibold text-navy-700">{{ formatAmount(availableBalance) }} €</span>
@@ -750,7 +769,7 @@ async function confirmInvest() {
               <div class="flex size-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400 mx-auto mb-3">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-7"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
               </div>
-              <p class="text-sm font-semibold text-gray-500">Напълно финансиран</p>
+              <p class="text-sm font-semibold text-gray-500">{{ loan.status === 'repaid' ? 'Кредитът е приключен' : loan.status === 'bought_back' ? 'Изкупен' : 'Напълно финансиран' }}</p>
             </div>
           </div>
         </div>
@@ -759,7 +778,7 @@ async function confirmInvest() {
       <!-- 3-те оферти — на цял ред, една до друга, с погасителния план под
            всяка (Рени 2026-08-10: «по-ясни, отдолу хоризонтално, под всеки
            да се зарежда погасителният план»). -->
-      <div v-if="loan.funded_percentage < 100 && !investSuccess && offerQuotes.length" class="mt-10">
+      <div v-if="canInvest(loan) && !investSuccess && offerQuotes.length" class="mt-10">
         <div class="flex items-baseline justify-between mb-1">
           <h2 class="text-xl font-bold text-navy-700">Изберете оферта</h2>
           <span v-if="quotesLoading" class="text-sm text-gray-400">изчисляване…</span>

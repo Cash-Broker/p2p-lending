@@ -48,6 +48,18 @@ class RepaymentService
                 throw new InvalidArgumentException('Repayment can only be processed for active or late loans.');
             }
 
+            // Offer-based loans pay their investors from per-investment
+            // `investment_schedules` (PayoutAccrualService). Posting a
+            // borrower-side amortization row on top of that would credit the
+            // same investors a SECOND time (audit 2026-09-01, PAY-25). This
+            // engine serves legacy (no-offer) loans only.
+            if ($loan->usesOffers()) {
+                throw new InvalidArgumentException(
+                    "Loan #{$loanId} is offer-based: investors are paid from their own payout schedules. "
+                    .'Use «Пусни плащане сега» instead of posting a legacy installment.'
+                );
+            }
+
             // Required + locked installment. Amounts come from the row, NOT the
             // caller. The 'paid' guard is unconditional now — no call path can
             // double-distribute the same installment.

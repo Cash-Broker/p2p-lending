@@ -6,11 +6,10 @@ use App\Enums\PayoutType;
 use App\Models\Investment;
 use App\Models\InvestmentSchedule;
 use App\Models\Loan;
-use App\Models\Transaction;
 use App\Support\DayCount;
+use App\Support\Loans\AccruedInterestLedger;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 /**
@@ -80,6 +79,18 @@ class EarlyClosureCalculationService
         $outstandingByInvestment = [];
 
         foreach ($investments as $investment) {
+            // Coverage guard (audit 2026-09-01, PAY-27): no rows AT ALL means
+            // the investment never received a plan — closing the loan around
+            // it would strand its principal in `invested` behind a terminal
+            // status. "Nothing pending" (all paid/closed) is the legitimate
+            // skip below.
+            if (! InvestmentSchedule::where('investment_id', $investment->id)->exists()) {
+                throw new InvalidArgumentException(
+                    "Cannot close loan #{$loan->id} early: investment #{$investment->id} has no payout "
+                    .'schedule rows. Run loans:backfill-investment-schedules first.'
+                );
+            }
+
             $rows = InvestmentSchedule::where('investment_id', $investment->id)
                 ->whereIn('status', ['pending', 'late'])
                 ->orderBy('due_date')
@@ -296,24 +307,15 @@ class EarlyClosureCalculationService
         return bcsub(bcmul($principal, $growth, 2), $principal, 2);
     }
 
-    /** Net interest currently accrued for one investment, from the ledger. */
+    /**
+     * Net interest currently accrued for one investment, from the ledger —
+     * the SHARED definition (audit 2026-09-01, PAY-12): the previous local
+     * copy matched only the exact `…:capitalized` reference and never saw the
+     * releases this very service writes under `…:early_closure`, so a second
+     * partial closure of a capitalized position priced against a stale figure.
+     */
     private function accruedToDate(int $loanId, int $investmentId): string
     {
-        $reference = "loan:{$loanId}:investment:{$investmentId}:capitalized";
-
-        $sum = fn (string $type) => (string) (DB::table('transactions')
-            ->where('reference', $reference)
-            ->where('type', $type)
-            ->sum('amount') ?: '0');
-
-        return bcsub(
-            bcadd($sum(Transaction::TYPE_INTEREST_ACCRUED), '0', 2),
-            bcadd(
-                bcadd($sum(Transaction::TYPE_INTEREST_RELEASED), '0', 2),
-                bcadd($sum(Transaction::TYPE_INTEREST_ACCRUAL_REVERSED), '0', 2),
-                2,
-            ),
-            2,
-        );
+        return AccruedInterestLedger::netFor($loanId, $investmentId);
     }
 }

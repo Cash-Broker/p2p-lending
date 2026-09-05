@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -15,14 +16,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class BeneficialOwner extends Model
 {
-    public const CONTROL_DIRECT   = 'direct';
+    use Auditable;
+
+    public const CONTROL_DIRECT = 'direct';
+
     public const CONTROL_INDIRECT = 'indirect';
-    public const CONTROL_OTHER    = 'other';
+
+    public const CONTROL_OTHER = 'other';
 
     public const CONTROL_TYPES = [
-        self::CONTROL_DIRECT   => 'Пряк',
+        self::CONTROL_DIRECT => 'Пряк',
         self::CONTROL_INDIRECT => 'Косвен',
-        self::CONTROL_OTHER    => 'Друг (договор / гласуване)',
+        self::CONTROL_OTHER => 'Друг (договор / гласуване)',
     ];
 
     protected $fillable = [
@@ -40,10 +45,10 @@ class BeneficialOwner extends Model
     protected function casts(): array
     {
         return [
-            'full_name'         => 'encrypted',
-            'national_id'       => 'encrypted',
+            'full_name' => 'encrypted',
+            'national_id' => 'encrypted',
             'ownership_percent' => 'decimal:2',
-            'pep_status'        => 'boolean',
+            'pep_status' => 'boolean',
         ];
     }
 

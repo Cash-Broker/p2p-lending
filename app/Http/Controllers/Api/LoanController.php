@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\InsufficientBalanceException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\InvestRequest;
 use App\Http\Requests\LoanFilterRequest;
@@ -22,6 +23,8 @@ use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class LoanController extends Controller
 {
@@ -105,7 +108,9 @@ class LoanController extends Controller
             'originator',
             'anonymizedProfile',
             'coBorrowerAnonymizedProfile',
-            'amortizationSchedules',
+            // PAY-13: the borrower tracking plan is admin-only — investors see the
+            // legacy per-loan schedule only (empty for offer loans, exactly as before).
+            'amortizationSchedules' => fn ($q) => $q->legacyPlan(),
             'offers' => fn ($q) => $q->where('is_enabled', true)->orderBy('position'),
         ])->loadCount('investments')
             // Social proof for the invest page: «последна инвестиция преди X
@@ -140,8 +145,25 @@ class LoanController extends Controller
             ->orderBy('position')
             ->get()
             ->map(function ($offer) use ($projection, $amount, $term) {
-                $summary = $projection->summary($amount, (string) $offer->interest_rate, $term, $offer->payout_type);
-                $schedule = $projection->schedule($amount, (string) $offer->interest_rate, $term, $offer->payout_type);
+                try {
+                    $summary = $projection->summary($amount, (string) $offer->interest_rate, $term, $offer->payout_type);
+                    $schedule = $projection->schedule($amount, (string) $offer->interest_rate, $term, $offer->payout_type);
+                } catch (\InvalidArgumentException $e) {
+                    // The annuity arithmetic refused this term/rate/amount
+                    // (PAY-40 guard). A misconfigured loan is an admin problem,
+                    // not a server fault: log it for the panel owner and answer
+                    // 422 instead of a 500 + CRITICAL alert (review 2026-09-03).
+                    Log::error('Offer quote refused by the projection guard', [
+                        'loan_id' => $offer->loan_id,
+                        'offer_id' => $offer->id,
+                        'amount' => $amount,
+                        'error' => $e->getMessage(),
+                    ]);
+
+                    throw ValidationException::withMessages([
+                        'amount' => ['This offer cannot be quoted for the given amount and term. Please contact support.'],
+                    ]);
+                }
 
                 return [
                     'loan_offer_id' => $offer->id,
@@ -217,16 +239,31 @@ class LoanController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $investment = $service->invest(
-            $request->user(),
-            $loan,
-            $amount,
-            $idempotencyKey,
-            (int) $request->loan_offer_id,
-            $request->filled('expected_interest_rate')
-                ? (string) $request->input('expected_interest_rate')
-                : null,
-        );
+        try {
+            $investment = $service->invest(
+                $request->user(),
+                $loan,
+                $amount,
+                $idempotencyKey,
+                (int) $request->loan_offer_id,
+                $request->filled('expected_interest_rate')
+                    ? (string) $request->input('expected_interest_rate')
+                    : null,
+            );
+        } catch (InsufficientBalanceException $e) {
+            // The balance is re-checked under the wallet row lock inside
+            // WalletService; the request that loses a two-tab race gets here.
+            // That is a normal user outcome, not a server fault — a 500 would
+            // also fire a CRITICAL Telegram alert (audit 2026-09-01, PAY-41).
+            // ONLY the balance outcome is caught: any other
+            // InvalidArgumentException from inside invest() (state machine,
+            // schedule projection, contract build) is a platform fault and
+            // must keep surfacing as a 500 + CRITICAL alert (review 2026-09-03).
+            return response()->json([
+                'message' => 'Insufficient available balance.',
+                'errors' => ['amount' => [$e->getMessage()]],
+            ], 422);
+        }
 
         // Admin event alerts (boss 2026-08-10) — bell + queued email + a
         // silent Telegram record for every NEW investment. Money first: the
@@ -386,7 +423,8 @@ class LoanController extends Controller
 
         $investments = $loan->investments()
             ->where('user_id', $request->user()->id)
-            ->with(['schedules' => fn ($q) => $q->orderBy('due_date')])
+            // `loan` so InvestmentResource can derive `withheld` (PAY-13) here too.
+            ->with(['loan', 'schedules' => fn ($q) => $q->orderBy('due_date')])
             ->withExists('contract')
             ->latest('invested_at')
             ->get();

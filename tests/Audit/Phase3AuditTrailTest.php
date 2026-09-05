@@ -9,10 +9,10 @@ use App\Models\Loan;
 use App\Models\LoanEvent;
 use App\Models\Originator;
 use App\Models\PlatformSetting;
-use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Services\InvestmentService;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -86,12 +86,12 @@ class Phase3AuditTrailTest extends TestCase
         $admin = User::factory()->create(['role' => 'admin']);
         $this->actingAs($admin);
 
-        $originator = Originator::create(['name' => 'Audit-' . uniqid(), 'description' => 'x', 'buyback' => false]);
+        $originator = Originator::create(['name' => 'Audit-'.uniqid(), 'description' => 'x', 'buyback' => false]);
         $borrower = Borrower::factory()->create();
         $loan = Loan::factory()->create([
             'originator_id' => $originator->id,
-            'borrower_id'   => $borrower->id,
-            'status'        => 'draft',
+            'borrower_id' => $borrower->id,
+            'status' => 'draft',
         ]);
 
         $auditBefore = AuditLog::where('model_type', Loan::class)
@@ -135,7 +135,7 @@ class Phase3AuditTrailTest extends TestCase
     // Negative coverage — documented gaps
     // ──────────────────────────────────────────────────────────────
 
-    public function test_P3_F8_investment_service_transitions_do_NOT_emit_loan_event(): void
+    public function test_p3_f8_investment_service_transitions_do_no_t_emit_loan_event(): void
     {
         // **Documents finding P3-F8 (LOW).**
         //
@@ -200,7 +200,7 @@ class Phase3AuditTrailTest extends TestCase
         $this->assertNull($activation->triggered_by_user_id);
     }
 
-    public function test_P3_F9_filament_admin_transitions_do_NOT_emit_loan_event(): void
+    public function test_p3_f9_filament_admin_transitions_do_no_t_emit_loan_event(): void
     {
         // **Documents finding P3-F9 (LOW).**
         //
@@ -246,19 +246,16 @@ class Phase3AuditTrailTest extends TestCase
         $audit = AuditLog::latest('id')->first();
         $this->assertNotNull($audit);
 
-        // Attempting update should fail — AuditLog should either have
-        // no UPDATE method, throw, or the DB trigger should catch it.
+        // Audit 2026-09-01: the old catch-all accepted ANY exception (a typo in
+        // the test would have passed). AuditLog has no app-level guard, so the
+        // MySQL trigger IS the control — demand it by name, then prove the row.
         try {
             $audit->update(['user_id' => 999]);
-            // If we get here without throwing, the DB-level trigger
-            // MUST have caught it OR the value didn't actually change.
-            $this->assertSame($user->id, $audit->fresh()->user_id,
-                'audit_log user_id must not be modifiable');
-        } catch (\Throwable $e) {
-            // Either LogicException (app layer) or QueryException (DB
-            // trigger) is acceptable.
-            $this->assertTrue(true, 'audit_log mutation rejected: ' . $e::class);
+            $this->fail('audit_logs UPDATE must be rejected by the immutability trigger');
+        } catch (QueryException $e) {
+            $this->assertStringContainsString('45000', $e->getMessage(), 'rejection must come from the SIGNAL trigger, not another SQL error');
         }
+        $this->assertSame($user->id, $audit->fresh()->user_id, 'audit_log user_id must not be modifiable');
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -267,17 +264,18 @@ class Phase3AuditTrailTest extends TestCase
 
     private function makeDraftLoan(): Loan
     {
-        $originator = Originator::create(['name' => 'AT-' . uniqid(), 'description' => 'x', 'buyback' => false]);
+        $originator = Originator::create(['name' => 'AT-'.uniqid(), 'description' => 'x', 'buyback' => false]);
         $borrower = Borrower::factory()->create();
+
         return Loan::factory()->create([
             'originator_id' => $originator->id,
-            'borrower_id'   => $borrower->id,
-            'status'        => 'draft',
-            'amount'        => '1000.00',
+            'borrower_id' => $borrower->id,
+            'status' => 'draft',
+            'amount' => '1000.00',
             'funded_amount' => 0,
             'interest_rate' => '10.00',
             'interest_rate_annual' => '12.00',
-            'term_months'   => 6,
+            'term_months' => 6,
         ]);
     }
 
@@ -286,12 +284,13 @@ class Phase3AuditTrailTest extends TestCase
         static $counter = 0;
         $counter++;
         $u = User::factory()->kycApproved()->create([
-            'email' => "at-{$counter}-" . uniqid() . "@test.local",
+            'email' => "at-{$counter}-".uniqid().'@test.local',
         ]);
         $wallet = Wallet::firstOrCreate(['user_id' => $u->id]);
         $wallet->forceFill([
             'available' => '10000.00', 'invested' => 0, 'earned' => 0, 'reserved' => 0,
         ])->save();
+
         return $u->fresh();
     }
 }

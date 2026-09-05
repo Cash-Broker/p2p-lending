@@ -3,12 +3,14 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\UserResource\Pages;
+use App\Models\KycRetention;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Notifications\BonusCreditedNotification;
 use App\Notifications\BonusGrantedAdminNotification;
 use App\Notifications\KycStatusNotification;
 use App\Rules\ValidPhone;
+use App\Services\AccountDeletionService;
 use App\Services\BonusService;
 use App\Services\TelegramService;
 use App\Support\Money;
@@ -126,6 +128,12 @@ class UserResource extends Resource
                     ->options(['individual' => 'Физическо лице', 'legal_entity' => 'Юридическо лице']),
                 Tables\Filters\SelectFilter::make('role')->options(['investor' => 'Инвеститор', 'admin' => 'Админ']),
                 Tables\Filters\SelectFilter::make('kyc_status')->options(['pending' => 'Очакващ', 'submitted' => 'Изпратен', 'in_review' => 'В преглед', 'approved' => 'Одобрен', 'rejected' => 'Отхвърлен']),
+                // SEC-22: no new column (the list must fit one screen) — a filter instead.
+                Tables\Filters\TernaryFilter::make('deletion_pending')->label('Заявено закриване')
+                    ->queries(
+                        true: fn (Builder $q) => $q->whereNotNull('deletion_requested_at')->whereNull('deletion_finalized_at'),
+                        false: fn (Builder $q) => $q->whereNull('deletion_requested_at'),
+                    ),
             ])
             // The table stays clean: only "Преглед", at the default right end.
             // All KYC status actions live in the ViewUser page header — the
@@ -206,6 +214,50 @@ class UserResource extends Resource
                     Notification::make()->title('Грешка при запис на телефона.')->danger()->send();
                 }
             });
+    }
+
+    /**
+     * SEC-22: an admin may withdraw an investor's pending closure request (with a
+     * reason the investor receives by mail). There is deliberately NO «закрий сега»
+     * — the waiting period is the control.
+     */
+    public static function cancelDeletionAction(): Action
+    {
+        return Action::make('cancel_deletion')
+            ->label('Отмени закриването')
+            ->icon('heroicon-o-arrow-uturn-left')
+            ->color('danger')
+            ->visible(fn (User $record) => $record->hasOpenDeletionRequest())
+            ->requiresConfirmation()
+            ->modalHeading('Отмяна на заявеното закриване')
+            ->form([
+                Textarea::make('reason')->label('Причина')->required()->maxLength(255),
+            ])
+            ->action(function (User $record, array $data): void {
+                try {
+                    $cancelled = app(AccountDeletionService::class)->cancel($record, 'admin', trim((string) $data['reason']));
+                    $record->refresh(); // the service wrote its own locked instance — the page keeps this one
+                    if ($cancelled) {
+                        Notification::make()->title('Закриването е отменено. Инвеститорът получи имейл.')->success()->send();
+                    } else {
+                        Notification::make()->title('Няма отворена заявка за закриване')->body('Инвеститорът (или системата) вече я е отменил — нищо не е променено.')->warning()->send();
+                    }
+                } catch (\Throwable $e) {
+                    report($e);
+                    Notification::make()->title('Грешка при отмяна.')->danger()->send();
+                }
+            });
+    }
+
+    /** SEC-16: the compliance archive of a closed account, when one exists. */
+    public static function kycArchiveAction(): Action
+    {
+        return Action::make('kyc_archive')
+            ->label('KYC архив')
+            ->icon('heroicon-o-archive-box')
+            ->color('gray')
+            ->visible(fn (User $record) => KycRetention::where('user_id', $record->id)->exists())
+            ->url(fn (User $record) => KycRetentionResource::getUrl('view', ['record' => KycRetention::where('user_id', $record->id)->value('id')]));
     }
 
     public static function bonusAction(): Action
@@ -297,7 +349,7 @@ class UserResource extends Resource
             if ($recentDuplicate) {
                 Notification::make()
                     ->title('Идентичен бонус вече е начислен')
-                    ->body("Бонус от {$amount} € за {$record->name} е записан преди по-малко от 2 минути. Ако второто начисляване е нарочно, опитайте отново след 2 минути.")
+                    ->body('Бонус от '.$amount.' € за '.e($record->name).' е записан преди по-малко от 2 минути. Ако второто начисляване е нарочно, опитайте отново след 2 минути.')
                     ->warning()
                     ->send();
 
@@ -384,15 +436,12 @@ class UserResource extends Resource
         string $successTitle,
         string $successColor,
     ): void {
-        $transitioned = DB::transaction(function () use ($record, $from, $to, $notifyUserWith) {
+        $transitioned = DB::transaction(function () use ($record, $from, $to) {
             $user = User::where('id', $record->id)->lockForUpdate()->firstOrFail();
             if (! in_array($user->kyc_status, $from, true)) {
                 return false;
             }
             $user->forceFill(['kyc_status' => $to])->save();
-            if ($notifyUserWith !== null) {
-                $user->notify(new KycStatusNotification($notifyUserWith));
-            }
 
             return true;
         });
@@ -405,6 +454,21 @@ class UserResource extends Resource
             Notification::make()->title('KYC статусът вече е променен')->warning()->send();
 
             return;
+        }
+
+        // Decision first, notification after commit. The mail used to be sent
+        // INSIDE the transaction while holding the users row lock — an SMTP
+        // failure rolled the approval back after the push/bell had already
+        // gone out (the exact pattern CLAUDE.md documents from 2026-08-17),
+        // and every SMTP round-trip held the lock (audit 2026-09-01, PAY-34).
+        if ($notifyUserWith !== null) {
+            try {
+                $record->notify(new KycStatusNotification($notifyUserWith));
+            } catch (\Throwable $e) {
+                Log::warning('Failed to send KYC status notification', [
+                    'user_id' => $record->id, 'status' => $to, 'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         $notification = Notification::make()->title($successTitle);
@@ -423,6 +487,16 @@ class UserResource extends Resource
                 Infolists\Components\TextEntry::make('name')->label('Име'),
                 Infolists\Components\TextEntry::make('email')->label('Имейл'),
                 Infolists\Components\TextEntry::make('phone')->label('Телефон')->default('—'),
+                // SEC-22: the open closure request, if any.
+                Infolists\Components\TextEntry::make('deletion_state')->label('Закриване')->badge()
+                    ->state(fn (User $r) => match ($r->deletionState()) {
+                        'awaiting_confirmation' => 'Чака потвърждение по имейл',
+                        'scheduled' => 'Планирано за '.$r->deletion_scheduled_for->copy()->timezone('Europe/Sofia')->format('d.m.Y'),
+                        'finalized' => 'Закрит на '.$r->deletion_finalized_at->copy()->timezone('Europe/Sofia')->format('d.m.Y'),
+                        default => null,
+                    })
+                    ->color(fn ($state) => str_starts_with((string) $state, 'Планирано') ? 'danger' : 'warning')
+                    ->visible(fn (User $r) => $r->deletionState() !== null),
                 // The list no longer carries this badge (boss 2026-08-11) — the
                 // profile is now the ONLY place it shows, so spell it out in
                 // full instead of the abbreviated table wording.

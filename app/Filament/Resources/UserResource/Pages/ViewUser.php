@@ -20,6 +20,8 @@ class ViewUser extends ViewRecord
             ...UserResource::kycStatusActions(),
             UserResource::bonusAction(),
             UserResource::phoneAction(),
+            UserResource::cancelDeletionAction(),
+            UserResource::kycArchiveAction(),
         ];
     }
 }

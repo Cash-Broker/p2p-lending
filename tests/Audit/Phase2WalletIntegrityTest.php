@@ -4,14 +4,12 @@ namespace Tests\Audit;
 
 use App\Models\AmortizationSchedule;
 use App\Models\Borrower;
-use App\Models\DepositRequest;
-use App\Models\Investment;
 use App\Models\Loan;
 use App\Models\Originator;
+use App\Models\PlatformSetting;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Models\Wallet;
-use App\Services\AmortizationService;
 use App\Services\DepositService;
 use App\Services\InvestmentService;
 use App\Services\Loans\BuybackExecutionService;
@@ -22,6 +20,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
+use Tests\Support\CreatesSavedIbans;
 use Tests\TestCase;
 
 /**
@@ -46,7 +45,7 @@ use Tests\TestCase;
  */
 class Phase2WalletIntegrityTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesSavedIbans, RefreshDatabase;
 
     protected function setUp(): void
     {
@@ -61,7 +60,7 @@ class Phase2WalletIntegrityTest extends TestCase
     // CATEGORY A — Wallet invariant scenarios
     // ══════════════════════════════════════════════════════════════════
 
-    public function test_A1_simple_single_investor_full_repayment_cycle(): void
+    public function test_a1_simple_single_investor_full_repayment_cycle(): void
     {
         $inv = $this->makeInvestorWithDeposit('2000.00');
         $loan = $this->makeActiveLoan(
@@ -78,7 +77,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A2_multi_investor_pro_rata_full_repayment(): void
+    public function test_a2_multi_investor_pro_rata_full_repayment(): void
     {
         $inv1 = $this->makeInvestorWithDeposit('2000.00');
         $inv2 = $this->makeInvestorWithDeposit('2000.00');
@@ -99,7 +98,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A3_invest_partial_repay_then_early_repayment(): void
+    public function test_a3_invest_partial_repay_then_early_repayment(): void
     {
         $inv = $this->makeInvestorWithDeposit('3000.00');
         $loan = $this->makeActiveLoan(
@@ -120,7 +119,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A4_invest_partial_repay_late_then_buyback(): void
+    public function test_a4_invest_partial_repay_late_then_buyback(): void
     {
         $inv = $this->makeInvestorWithDeposit('3000.00');
         $loan = $this->makeActiveLoan(
@@ -142,7 +141,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A5_deposit_invest_repay_withdraw_full_money_trail(): void
+    public function test_a5_deposit_invest_repay_withdraw_full_money_trail(): void
     {
         $inv = $this->makeInvestorWithDeposit('1500.00');
         $loan = $this->makeActiveLoan(
@@ -166,10 +165,10 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A6_withdrawal_fee_on_accounted_correctly(): void
+    public function test_a6_withdrawal_fee_on_accounted_correctly(): void
     {
-        \App\Models\PlatformSetting::set('fees_withdrawal_enabled', true);
-        \App\Models\PlatformSetting::set('fees_withdrawal_amount', '2.50');
+        PlatformSetting::set('fees_withdrawal_enabled', true);
+        PlatformSetting::set('fees_withdrawal_amount', '2.50');
 
         $inv = $this->makeInvestorWithDeposit('1000.00');
         // Withdraw 500 → TYPE_WITHDRAWAL 497.50 + TYPE_FEE 2.50.
@@ -183,7 +182,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A7_multi_investor_buyback_after_partial_payments(): void
+    public function test_a7_multi_investor_buyback_after_partial_payments(): void
     {
         $investors = [
             $this->makeInvestorWithDeposit('5000.00'),
@@ -212,7 +211,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A8_two_loans_same_investor_parallel_lifecycles(): void
+    public function test_a8_two_loans_same_investor_parallel_lifecycles(): void
     {
         $inv = $this->makeInvestorWithDeposit('10000.00');
         $loanA = $this->makeActiveLoan(
@@ -240,7 +239,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A9_multiple_withdrawals_in_sequence(): void
+    public function test_a9_multiple_withdrawals_in_sequence(): void
     {
         $inv = $this->makeInvestorWithDeposit('3000.00');
         $this->requestAndApproveWithdrawal($inv, '500.00');
@@ -255,7 +254,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_A10_mix_early_repayment_buyback_normal_across_three_loans(): void
+    public function test_a10_mix_early_repayment_buyback_normal_across_three_loans(): void
     {
         $inv1 = $this->makeInvestorWithDeposit('6000.00');
         $inv2 = $this->makeInvestorWithDeposit('6000.00');
@@ -298,7 +297,7 @@ class Phase2WalletIntegrityTest extends TestCase
     // CATEGORY B — Cross-feature terminal-state & reconciliation
     // ══════════════════════════════════════════════════════════════════
 
-    public function test_B1_buyback_rejected_on_already_repaid_loan(): void
+    public function test_b1_buyback_rejected_on_already_repaid_loan(): void
     {
         $inv = $this->makeInvestorWithDeposit('2000.00');
         $loan = $this->makeActiveLoan(
@@ -329,7 +328,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_B2_early_repayment_rejected_on_bought_back_loan(): void
+    public function test_b2_early_repayment_rejected_on_bought_back_loan(): void
     {
         $inv = $this->makeInvestorWithDeposit('2000.00');
         $loan = $this->makeActiveLoan(
@@ -355,7 +354,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_B3_double_buyback_rejected(): void
+    public function test_b3_double_buyback_rejected(): void
     {
         $inv = $this->makeInvestorWithDeposit('2000.00');
         $loan = $this->makeActiveLoan(
@@ -379,7 +378,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_B4_shared_investors_across_parallel_loans_consistent_total(): void
+    public function test_b4_shared_investors_across_parallel_loans_consistent_total(): void
     {
         $inv1 = $this->makeInvestorWithDeposit('10000.00');
         $inv2 = $this->makeInvestorWithDeposit('10000.00');
@@ -405,10 +404,10 @@ class Phase2WalletIntegrityTest extends TestCase
         $this->assertGlobalBalanceInvariant();
     }
 
-    public function test_B5_simulated_six_month_accounting_cycle(): void
+    public function test_b5_simulated_six_month_accounting_cycle(): void
     {
-        \App\Models\PlatformSetting::set('fees_withdrawal_enabled', true);
-        \App\Models\PlatformSetting::set('fees_withdrawal_amount', '2.50');
+        PlatformSetting::set('fees_withdrawal_enabled', true);
+        PlatformSetting::set('fees_withdrawal_amount', '2.50');
 
         $investors = array_map(
             fn () => $this->makeInvestorWithDeposit('10000.00'),
@@ -489,6 +488,7 @@ class Phase2WalletIntegrityTest extends TestCase
         if (! $this->adminCache || ! User::find($this->adminCache->id)) {
             $this->adminCache = User::factory()->create(['role' => 'admin']);
         }
+
         return $this->adminCache;
     }
 
@@ -497,11 +497,12 @@ class Phase2WalletIntegrityTest extends TestCase
         static $counter = 0;
         $counter++;
         $user = User::factory()->kycApproved()->create([
-            'email' => "audit-inv-{$counter}-" . uniqid() . "@test.local",
+            'email' => "audit-inv-{$counter}-".uniqid().'@test.local',
         ]);
         if (! $user->wallet) {
             Wallet::create(['user_id' => $user->id, 'available' => 0, 'invested' => 0, 'earned' => 0, 'reserved' => 0]);
         }
+
         return $user;
     }
 
@@ -514,6 +515,7 @@ class Phase2WalletIntegrityTest extends TestCase
         $depositService = app(DepositService::class);
         $request = $depositService->createRequest($inv->id, $amount);
         $depositService->approve($request->id, $admin->id);
+
         return $inv->fresh();
     }
 
@@ -525,7 +527,7 @@ class Phase2WalletIntegrityTest extends TestCase
     private function makeActiveLoan(string $amount, string $rate, int $term, array $fundings, bool $buyback = false): Loan
     {
         $originator = Originator::create([
-            'name' => 'Audit-Orig-' . uniqid(),
+            'name' => 'Audit-Orig-'.uniqid(),
             'description' => 'Audit fixture',
             'buyback' => $buyback,
         ]);
@@ -559,6 +561,7 @@ class Phase2WalletIntegrityTest extends TestCase
         if ($loan->fresh()->status !== Loan::STATUS_ACTIVE) {
             $loan->transitionTo(Loan::STATUS_ACTIVE);
         }
+
         return $loan->fresh();
     }
 
@@ -598,7 +601,7 @@ class Phase2WalletIntegrityTest extends TestCase
     private function requestAndApproveWithdrawal(User $user, string $amount): void
     {
         $service = app(WithdrawalService::class);
-        $req = $service->createRequest($user->id, $amount, 'BG80BNBG96611020345678');
+        $req = $service->createRequest($user->id, $amount, $this->confirmedIban($user));
         $service->approve($req->id, $this->makeAdmin()->id);
     }
 

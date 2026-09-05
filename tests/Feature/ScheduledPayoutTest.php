@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\PayoutType;
 use App\Models\Investment;
+use App\Models\InvestmentSchedule;
 use App\Models\Loan;
 use App\Models\Transaction;
 use App\Models\User;
@@ -12,6 +13,7 @@ use App\Services\InvestmentService;
 use App\Services\ScheduledPayoutService;
 use App\Services\WalletService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
@@ -118,7 +120,24 @@ class ScheduledPayoutTest extends TestCase
     {
         $this->activeOfferLoan(Loan::PAYOUT_MODE_AUTOMATIC);
 
-        $this->assertSame(0, Artisan::call('loans:process-payouts', ['--asof' => now()->addDays(400)->toDateString()]));
-        $this->assertSame(0, Artisan::call('ledger:reconcile'));
+        // The whole term has elapsed. Travel there instead of passing a future
+        // --asof: since the 2026-09-01 audit (PAY-29) the command refuses to
+        // release installments for a date that has not arrived yet.
+        Carbon::setTestNow(now()->addDays(400));
+
+        try {
+            $this->assertSame(0, Artisan::call('loans:process-payouts', ['--asof' => now()->toDateString()]));
+            $this->assertSame(0, Artisan::call('ledger:reconcile'));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_command_refuses_a_future_as_of_date(): void
+    {
+        $this->activeOfferLoan(Loan::PAYOUT_MODE_AUTOMATIC);
+
+        $this->assertSame(1, Artisan::call('loans:process-payouts', ['--asof' => now()->addDays(400)->toDateString()]));
+        $this->assertSame(0, InvestmentSchedule::where('status', 'paid')->count(), 'a future date must release nothing');
     }
 }

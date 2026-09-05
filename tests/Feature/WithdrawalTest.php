@@ -7,11 +7,13 @@ use App\Models\User;
 use App\Models\WithdrawalRequest;
 use App\Services\WithdrawalService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Notification;
+use Tests\Support\CreatesSavedIbans;
 use Tests\TestCase;
 
 class WithdrawalTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesSavedIbans, RefreshDatabase;
 
     private function createVerifiedInvestor(array $walletOverrides = []): User
     {
@@ -20,6 +22,7 @@ class WithdrawalTest extends TestCase
         if ($walletOverrides) {
             $wallet->forceFill($walletOverrides)->save();
         }
+
         return $user;
     }
 
@@ -31,7 +34,7 @@ class WithdrawalTest extends TestCase
 
         $response = $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => 1000,
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($user)->id,
         ]);
 
         $response->assertStatus(201)
@@ -55,24 +58,25 @@ class WithdrawalTest extends TestCase
 
         $response = $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => 500,
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($user)->id,
         ]);
 
         $response->assertStatus(422)
             ->assertJsonValidationErrors('amount');
     }
 
-    public function test_withdrawal_fails_invalid_iban(): void
+    public function test_withdrawal_fails_for_an_unknown_saved_iban(): void
     {
+        // SEC-01: a raw IBAN is prohibited; only a confirmed saved IBAN is accepted.
         $user = $this->createVerifiedInvestor(['available' => 5000]);
 
         $response = $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => 100,
-            'iban' => 'invalid',
+            'saved_iban_id' => 999999,
         ]);
 
         $response->assertStatus(422)
-            ->assertJsonValidationErrors('iban');
+            ->assertJsonValidationErrors('saved_iban_id');
     }
 
     public function test_withdrawal_fails_kyc_not_approved(): void
@@ -82,7 +86,7 @@ class WithdrawalTest extends TestCase
 
         $response = $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => 100,
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($user)->id,
         ]);
 
         $response->assertStatus(403);
@@ -112,12 +116,12 @@ class WithdrawalTest extends TestCase
 
     public function test_approve_withdrawal_debits_wallet(): void
     {
-        \Illuminate\Support\Facades\Notification::fake();
+        Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
         $service = app(WithdrawalService::class);
 
         // Create via service to properly reserve balance
-        $withdrawal = $service->createRequest($user->id, '1000.00', 'BG80BNBG96611020345678');
+        $withdrawal = $service->createRequest($user->id, '1000.00', $this->confirmedIban($user));
 
         $wallet = $user->wallet->fresh();
         $this->assertEquals('4000.00', $wallet->available);
@@ -132,11 +136,11 @@ class WithdrawalTest extends TestCase
 
     public function test_approve_withdrawal_creates_transaction(): void
     {
-        \Illuminate\Support\Facades\Notification::fake();
+        Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
         $service = app(WithdrawalService::class);
 
-        $withdrawal = $service->createRequest($user->id, '500.00', 'BG80BNBG96611020345678');
+        $withdrawal = $service->createRequest($user->id, '500.00', $this->confirmedIban($user));
         $service->approve($withdrawal->id, 1);
 
         $this->assertDatabaseHas('transactions', [
@@ -148,11 +152,11 @@ class WithdrawalTest extends TestCase
 
     public function test_approve_withdrawal_updates_status(): void
     {
-        \Illuminate\Support\Facades\Notification::fake();
+        Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
         $service = app(WithdrawalService::class);
 
-        $withdrawal = $service->createRequest($user->id, '500.00', 'BG80BNBG96611020345678');
+        $withdrawal = $service->createRequest($user->id, '500.00', $this->confirmedIban($user));
         $result = $service->approve($withdrawal->id, 1);
 
         $this->assertEquals('approved', $result->fresh()->status);
@@ -163,11 +167,11 @@ class WithdrawalTest extends TestCase
 
     public function test_reject_withdrawal_restores_reserved_to_available(): void
     {
-        \Illuminate\Support\Facades\Notification::fake();
+        Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
         $service = app(WithdrawalService::class);
 
-        $withdrawal = $service->createRequest($user->id, '500.00', 'BG80BNBG96611020345678');
+        $withdrawal = $service->createRequest($user->id, '500.00', $this->confirmedIban($user));
 
         // After create: available=4500, reserved=500
         $wallet = $user->wallet->fresh();
@@ -184,11 +188,11 @@ class WithdrawalTest extends TestCase
 
     public function test_reject_withdrawal_updates_status(): void
     {
-        \Illuminate\Support\Facades\Notification::fake();
+        Notification::fake();
         $user = $this->createVerifiedInvestor(['available' => 5000]);
         $service = app(WithdrawalService::class);
 
-        $withdrawal = $service->createRequest($user->id, '500.00', 'BG80BNBG96611020345678');
+        $withdrawal = $service->createRequest($user->id, '500.00', $this->confirmedIban($user));
         $result = $service->reject($withdrawal->id, 1, 'Suspicious activity');
 
         $this->assertEquals('rejected', $result->fresh()->status);

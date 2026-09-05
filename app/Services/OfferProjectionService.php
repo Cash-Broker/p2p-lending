@@ -105,6 +105,24 @@ class OfferProjectionService
         for ($i = 1; $i <= $term; $i++) {
             $interest = bcmul($remaining, $monthlyRate, 2);
             $principalPart = $i === $term ? $remaining : bcsub($monthlyPayment, $interest, 2);
+
+            // The last row absorbs the truncation drift of every row before
+            // it. Should that drift ever exceed the remaining balance (long
+            // terms, tiny principals) a negative principal row must never be
+            // produced — it would be skipped by the payout engine while the
+            // earlier rows over-return the investment (audit 2026-09-01,
+            // PAY-40). Reachable: for the 50 € minimum at 12/16/20 % the drift
+            // turns negative from ~100–119 months; terms ≤ 84 are clean for
+            // 50–20 000 € (review 2026-09-03). The loan form refuses such a
+            // term/rate pair up front (LoanResource::assertTermAmortizes);
+            // this guard is the last line, never a silent negative row.
+            if (bccomp($principalPart, '0', 2) < 0) {
+                throw new InvalidArgumentException(
+                    "Amortization drift produced a negative principal in installment {$i} of {$term} — "
+                    .'the term is too long for this principal/rate combination.'
+                );
+            }
+
             $total = bcadd($principalPart, $interest, 2);
 
             $rows[] = [

@@ -21,7 +21,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 // Public auth routes — rate limited to prevent abuse
-Route::middleware('throttle:10,1')->group(function () {
+// Audit 2026-09-01: the third throttle argument is the bucket PREFIX. Without
+// it every throttled route shares ONE counter per user/IP — five contract
+// previews would have blocked the withdrawal endpoint for a minute.
+Route::middleware('throttle:10,1,public-auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
@@ -31,12 +34,12 @@ Route::middleware('throttle:10,1')->group(function () {
 // Public health endpoint for external monitoring of the loans:process-late
 // scheduler. No auth — exposes only operational metrics, never PII or
 // financial data. Rate-limited to deflect abuse.
-Route::middleware('throttle:60,1')->get('/health/scheduler', SchedulerHealthController::class);
+Route::middleware('throttle:60,1,health')->get('/health/scheduler', SchedulerHealthController::class);
 
 // Public fee-config endpoint — SPA reads this to render the withdrawal
 // breakdown (gross / fee / net). Public because the fee schedule is
 // advertised on the landing FAQ / chatbot (public info). Rate-limited.
-Route::middleware('throttle:60,1')->get('/fees/config', FeeController::class);
+Route::middleware('throttle:60,1,fees')->get('/fees/config', FeeController::class);
 
 // Protected routes — authenticated users
 Route::middleware('auth:sanctum')->group(function () {
@@ -44,7 +47,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/logout-all', [AuthController::class, 'logoutAll']);
     Route::post('/email/verification-notification', [AuthController::class, 'verifyEmail'])
-        ->middleware('throttle:6,1');
+        ->middleware('throttle:6,1,email-verification');
 
     // Re-consent flow — must NOT be gated by consent.current (that would deadlock).
     Route::get('/consents/pending', [ConsentController::class, 'pending']);
@@ -55,7 +58,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // session registers its devices through the same endpoints, and the
     // investor middleware would 403 admins. Throttled: every call writes a
     // row, and the admin panel re-asserts on each page load.
-    Route::middleware('throttle:30,1')->group(function () {
+    Route::middleware('throttle:30,1,push')->group(function () {
         Route::post('/push/subscribe', [PushSubscriptionController::class, 'store']);
         Route::delete('/push/subscribe', [PushSubscriptionController::class, 'destroy']);
     });
@@ -80,10 +83,10 @@ Route::middleware('auth:sanctum')->group(function () {
         // the investor must be able to read the document BEFORE the invest
         // click concludes it. Throttled: dompdf rendering is CPU-heavy.
         Route::get('/loans/{loan}/contract-preview', [InvestmentContractController::class, 'preview'])
-            ->middleware('throttle:20,1');
+            ->middleware('throttle:20,1,contract-preview');
         // Concluded contract PDF of an own investment (owner or admin).
         Route::get('/investments/{investment}/contract', [InvestmentContractController::class, 'download'])
-            ->middleware('throttle:30,1');
+            ->middleware('throttle:30,1,contract');
         // Lifecycle event timeline — gated by LoanPolicy::viewEvents
         // (investor must hold a position in the loan).
         Route::get('/loans/{loan}/events', [LoanController::class, 'events']);
@@ -108,16 +111,27 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/profile', [ProfileController::class, 'show']);
         Route::put('/profile', [ProfileController::class, 'update']);
         Route::put('/profile/company', [ProfileController::class, 'updateCompany']);
-        Route::put('/profile/password', [ProfileController::class, 'changePassword']);
+        Route::put('/profile/password', [ProfileController::class, 'changePassword'])
+            ->middleware('throttle:5,1,password-change');
         // 6/min (was 3): failed validation attempts count toward the limit, and
         // a user re-picking rejected files (wrong format, too big) legitimately
         // retries several times inside a minute.
         Route::post('/profile/kyc', [ProfileController::class, 'submitKyc'])
-            ->middleware(['throttle:6,1', 'consent.current']);
+            ->middleware(['throttle:6,1,kyc', 'consent.current']);
         Route::get('/profile/ibans', [ProfileController::class, 'ibans']);
-        Route::post('/profile/ibans', [ProfileController::class, 'storeIban']);
-        Route::delete('/profile/ibans/{iban}', [ProfileController::class, 'destroyIban']);
-        Route::post('/profile/delete', [ProfileController::class, 'deleteAccount']);
+        // SEC-01: every add is a confirmation e-mail — 5 per hour caps the
+        // add→delete→add mail-flood / confirmation-fatigue loop (review 2026-09-05).
+        Route::post('/profile/ibans', [ProfileController::class, 'storeIban'])
+            ->middleware('throttle:5,60,iban-add');
+        // SEC-01: each resend is an e-mail — 3 per 10 minutes, own bucket.
+        Route::post('/profile/ibans/{iban}/resend-confirmation', [ProfileController::class, 'resendIbanConfirmation'])
+            ->middleware('throttle:3,10,iban-resend');
+        Route::delete('/profile/ibans/{iban}', [ProfileController::class, 'destroyIban'])
+            ->middleware('throttle:10,60,iban-delete');
+        Route::post('/profile/delete', [ProfileController::class, 'deleteAccount'])
+            ->middleware('throttle:5,1,account-delete');
+        Route::post('/profile/delete/cancel', [ProfileController::class, 'cancelDeletion'])
+            ->middleware('throttle:10,1,account-delete-cancel');
 
         // Notifications
         Route::get('/notifications', [NotificationController::class, 'index']);
@@ -129,9 +143,9 @@ Route::middleware('auth:sanctum')->group(function () {
         // Financial operations — current consent (checked first) + KYC approval + rate limited
         Route::middleware(['consent.current', 'kyc'])->group(function () {
             Route::post('/loans/{loan}/invest', [LoanController::class, 'invest'])
-                ->middleware('throttle:10,1');
+                ->middleware('throttle:10,1,invest');
             Route::post('/withdrawal', [WithdrawalController::class, 'store'])
-                ->middleware('throttle:5,1');
+                ->middleware('throttle:5,1,withdrawal');
             Route::get('/withdrawal/history', [WithdrawalController::class, 'history']);
         });
     });

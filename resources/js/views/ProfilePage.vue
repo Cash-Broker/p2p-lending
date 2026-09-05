@@ -1,12 +1,15 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api/axios'
+import { formatDateTimeBg, ibanOptionState } from '../utils/ibanEligibility'
+import { deletionLabel } from '../utils/deletionState'
 import { useAuthStore } from '../stores/auth'
 import { validateKycFile } from '../utils/kycFile'
 import { permissionState, isSubscribed, enablePush, disablePush } from '../utils/push'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 const loading = ref(true)
 
@@ -96,15 +99,21 @@ const kycSuccess = ref(false)
 
 // IBANs
 const ibans = ref([])
+// Live values from the API (admin settings) — the copy below never hard-codes them.
+const ibanCooldownHours = ref(24)
+const deletionWaitingDays = computed(() => auth.user?.deletion_waiting_days ?? 7)
 const ibanForm = ref({ iban: '', label: '' })
 const ibanErrors = ref({})
 const ibanLoading = ref(false)
+const ibanNotice = ref('')
+const ibanResending = ref(null)
 
 // Account deletion
 const deletePassword = ref('')
 const deleteErrors = ref({})
 const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
+const deleteNotice = ref('')
 
 const kycStatus = computed(() => auth.user?.kyc_status ?? 'pending')
 const kycStatusLabels = { pending: 'Очаква верификация', submitted: 'Изпратен', in_review: 'В процес на преглед', approved: 'Верифициран', rejected: 'Отхвърлен' }
@@ -125,6 +134,7 @@ async function loadData() {
     ])
     profile.value = { name: profileRes.data.name, phone: profileRes.data.phone || '' }
     ibans.value = ibansRes.data.data
+    ibanCooldownHours.value = ibansRes.data.cooldown_hours ?? 24
 
     const lep = profileRes.data.legal_entity_profile
     if (lep) {
@@ -275,6 +285,7 @@ async function addIban() {
     })
     ibans.value.unshift(data.iban)
     ibanForm.value = { iban: '', label: '' }
+    ibanNotice.value = `Изпратихме линк за потвърждение на ${auth.user?.email || 'вашия имейл'}. Отворете го, за да активирате IBAN-а; тегления към него са възможни ${ibanCooldownHours.value} ч. след потвърждаването.`
   } catch (e) {
     if (e.response?.status === 422) ibanErrors.value = e.response.data.errors || {}
   } finally {
@@ -287,13 +298,38 @@ async function removeIban(id) {
   ibans.value = ibans.value.filter(i => i.id !== id)
 }
 
+// SEC-01: a fresh confirmation link; the previous one stops working.
+async function resendIban(id) {
+  ibanResending.value = id
+  try {
+    const { data } = await api.post(`/profile/ibans/${id}/resend-confirmation`)
+    ibans.value = ibans.value.map(i => (i.id === id ? data.iban : i))
+    ibanNotice.value = 'Изпратихме нов линк за потвърждение.'
+  } catch (e) {
+    ibanNotice.value = e.response?.status === 429 ? 'Опитайте отново след малко.' : 'Линкът не можа да бъде изпратен.'
+  } finally {
+    ibanResending.value = null
+  }
+}
+
+// The server decides «not yet» (withdrawable_now); render ITS date, never the
+// browser-clock-dependent option suffix (an ahead-running laptop showed nothing).
+function ibanOpensAt(iban) {
+  const from = iban?.withdrawable_from ? new Date(iban.withdrawable_from) : null
+  return from && !Number.isNaN(from.getTime()) ? formatDateTimeBg(from) : '—'
+}
+
 async function deleteAccount() {
   deleteErrors.value = {}
   deleteLoading.value = true
   try {
-    await api.post('/profile/delete', { password: deletePassword.value })
-    auth.user = null
-    router.push('/login')
+    // SEC-22: nothing is deleted here — the request is recorded and a confirmation
+    // e-mail goes out; the account stays usable during the waiting period.
+    const { data } = await api.post('/profile/delete', { password: deletePassword.value })
+    auth.user = data.user
+    showDeleteConfirm.value = false
+    deletePassword.value = ''
+    deleteNotice.value = `Изпратихме имейл на ${auth.user?.email}. Потвърдете закриването от линка в него (валиден 24 часа).`
   } catch (e) {
     showDeleteConfirm.value = false
     if (e.response?.status === 422) deleteErrors.value = e.response.data.errors || {}
@@ -303,7 +339,35 @@ async function deleteAccount() {
   }
 }
 
-onMounted(() => loadData())
+async function cancelDeletion() {
+  deleteErrors.value = {}
+  try {
+    const { data } = await api.post('/profile/delete/cancel')
+    auth.user = data.user
+    deleteNotice.value = 'Заявката за закриване е отменена. Акаунтът ви остава активен.'
+  } catch (e) {
+    deleteErrors.value = { account: [e.response?.data?.message || 'Грешка. Опитайте отново.'] }
+  }
+}
+
+onMounted(() => {
+  // Landing from the confirmation e-mail: /profile?iban=confirmed|already|expired|invalid
+  const state = route.query.iban
+  if (state) {
+    ibanNotice.value = {
+      confirmed: `IBAN-ът е потвърден. Тегления към него са възможни ${ibanCooldownHours.value} ч. след потвърждаването.`,
+      already: 'Този IBAN вече беше потвърден.',
+      expired: 'Линкът е изтекъл — поискайте нов от списъка по-долу.',
+      invalid: 'Невалиден линк за потвърждение.',
+    }[state] || ''
+    router.replace({ query: {} })
+  }
+  if (route.query.deletion === 'confirmed') {
+    deleteNotice.value = 'Закриването е потвърдено. Датата и бутонът за отмяна са по-долу.'
+    router.replace({ query: {} })
+  }
+  loadData()
+})
 </script>
 
 <template>
@@ -591,6 +655,7 @@ onMounted(() => loadData())
         <!-- Saved IBANs -->
         <div class="rounded-2xl border border-gray-100 bg-white p-6">
           <h2 class="text-base font-bold text-navy-700 mb-4">Банкови сметки</h2>
+          <p v-if="ibanNotice" class="mb-4 rounded-xl bg-accent-50 px-4 py-3 text-sm text-navy-700">{{ ibanNotice }}</p>
 
           <!-- List -->
           <div v-if="ibans.length" class="space-y-2 mb-4">
@@ -598,6 +663,16 @@ onMounted(() => loadData())
               <div>
                 <p class="font-mono text-sm text-navy-700">{{ iban.iban }}</p>
                 <p v-if="iban.label" class="text-xs text-gray-400 mt-0.5">{{ iban.label }}</p>
+                <!-- SEC-01 status -->
+                <p class="mt-1 text-xs">
+                  <span v-if="iban.confirmed === false && iban.confirmation_expired" class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">Линкът изтече</span>
+                  <span v-else-if="iban.confirmed === false" class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">Изчаква потвърждение по имейл</span>
+                  <span v-else-if="iban.confirmed && iban.withdrawable_now === false" class="text-gray-500">Потвърден · теглене от {{ ibanOpensAt(iban) }}</span>
+                  <span v-else-if="iban.confirmed" class="inline-flex items-center rounded-full bg-accent-50 px-2 py-0.5 text-accent-700">Потвърден</span>
+                  <button v-if="iban.confirmed === false" type="button" @click="resendIban(iban.id)" :disabled="ibanResending === iban.id" class="ml-2 text-accent-600 underline disabled:opacity-50">
+                    {{ ibanResending === iban.id ? 'Изпращане…' : 'Изпрати линка отново' }}
+                  </button>
+                </p>
               </div>
               <button @click="removeIban(iban.id)" class="text-gray-400 hover:text-red-500 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
@@ -624,15 +699,31 @@ onMounted(() => loadData())
       <div class="mt-8 rounded-2xl border border-red-200 bg-red-50/50 p-6">
         <h2 class="text-base font-bold text-red-700 mb-2">Изтриване на акаунт</h2>
         <p class="text-sm text-red-600/80 mb-4">
-          Тази операция е необратима. Личните ви данни ще бъдат анонимизирани. Финансовите записи се запазват за регулаторни цели.
-          За да изтриете акаунта си, трябва да нямате активни инвестиции, наличен баланс или чакащи заявки.
+          Тази операция е необратима. Личните ви данни ще бъдат анонимизирани. Финансовите записи се запазват за регулаторни цели,
+          а документите за самоличност и записите за дадени съгласия се съхраняват в ограничен архив за срока по Закона за мерките
+          срещу изпирането на пари, след което се заличават автоматично.
+          За да закриете акаунта си, трябва да нямате активни инвестиции, наличен баланс или чакащи заявки.
+          След потвърждение по имейл закриването се извършва след {{ deletionWaitingDays }} дни, през които можете да се откажете.
         </p>
 
+        <div v-if="deleteNotice" class="rounded-xl bg-white border border-red-200 p-3 text-sm text-navy-700 mb-4">{{ deleteNotice }}</div>
         <div v-if="deleteErrors.account" class="rounded-xl bg-red-100 border border-red-300 p-3 text-sm text-red-700 mb-4">{{ deleteErrors.account[0] }}</div>
         <div v-if="deleteErrors.password" class="rounded-xl bg-red-100 border border-red-300 p-3 text-sm text-red-700 mb-4">{{ deleteErrors.password[0] }}</div>
 
-        <button @click="showDeleteConfirm = true" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl transition-colors">
-          Изтрий акаунта ми
+        <!-- SEC-22: the three states of a closure request -->
+        <template v-if="auth.user?.deletion?.state === 'awaiting_confirmation'">
+          <p class="text-sm text-amber-700 mb-3">{{ deletionLabel(auth.user.deletion) }}</p>
+          <div class="flex flex-wrap gap-3">
+            <button @click="showDeleteConfirm = true" class="px-5 py-2 border border-red-300 text-red-700 text-sm font-semibold rounded-xl transition-colors">Изпрати имейла отново</button>
+            <button @click="cancelDeletion" class="px-5 py-2 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl transition-colors">Отмени заявката</button>
+          </div>
+        </template>
+        <template v-else-if="auth.user?.deletion?.state === 'scheduled'">
+          <p class="text-sm font-semibold text-red-700 mb-3">{{ deletionLabel(auth.user.deletion) }}</p>
+          <button @click="cancelDeletion" class="px-5 py-2 bg-white border border-red-300 text-red-700 text-sm font-semibold rounded-xl transition-colors">Отмени закриването</button>
+        </template>
+        <button v-else @click="showDeleteConfirm = true" class="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl transition-colors">
+          Закрий акаунта ми
         </button>
       </div>
     </template>
@@ -643,12 +734,12 @@ onMounted(() => loadData())
         <div class="fixed inset-0 bg-black/40" @click="showDeleteConfirm = false"></div>
         <div class="relative bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
           <h3 class="text-lg font-bold text-red-700 mb-2">Изтриване на акаунт</h3>
-          <p class="text-sm text-gray-500 mb-4">Въведете паролата си за потвърждение. Тази операция е необратима.</p>
+          <p class="text-sm text-gray-500 mb-4">Въведете паролата си. Ще получите имейл с линк за потвърждение; акаунтът се закрива {{ deletionWaitingDays }} дни след потвърждението и до тогава можете да се откажете.</p>
           <input v-model="deletePassword" type="password" placeholder="Текуща парола" class="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-red-400/50 focus:border-red-400" />
           <div class="flex gap-3">
             <button @click="showDeleteConfirm = false" class="flex-1 py-2.5 border border-gray-200 text-sm font-medium text-gray-600 rounded-xl">Отказ</button>
             <button @click="deleteAccount" :disabled="deleteLoading || !deletePassword" class="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
-              {{ deleteLoading ? 'Изтриване...' : 'Изтрий' }}
+              {{ deleteLoading ? 'Изпращане...' : 'Заяви закриване' }}
             </button>
           </div>
         </div>

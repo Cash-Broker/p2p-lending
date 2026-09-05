@@ -4,6 +4,7 @@ namespace App\Services\Loans;
 
 use App\Models\Loan;
 use App\Models\LoanEvent;
+use App\Models\PlatformSetting;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -218,6 +219,31 @@ class LoanStatusUpdaterService
                 ? Loan::STATUS_REPAID
                 : Loan::STATUS_ACTIVE;
 
+            // Offer-based loans have a SECOND plan — the investors' own
+            // investment_schedules, which the payout engine serves only while
+            // the loan is payout-eligible. A borrower-side plan that is fully
+            // paid says nothing about them; closing the loan terminally with
+            // investor rows still pending would strand their principal
+            // (audit 2026-09-01, PAY-28). Recover to `active` instead and let
+            // autoRepayCompletedLoans close it once every investor is paid.
+            if ($newStatus === Loan::STATUS_REPAID && $loan->usesOffers()) {
+                $investorRowsOpen = $loan->investmentSchedules()
+                    ->whereNotIn('status', ['paid', 'closed'])
+                    ->exists();
+                $offerInvestments = $loan->investments()->whereNotNull('loan_offer_id')->count();
+                $coveredInvestments = $loan->investmentSchedules()->distinct()->count('investment_id');
+
+                if ($investorRowsOpen || $coveredInvestments < $offerInvestments) {
+                    Log::warning('loans:process-late recovery: borrower plan paid but investor schedules still open — recovering to active, not repaid', [
+                        'loan_id' => $loanId,
+                        'investor_rows_open' => $investorRowsOpen,
+                        'covered_investments' => $coveredInvestments,
+                        'offer_investments' => $offerInvestments,
+                    ]);
+                    $newStatus = Loan::STATUS_ACTIVE;
+                }
+            }
+
             $loan->transitionTo($newStatus);
             // Clear became_late_at on recovery (we preserved it in metadata below).
             $loan->forceFill(['became_late_at' => null])->save();
@@ -284,16 +310,27 @@ class LoanStatusUpdaterService
      */
     public function autoRepayCompletedLoans(?array $loanIdsFilter = null): array
     {
-        $result = ['auto_repaid' => []];
+        $result = ['auto_repaid' => [], 'auto_repaid_funding' => []];
 
-        $activeQ = Loan::where('status', Loan::STATUS_ACTIVE);
+        // `funding` joined the sweep with PAY-30 (owner 2026-09-03): in the offer
+        // product every investment owns its own plan from the invest moment, so a
+        // loan that never filled up still has a natural end — the day its last
+        // investor row is paid or closed. Kill switch: funding_auto_close_enabled.
+        $statuses = [Loan::STATUS_ACTIVE];
+        if (self::fundingAutoCloseEnabled()) {
+            $statuses[] = Loan::STATUS_FUNDING;
+        }
+        $activeQ = Loan::whereIn('status', $statuses);
         if ($loanIdsFilter !== null) {
             $activeQ->whereIn('id', $loanIdsFilter);
         }
 
-        foreach ($activeQ->pluck('id') as $loanId) {
-            if ($this->maybeAutoRepayLoan($loanId)) {
-                $result['auto_repaid'][] = $loanId;
+        foreach ($activeQ->get(['id', 'status']) as $candidate) {
+            if ($this->maybeAutoRepayLoan((int) $candidate->id)) {
+                $result['auto_repaid'][] = (int) $candidate->id;
+                if ($candidate->status === Loan::STATUS_FUNDING) {
+                    $result['auto_repaid_funding'][] = (int) $candidate->id;
+                }
             }
         }
 
@@ -304,11 +341,34 @@ class LoanStatusUpdaterService
      * Attempt auto-repay on a single loan. Returns true iff the loan
      * was transitioned. Idempotent under re-run.
      */
+    /**
+     * PAY-30 hook for the payout engine: called right after a partially funded
+     * loan's rows were paid, so it does not stay investable until the 03:30
+     * sweep of the next night. Idempotent (row lock + status re-check).
+     */
+    public function autoRepayLoanIfComplete(int $loanId): bool
+    {
+        return $this->maybeAutoRepayLoan($loanId);
+    }
+
+    public static function fundingAutoCloseEnabled(): bool
+    {
+        return (bool) PlatformSetting::get('funding_auto_close_enabled', true);
+    }
+
     private function maybeAutoRepayLoan(int $loanId): bool
     {
         return DB::transaction(function () use ($loanId) {
             $loan = Loan::lockForUpdate()->find($loanId);
-            if (! $loan || $loan->status !== Loan::STATUS_ACTIVE) {
+            if (! $loan || ! in_array($loan->status, [Loan::STATUS_ACTIVE, Loan::STATUS_FUNDING], true)) {
+                return false;
+            }
+
+            // A funding loan without offer investments (nobody invested yet, or a
+            // legacy loan the legacy engine never pays before activation) has no
+            // terminal path here — a normal state, not a data gap, so no warning.
+            // The kill switch holds the funding branch only.
+            if ($loan->status === Loan::STATUS_FUNDING && (! $loan->usesOffers() || ! self::fundingAutoCloseEnabled())) {
                 return false;
             }
 
@@ -415,11 +475,15 @@ class LoanStatusUpdaterService
         }
 
         // Defensive parity with the legacy rule: even with every investor
-        // fully paid out, a borrower-side schedule row in late/default means
-        // delinquency is in flight — the late path (or admin) resolves it
-        // first. Offer loans usually run without a borrower-side plan, so
-        // this only bites pre-generated (back-dated) schedules.
+        // fully paid out, a LEGACY borrower-side schedule row in late/default
+        // means delinquency is in flight — the late path (or admin) resolves it
+        // first. The PAY-13 borrower TRACKER is deliberately excluded: it
+        // existed for no live loan before 2026-09-05, and a fully paid-out
+        // offer loan auto-closed regardless of the borrower — that behaviour
+        // is preserved (a late tracker row makes the loan `late` at 03:30
+        // before this sweep anyway, and then the recovery rules apply).
         $borrowerDelinquent = $loan->amortizationSchedules()
+            ->legacyPlan()
             ->whereIn('status', ['late', 'default'])
             ->exists();
         if ($borrowerDelinquent) {
@@ -430,7 +494,11 @@ class LoanStatusUpdaterService
             return false;
         }
 
-        $this->writeAutoRepayTransition($loan, $totalRows, 'all_investment_schedules_paid');
+        $this->writeAutoRepayTransition(
+            $loan,
+            $totalRows,
+            $loan->status === Loan::STATUS_FUNDING ? 'partially_funded_term_completed' : 'all_investment_schedules_paid',
+        );
 
         return true;
     }
@@ -438,12 +506,18 @@ class LoanStatusUpdaterService
     /** Shared active → repaid transition + audit event for both bases. */
     private function writeAutoRepayTransition(Loan $loan, int $paidCount, string $reason): void
     {
+        $fromStatus = $loan->status;
+
+        // PAY-30 evidence: where the loan ended from and when (NULL on loans that
+        // reached a terminal status through any other path).
+        $loan->forceFill(['closed_from_status' => $fromStatus, 'closed_at' => now()])->save();
+
         $loan->transitionTo(Loan::STATUS_REPAID);
 
         LoanEvent::create([
             'loan_id' => $loan->id,
             'event_type' => LoanEvent::TYPE_STATUS_CHANGED,
-            'from_status' => Loan::STATUS_ACTIVE,
+            'from_status' => $fromStatus,
             'to_status' => Loan::STATUS_REPAID,
             'triggered_by' => LoanEvent::TRIGGERED_BY_SYSTEM,
             'triggered_by_user_id' => null,
@@ -452,6 +526,11 @@ class LoanStatusUpdaterService
                 'originator_id' => $loan->originator_id,
                 'auto_transitioned' => true,
                 'transition_reason' => $reason,
+                // PAY-30 evidence: how full the loan was when it ended.
+                'closed_from_status' => $fromStatus,
+                'funded_amount' => (string) $loan->funded_amount,
+                'investable_amount' => (string) $loan->investableAmount(),
+                'investors' => $loan->investments()->count(),
             ],
             'occurred_at' => now(),
         ]);

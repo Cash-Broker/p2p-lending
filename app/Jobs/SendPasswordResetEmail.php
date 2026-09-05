@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -28,6 +29,12 @@ class SendPasswordResetEmail implements ShouldQueue
 
     public function handle(): void
     {
+        // SEC-22: no reset link for a closed account — whoever receives mail for
+        // the placeholder domain must not be able to resurrect it.
+        if (User::where('email', $this->email)->first()?->isClosed()) {
+            return;
+        }
+
         Password::sendResetLink(['email' => $this->email]);
     }
 }

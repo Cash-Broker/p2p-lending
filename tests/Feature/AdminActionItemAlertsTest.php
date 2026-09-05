@@ -20,6 +20,7 @@ use Illuminate\Support\Testing\Fakes\NotificationFake;
 use Illuminate\Testing\TestResponse;
 use Mockery;
 use RuntimeException;
+use Tests\Support\CreatesSavedIbans;
 use Tests\TestCase;
 
 /**
@@ -36,7 +37,7 @@ use Tests\TestCase;
  */
 class AdminActionItemAlertsTest extends TestCase
 {
-    use RefreshDatabase;
+    use CreatesSavedIbans, RefreshDatabase;
 
     private function makeAdmin(): User
     {
@@ -225,7 +226,7 @@ class AdminActionItemAlertsTest extends TestCase
 
         $response = $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => '250.00',
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($user)->id,
         ]);
 
         $response->assertStatus(201);
@@ -263,7 +264,7 @@ class AdminActionItemAlertsTest extends TestCase
 
         $response = $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => '250.00',
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($user)->id,
         ]);
 
         // Money movement already committed — the request must succeed and
@@ -306,7 +307,7 @@ class AdminActionItemAlertsTest extends TestCase
 
         $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => '250.00',
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($user)->id,
         ])->assertStatus(201);
 
         $fake->assertSentTo([$adminOne, $adminTwo], WithdrawalRequestedAdminNotification::class);
@@ -327,7 +328,7 @@ class AdminActionItemAlertsTest extends TestCase
 
         $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => '250.00',
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($user)->id,
         ])->assertStatus(201);
 
         $this->assertSame(1, $admin->notifications()->count(),
@@ -630,7 +631,7 @@ class AdminActionItemAlertsTest extends TestCase
 
         $this->actingAs($user)->postJson('/api/withdrawal', [
             'amount' => '250.00',
-            'iban' => 'BG80BNBG96611020345678',
+            'saved_iban_id' => $this->confirmedIban($user)->id,
         ])->assertStatus(201);
 
         $body = $admin->notifications()->first()->data['body'];

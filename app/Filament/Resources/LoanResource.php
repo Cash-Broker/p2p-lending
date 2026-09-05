@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources;
 
+use App\Enums\PayoutType;
 use App\Filament\Resources\LoanResource\Pages;
 use App\Models\Borrower;
 use App\Models\BorrowerAnonymizedProfile;
@@ -17,6 +18,8 @@ use App\Services\Loans\EarlyClosureExecutionService;
 use App\Services\Loans\EarlyRepaymentAlreadyExecutedException;
 use App\Services\Loans\EarlyRepaymentCalculationService;
 use App\Services\Loans\EarlyRepaymentExecutionService;
+use App\Services\Loans\PayoutPauseService;
+use App\Services\OfferProjectionService;
 use App\Services\ScheduledPayoutService;
 use BackedEnum;
 use Closure;
@@ -27,6 +30,7 @@ use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Forms\Components\Component;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
@@ -40,6 +44,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\HtmlString;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 class LoanResource extends Resource
@@ -171,6 +176,39 @@ class LoanResource extends Resource
             ->modalCancelActionLabel('Затвори');
     }
 
+    /**
+     * Audit 2026-09-01: a private link that leaked (forwarded mail, chat
+     * screenshot) could not be withdrawn. Rotation issues a new token and drops
+     * every access grant the old link handed out; investors who already hold a
+     * position keep their access through the investment itself.
+     */
+    public static function rotateShareLinkAction(): Action
+    {
+        return Action::make('rotate_share_link')
+            ->label('Нов линк')
+            ->icon('heroicon-o-arrow-path')
+            ->color('gray')
+            ->visible(fn (?Loan $record) => $record?->visibility === Loan::VISIBILITY_PRIVATE && ! empty($record->share_token))
+            ->requiresConfirmation()
+            ->modalHeading('Генериране на нов частен линк')
+            ->modalDescription('Старият линк спира да работи веднага. Който го е отворил, без да инвестира, губи достъпа си до кредита, докато не получи новия. Инвеститорите с позиция в кредита запазват достъпа си.')
+            ->modalSubmitActionLabel('Генерирай нов линк')
+            ->action(function (Loan $record): void {
+                DB::transaction(function () use ($record): void {
+                    $loan = Loan::whereKey($record->getKey())->lockForUpdate()->firstOrFail();
+                    $loan->forceFill(['share_token' => Loan::generateShareToken()])->save();
+                    $loan->grants()->delete();
+                });
+                $record->refresh();
+
+                Notification::make()
+                    ->title('Нов линк е генериран')
+                    ->body('Старият линк вече не работи. Отворете «Линк за инвеститор», за да копирате новия.')
+                    ->success()
+                    ->send();
+            });
+    }
+
     public static function form(Schema $form): Schema
     {
         return $form->schema([
@@ -180,6 +218,16 @@ class LoanResource extends Resource
                 // committed investors keep their contracted terms regardless
                 // (Investment snapshots + frozen contracts), so a term edit
                 // here changes only what FUTURE investors see.
+                Forms\Components\Placeholder::make('partial_funding_closed_notice')
+                    ->label('Приключен без пълно финансиране')
+                    ->content(fn (?Loan $record) => sprintf(
+                        'Кредитът е приключен на %s, без да достигне пълно финансиране (%s от %s €): всички инвеститори са изплатени по своите планове. Не приема нови инвестиции.',
+                        $record?->closed_at?->format('d.m.Y') ?? '—',
+                        number_format((float) ($record?->funded_amount ?? 0), 2, ',', ' '),
+                        number_format((float) ($record?->investableAmount() ?? 0), 2, ',', ' '),
+                    ))
+                    ->visible(fn (?Loan $record): bool => (bool) $record?->wasClosedWithoutFullFunding())
+                    ->columnSpanFull(),
                 Forms\Components\Placeholder::make('invested_edit_warning')
                     ->label('⚠ Внимание')
                     ->content('Кредитът вече има инвестиции. Промените по сума/лихва/срок НЕ променят договорите и графиците на вече инвестиралите (те остават при условията, при които са влезли) — отразяват се само към бъдещи инвеститори и визуализацията на кредита.')
@@ -268,6 +316,12 @@ class LoanResource extends Resource
                     ])
                     ->default(Loan::PAYOUT_MODE_MANUAL)
                     ->required(),
+                // PAY-13: read-only state of the payout pause. NO per-loan exempt
+                // toggle in v1 (open question) — the engine is the braces.
+                Forms\Components\Placeholder::make('payout_pause_state')
+                    ->label('Авансиране')
+                    ->visible(fn (?Loan $record) => (bool) $record?->isPayoutPaused())
+                    ->content(fn (?Loan $record) => 'СПРЯНО от '.$record?->payouts_paused_at?->format('d.m.Y').' — кредитополучателят е в закъснение над прага от Настройки. Възобновява се автоматично при следващото нощно плащане, след като вноските бъдат отбелязани като платени в таб „Погасителен план“, при изкупуване, или ако настройката payout_pause_enabled бъде изключена.'),
                 // Private loans are hidden from the public board and reachable
                 // only via their share link. Freely editable (not a financial
                 // term, so not frozen post-draft).
@@ -305,7 +359,18 @@ class LoanResource extends Resource
                 // from the form (boss 2026-08-10: «ненужни са — трите оферти
                 // долу са достатъчни»). The columns stay nullable for legacy
                 // loans; the admin-only ГПР/Марж preview went with them.
+                // Audit 2026-09-01 (PAY-40): the annuity generators truncate per
+                // row and the last row absorbs the drift — for long terms and
+                // small principals the drift exceeds the balance and the
+                // projection refuses. No fixed cap (the term is the client's to
+                // set); the pair is checked against the 50 € minimum investment
+                // for every amortizing rate the loan carries.
                 TextInput::make('term_months')->label('Срок (месеци)')->numeric()->required()->minValue(1)
+                    ->rules([
+                        fn (?Loan $record): Closure => function (string $attribute, $value, Closure $fail) use ($record) {
+                            self::assertTermAmortizes((int) $value, $record, $fail);
+                        },
+                    ])
                     ->validatedWhenNotDehydrated(false),
                 // Live funding math, in the boss's exact vocabulary
                 // (2026-08-10): «Сума на кредита 13 000 · Инвестирани 5 000 ·
@@ -323,11 +388,18 @@ class LoanResource extends Resource
                             $remaining = '0.00';
                         }
                         $format = fn (string $v) => number_format((float) $v, 2, ',', ' ');
+                        // PAY-30: a loan that closed without full funding must not
+                        // advertise cap − funded as «свободни».
+                        $closed = $record->wasClosedWithoutFullFunding();
+                        if ($closed) {
+                            $remaining = '0.00';
+                        }
 
                         return new HtmlString(view('filament.components.loan-funding-stats', [
                             'amount' => $format((string) $record->amount),
                             'invested' => $format((string) $record->funded_amount),
                             'remaining' => $format($remaining),
+                            'closed' => $closed,
                         ])->render());
                     })
                     ->visible(fn (?Loan $record): bool => (bool) $record?->id)
@@ -360,6 +432,7 @@ class LoanResource extends Resource
                     ->sortable(),
                 Tables\Columns\TextColumn::make('term_months')->label('Срок')->suffix(' мес.'),
                 Tables\Columns\BadgeColumn::make('status')->label('Статус')
+                    ->description(fn (Loan $record) => $record->wasClosedWithoutFullFunding() ? 'частично финансиран' : null)
                     ->formatStateUsing(fn (string $state) => match ($state) {
                         'draft' => 'Чернова', 'published' => 'Публикуван', 'funding' => 'Финансира се', 'funded' => 'Финансиран', 'active' => 'Активен', 'late' => 'Закъснял', 'default' => 'Просрочен', 'repaid' => 'Изплатен', default => $state
                     })
@@ -373,6 +446,19 @@ class LoanResource extends Resource
                     ->sortable(false)
                     ->placeholder('—')
                     ->color(fn ($state) => $state === null ? 'gray' : ($state >= 30 ? 'danger' : 'warning')),
+                // PAY-13: payout pause stamp (the icon shows the stamp; the tooltip
+                // says whether the setting actually enforces it).
+                Tables\Columns\IconColumn::make('payouts_paused_at')
+                    ->label('Авансиране')
+                    ->boolean()
+                    ->trueIcon('heroicon-o-pause-circle')
+                    ->falseIcon('heroicon-o-play-circle')
+                    ->trueColor('danger')
+                    ->falseColor('gray')
+                    ->tooltip(fn (Loan $r) => $r->payouts_paused_at
+                        ? 'Спряно от '.$r->payouts_paused_at->format('d.m.Y').(PayoutPauseService::isEnabled() ? '' : ' (настройката е изключена — плаща се)')
+                        : 'По график')
+                    ->toggleable(),
             ])
             ->defaultSort('created_at', 'desc')
             ->filters([
@@ -389,12 +475,17 @@ class LoanResource extends Resource
                     ->label('Само закъснели/просрочени')
                     ->toggle()
                     ->query(fn ($q) => $q->whereIn('status', [Loan::STATUS_LATE, Loan::STATUS_DEFAULT])),
+                Tables\Filters\Filter::make('payouts_paused')
+                    ->label('Само със спряно авансиране')
+                    ->toggle()
+                    ->query(fn ($q) => $q->whereNotNull('payouts_paused_at')),
             ])
             ->actions([
                 EditAction::make(),
                 // Private-loan share link — generates the token on first open
                 // and shows the copyable URL to send to the investor.
                 self::shareLinkAction(),
+                self::rotateShareLinkAction(),
                 Action::make('publish')->label('Публикувай')->icon('heroicon-o-globe-alt')->color('success')
                     ->visible(fn (Loan $r) => $r->status === Loan::STATUS_DRAFT)->requiresConfirmation()
                     ->action(function (Loan $r) {
@@ -444,6 +535,16 @@ class LoanResource extends Resource
                     ->action(function (Loan $record) {
                         try {
                             $result = app(ScheduledPayoutService::class)->runForLoan($record);
+
+                            // PAY-13: the engine refused under its lock — the toast only explains.
+                            if (($result['paused'] ?? false) === true) {
+                                Notification::make()
+                                    ->title('Авансирането е спряно')
+                                    ->body('Кредитополучателят е в закъснение над прага. Отбележете платените вноски в „Погасителен план“ — плащането се възобновява автоматично при следващото нощно изпълнение.')
+                                    ->danger()->send();
+
+                                return;
+                            }
 
                             $moved = ($result['type'] ?? null) === 'legacy'
                                 ? (int) ($result['posted_count'] ?? 0)
@@ -691,7 +792,7 @@ class LoanResource extends Resource
     public static function isEarlyClosable(Loan $loan): bool
     {
         return $loan->usesOffers()
-            && in_array($loan->status, [Loan::STATUS_ACTIVE, Loan::STATUS_LATE, Loan::STATUS_DEFAULT], true)
+            && in_array($loan->status, [Loan::STATUS_FUNDING, Loan::STATUS_ACTIVE, Loan::STATUS_LATE, Loan::STATUS_DEFAULT], true)
             && $loan->early_repaid_at === null
             && $loan->bought_back_at === null;
     }
@@ -720,10 +821,13 @@ class LoanResource extends Resource
                     ->maxDate(now()->addDay())
                     ->required()
                     ->live(),
+                // One token per opened modal — a double click replays it and
+                // the service refuses the second run (audit 2026-09-01, PAY-04).
+                Hidden::make('request_token')->default(fn () => (string) Str::uuid()),
             ])
             ->modalContent(fn (Loan $record, array $arguments) => self::closurePreview($record, null, null))
             ->modalSubmitActionLabel('Изпълни погасяване')
-            ->action(fn (Loan $record, array $data) => self::runClosure($record, null, $data['as_of'] ?? null));
+            ->action(fn (Loan $record, array $data) => self::runClosure($record, null, $data['as_of'] ?? null, $data['request_token'] ?? null));
     }
 
     /**
@@ -754,12 +858,46 @@ class LoanResource extends Resource
                     ->default(now()->toDateString())
                     ->maxDate(now()->addDay())
                     ->required(),
+                Hidden::make('request_token')->default(fn () => (string) Str::uuid()),
             ])
             ->modalSubmitActionLabel('Изпълни погасяване')
-            ->action(fn (Loan $record, array $data) => self::runClosure($record, $data['amount'], $data['as_of'] ?? null));
+            ->action(fn (Loan $record, array $data) => self::runClosure($record, $data['amount'], $data['as_of'] ?? null, $data['request_token'] ?? null));
     }
 
     /** Outstanding investor principal, for the form helper text. */
+    /**
+     * PAY-40 (audit 2026-09-01): refuse a term/rate pair whose annuity cannot
+     * amortize the 50 € minimum investment — the per-row truncation drift
+     * would otherwise surface as a negative last installment at quote or
+     * invest time. Checked for every amortizing rate the loan carries (the
+     * default 12 % on a new loan, whose offers are seeded on create).
+     */
+    public static function assertTermAmortizes(int $term, ?Loan $loan, Closure $fail): void
+    {
+        if ($term < 1) {
+            return;
+        }
+
+        $rates = $loan?->offers()
+            ->where('payout_type', PayoutType::Amortizing)
+            ->pluck('interest_rate')
+            ->map(fn ($rate) => (string) $rate)
+            ->all();
+        if (empty($rates)) {
+            $rates = [PayoutType::Amortizing->defaultRate()];
+        }
+
+        foreach ($rates as $rate) {
+            try {
+                app(OfferProjectionService::class)->schedule('50.00', $rate, $term, PayoutType::Amortizing);
+            } catch (InvalidArgumentException) {
+                $fail("При срок {$term} мес. и доходност {$rate}% минималната инвестиция от 50 € не може да бъде амортизирана (месечната вноска не покрива лихвата). Намалете срока.");
+
+                return;
+            }
+        }
+    }
+
     public static function outstandingPrincipal(Loan $loan): string
     {
         return InvestmentSchedule::where('loan_id', $loan->id)
@@ -797,7 +935,7 @@ class LoanResource extends Resource
      * notification per investor, each isolated so a single bad address cannot
      * starve the rest (F1/F2/F3 discipline). Catch order specific → generic.
      */
-    protected static function runClosure(Loan $record, ?string $amount, ?string $asOf): void
+    protected static function runClosure(Loan $record, ?string $amount, ?string $asOf, ?string $requestToken = null): void
     {
         try {
             $result = app(EarlyClosureExecutionService::class)->execute(
@@ -805,6 +943,7 @@ class LoanResource extends Resource
                 adminId: (int) auth()->id(),
                 principalAmount: $amount,
                 asOf: $asOf ? Carbon::parse($asOf) : null,
+                requestToken: $requestToken,
             );
 
             $quote = $result['quote'];

@@ -37,9 +37,9 @@ class AmortizationService
 
     /**
      * @param  CarbonInterface|null  $firstDueDate  Anchor for the first installment.
-     *         When given, installments fall monthly from this date (used by the
-     *         admin calculator, incl. listing a loan with a chosen first payment
-     *         date). When null, preserves the legacy now()+30·i spacing.
+     *                                              When given, installments fall monthly from this date (used by the
+     *                                              admin calculator, incl. listing a loan with a chosen first payment
+     *                                              date). When null, preserves the legacy now()+30·i spacing.
      */
     public function generateSchedule(Loan $loan, ?CarbonInterface $firstDueDate = null): void
     {
@@ -85,6 +85,15 @@ class AmortizationService
                     $principal = bcsub($monthlyPayment, $interest, 2);
                 }
 
+                // Never persist a negative principal row (audit 2026-09-01, PAY-40):
+                // it would be skipped by the payout engines while the earlier rows
+                // already over-return the investable amount.
+                if (bccomp($principal, '0', 2) < 0) {
+                    throw new InvalidArgumentException(
+                        "Amortization drift produced a negative principal in installment {$i} of {$termMonths}."
+                    );
+                }
+
                 $total = bcadd($principal, $interest, 2);
 
                 $dueDate = $firstDueDate
@@ -117,7 +126,7 @@ class AmortizationService
      * Calculate fixed monthly payment via annuity formula.
      * Handles the zero-interest edge case separately (division by zero).
      *
-     * Public + static so {@see \App\Services\OfferProjectionService} reuses the
+     * Public + static so {@see OfferProjectionService} reuses the
      * EXACT same formula for its AMORTIZING projection — keeping projected and
      * live amortizing schedules provably identical (see OfferProjectionServiceTest).
      */

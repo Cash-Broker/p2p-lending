@@ -6,10 +6,14 @@ use App\Filament\Resources\LoanResource;
 use App\Models\Investment;
 use App\Models\Loan;
 use Filament\Actions;
+use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Schemas\Components\EmbeddedSchema;
 use Filament\Schemas\Components\Form;
 use Filament\Schemas\Schema;
+use Filament\Support\Exceptions\Halt;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 class EditLoan extends EditRecord
 {
@@ -50,6 +54,7 @@ class EditLoan extends EditRecord
         return [
             $this->getSaveFormAction(),
             LoanResource::shareLinkAction(),
+            LoanResource::rotateShareLinkAction(),
             // Приключването на кредита стои до останалите бутони на самия
             // кредит (Йордан 2026-08-18) — там го търси човек, който вече е
             // отворил кредита, не в списъка.
@@ -82,6 +87,11 @@ class EditLoan extends EditRecord
         return LoanResource::shareLinkAction();
     }
 
+    public function rotate_share_linkAction(): Actions\Action
+    {
+        return LoanResource::rotateShareLinkAction();
+    }
+
     /**
      * Let the admin change a non-draft loan's status (e.g. revert a published
      * loan to draft to hide it from investors) without the model's immutability
@@ -93,6 +103,44 @@ class EditLoan extends EditRecord
     protected function mutateFormDataBeforeSave(array $data): array
     {
         return self::sanitizeSaveData($this->record, $data);
+    }
+
+    /**
+     * Save under a row lock (audit 2026-09-01, PAY-38). Filament's default is
+     * a plain `$record->update($data)`; the status machine in Loan::booted()
+     * compares against the model's ORIGINAL status, so the save must run on a
+     * freshly locked row — otherwise an investment committed while the form was
+     * open (published → funding, funded_amount > 0) is evaluated against the
+     * stale in-memory state and a stale «draft» wins over money already in.
+     */
+    protected function handleRecordUpdate(Model $record, array $data): Model
+    {
+        try {
+            return DB::transaction(function () use ($record, $data) {
+                /** @var Loan $fresh */
+                $fresh = Loan::whereKey($record->getKey())->lockForUpdate()->firstOrFail();
+                $fresh->fill($data)->save();
+
+                // Filament discards the returned model and keeps using the bound
+                // $record for the header/closure buttons of this request — sync it
+                // so nothing renders one save stale (review 2026-09-03).
+                $record->refresh();
+
+                return $record;
+            });
+        } catch (\LogicException $e) {
+            // The state-machine guard fired against the FRESH row (money arrived
+            // while the form was open — e.g. a stale «Чернова» over an investment).
+            // BG toast + reload the form instead of Livewire's raw error dialog.
+            $record->refresh();
+            $this->fillForm();
+            Notification::make()
+                ->title('Кредитът вече има инвестиции')
+                ->body('Междувременно е постъпила инвестиция — промяната не може да се запише в този вид. Формата е презаредена с актуалното състояние.')
+                ->danger()->send();
+
+            throw new Halt;
+        }
     }
 
     /**

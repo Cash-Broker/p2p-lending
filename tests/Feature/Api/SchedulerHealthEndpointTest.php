@@ -6,6 +6,7 @@ use App\Models\PlatformMetric;
 use App\Models\PlatformSetting;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -55,6 +56,19 @@ class SchedulerHealthEndpointTest extends TestCase
         PlatformMetric::record('last_payouts_loans_processed', '0');
         PlatformMetric::record('last_payouts_loans_failed', '0');
         PlatformMetric::where('key', 'last_payouts_run_at')->update(['measured_at' => $when]);
+
+        // Reconcile is always in the worst-of (audit 2026-09-01) — a healthy
+        // fixture has to carry it, exactly like payouts.
+        $this->recordReconcile($when);
+    }
+
+    private function recordReconcile(Carbon $when, string $status = 'ok'): void
+    {
+        PlatformMetric::record('last_reconcile_run_at', $when->toIso8601String());
+        PlatformMetric::record('last_reconcile_status', $status);
+        PlatformMetric::record('last_reconcile_wallets_checked', '3');
+        PlatformMetric::record('last_reconcile_mismatches', $status === 'ok' ? '0' : '1');
+        PlatformMetric::where('key', 'last_reconcile_run_at')->update(['measured_at' => $when]);
     }
 
     public function test_healthy_when_run_within_last_26_hours(): void
@@ -289,6 +303,7 @@ class SchedulerHealthEndpointTest extends TestCase
         // the endpoint reads them back as a healthy payouts scheduler.
         $this->recordLateOnly(now()->subHours(1));
         $this->recordBuybackOnly(now()->subHours(1));
+        $this->recordReconcile(now()->subHours(1));
 
         $this->artisan('loans:process-payouts')->assertSuccessful();
 
@@ -326,5 +341,76 @@ class SchedulerHealthEndpointTest extends TestCase
                 ],
             ])
             ->assertJsonPath('last_run_stats.loans_scanned', 5);  // value from recordRunAt helper
+    }
+
+    // ═════════ Audit 2026-09-01 (A3): reconcile + queue + failed payout run ═════════
+
+    public function test_reconcile_never_run_is_critical_even_when_everything_else_is_healthy(): void
+    {
+        $this->recordRunAt(now()->subHours(1));
+        PlatformMetric::where('key', 'like', 'last_reconcile_%')->delete();
+
+        $this->getJson('/api/health/scheduler')
+            ->assertStatus(503)
+            ->assertJsonPath('status', 'critical')
+            ->assertJsonPath('reconcile.status', 'critical')
+            ->assertJsonPath('reconcile.last_run_at', null);
+    }
+
+    public function test_reconcile_mismatch_is_critical_regardless_of_freshness(): void
+    {
+        $this->recordRunAt(now()->subHours(1));
+        $this->recordReconcile(now()->subMinutes(5), 'mismatch');
+
+        $this->getJson('/api/health/scheduler')
+            ->assertStatus(503)
+            ->assertJsonPath('status', 'critical')
+            ->assertJsonPath('reconcile.status', 'critical')
+            ->assertJsonPath('reconcile.last_run_stats.status', 'mismatch')
+            ->assertJsonPath('reconcile.last_run_stats.mismatches', 1);
+    }
+
+    public function test_payout_run_with_failed_loans_degrades_payouts_to_warning(): void
+    {
+        $this->recordRunAt(now()->subHours(1));
+        PlatformMetric::record('last_payouts_status', 'failure');
+        PlatformMetric::record('last_payouts_loans_failed', '2');
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonPath('status', 'warning')
+            ->assertJsonPath('payouts.status', 'warning')
+            ->assertJsonPath('payouts.last_run_stats.loans_failed', 2);
+    }
+
+    public function test_queue_block_is_healthy_when_nothing_waits(): void
+    {
+        $this->recordRunAt(now()->subHours(1));
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonPath('status', 'healthy')
+            ->assertJsonPath('queue.status', 'healthy')
+            ->assertJsonPath('queue.pending_jobs', 0)
+            ->assertJsonPath('queue.failed_jobs_24h', 0);
+    }
+
+    public function test_job_waiting_longer_than_fifteen_minutes_degrades_queue_to_warning_not_critical(): void
+    {
+        $this->recordRunAt(now()->subHours(1));
+        DB::table('jobs')->insert([
+            'queue' => 'default',
+            'payload' => '{}',
+            'attempts' => 0,
+            'reserved_at' => null,
+            'available_at' => now()->subMinutes(30)->getTimestamp(),
+            'created_at' => now()->subMinutes(30)->getTimestamp(),
+        ]);
+
+        $this->getJson('/api/health/scheduler')
+            ->assertOk()
+            ->assertJsonPath('status', 'warning')
+            ->assertJsonPath('queue.status', 'warning')
+            ->assertJsonPath('queue.pending_jobs', 1);
     }
 }

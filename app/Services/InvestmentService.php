@@ -7,6 +7,7 @@ use App\Models\Loan;
 use App\Models\LoanEvent;
 use App\Models\LoanOffer;
 use App\Models\User;
+use App\Services\Loans\BorrowerPlanService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -41,6 +42,8 @@ class InvestmentService
                 if ($idempotencyKey) {
                     $existing = Investment::where('idempotency_key', $idempotencyKey)->first();
                     if ($existing) {
+                        $this->assertReplayBelongsTo($existing, $user);
+
                         return $existing;
                     }
                 }
@@ -161,6 +164,14 @@ class InvestmentService
                         ],
                         'occurred_at' => now(),
                     ]);
+
+                    // PAY-13 (owner 2026-09-03): the borrower tracking plan is a
+                    // late-detection INPUT, not money — it is created only after
+                    // the investing transaction has committed and can never roll
+                    // it back (same shape as the promo bonus in PromotionService).
+                    // The service swallows and reports its own failures.
+                    $activatedLoanId = (int) $loan->id;
+                    DB::afterCommit(fn () => app(BorrowerPlanService::class)->generateAtActivation($activatedLoanId));
                 }
 
                 // Conclude the loan agreement — frozen contract snapshot +
@@ -174,9 +185,37 @@ class InvestmentService
 
                 return $investment;
             });
-        } catch (UniqueConstraintViolationException) {
-            // Concurrent request with same idempotency key — return existing
-            return Investment::where('idempotency_key', $idempotencyKey)->firstOrFail();
+        } catch (UniqueConstraintViolationException $e) {
+            // Concurrent request with the same idempotency key — the loser
+            // returns the winner's row. Only the idempotency index qualifies:
+            // any OTHER unique violation inside the invest transaction is a
+            // real error and must surface as one (audit 2026-09-01, PAY-05).
+            if (! str_contains($e->getMessage(), 'investments_idempotency_key_unique')) {
+                throw $e;
+            }
+
+            $existing = Investment::where('idempotency_key', $idempotencyKey)->first();
+            if ($existing === null) {
+                throw $e;
+            }
+            $this->assertReplayBelongsTo($existing, $user);
+
+            return $existing;
+        }
+    }
+
+    /**
+     * A replayed key must belong to the SAME investor. The key is a client
+     * UUID, unguessable in practice, but a leaked or shared one must not hand
+     * another account's investment back as a 201 «Investment successful»
+     * (audit 2026-09-01, PAY-33).
+     */
+    private function assertReplayBelongsTo(Investment $existing, User $user): void
+    {
+        if ((int) $existing->user_id !== (int) $user->id) {
+            throw ValidationException::withMessages([
+                'idempotency_key' => ['This idempotency key was already used by another account.'],
+            ]);
         }
     }
 
@@ -191,6 +230,18 @@ class InvestmentService
         if (! in_array($loan->status, Loan::FUNDABLE_STATUSES)) {
             throw ValidationException::withMessages([
                 'loan' => ['This loan is not available for investment.'],
+            ]);
+        }
+
+        // PAY-30 (owner 2026-09-03): a partially funded loan whose investors have
+        // ALL been paid out (or closed) has completed its term; a newcomer must
+        // not restart a 12-month cycle in the hours before the sweep marks it
+        // repaid. Evaluated under the loan lock the caller holds.
+        if ($loan->status === Loan::STATUS_FUNDING
+            && $loan->investmentSchedules()->exists()
+            && ! $loan->investmentSchedules()->whereIn('status', ['pending', 'late'])->exists()) {
+            throw ValidationException::withMessages([
+                'loan' => ['This loan has completed its term and no longer accepts investments.'],
             ]);
         }
 
@@ -220,8 +271,16 @@ class InvestmentService
      */
     private function resolveOffer(Loan $loan, int $loanOfferId): LoanOffer
     {
+        // Locking read on purpose (audit 2026-09-01, PAY-39): the transaction's
+        // consistent snapshot was fixed by the idempotency SELECT above, BEFORE
+        // the loan row lock was acquired — a plain read here would return the
+        // offer as it was before we waited for the lock, so a rate edit or a
+        // disable committed in that window would be snapshotted onto the
+        // investment and the quote-vs-commit guard would compare against the
+        // same stale value. A shared lock reads the committed row.
         $offer = LoanOffer::where('id', $loanOfferId)
             ->where('loan_id', $loan->id)
+            ->sharedLock()
             ->first();
 
         if ($offer === null) {

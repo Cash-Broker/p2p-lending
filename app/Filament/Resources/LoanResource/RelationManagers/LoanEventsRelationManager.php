@@ -24,6 +24,7 @@ use Filament\Tables\Table;
 class LoanEventsRelationManager extends RelationManager
 {
     protected static string $relationship = 'events';
+
     protected static ?string $title = 'Timeline на събития';
 
     /** Append-only: no create/edit/delete actions are wired up. */
@@ -43,25 +44,30 @@ class LoanEventsRelationManager extends RelationManager
 
                 Tables\Columns\BadgeColumn::make('event_type')
                     ->label('Събитие')
-                    ->formatStateUsing(fn (string $state) => match ($state) {
-                        LoanEvent::TYPE_WENT_LATE                  => 'Стана закъснял',
-                        LoanEvent::TYPE_RECOVERED_FROM_LATE        => 'Възстановен от late',
-                        LoanEvent::TYPE_WENT_DEFAULT               => 'Просрочен',
-                        LoanEvent::TYPE_BUYBACK_TRIGGERED          => 'Готов за изкупуване',
-                        LoanEvent::TYPE_BUYBACK_COMPLETED          => 'Buyback изпълнен',
-                        LoanEvent::TYPE_EARLY_REPAYMENT_REQUESTED  => 'Поискано предсрочно',
-                        LoanEvent::TYPE_EARLY_REPAYMENT_COMPLETED  => 'Завършено предсрочно',
-                        LoanEvent::TYPE_FEE_APPLIED                => 'Приложена такса',
-                        LoanEvent::TYPE_STATUS_CHANGED             => 'Статус променен',
-                        default                                    => $state,
+                    ->formatStateUsing(fn (string $state, LoanEvent $record) => match ($state) {
+                        LoanEvent::TYPE_WENT_LATE => 'Стана закъснял',
+                        LoanEvent::TYPE_RECOVERED_FROM_LATE => 'Възстановен от late',
+                        LoanEvent::TYPE_WENT_DEFAULT => 'Просрочен',
+                        LoanEvent::TYPE_BUYBACK_TRIGGERED => 'Готов за изкупуване',
+                        LoanEvent::TYPE_BUYBACK_COMPLETED => 'Buyback изпълнен',
+                        LoanEvent::TYPE_EARLY_REPAYMENT_REQUESTED => 'Поискано предсрочно',
+                        LoanEvent::TYPE_EARLY_REPAYMENT_COMPLETED => 'Завършено предсрочно',
+                        LoanEvent::TYPE_FEE_APPLIED => 'Приложена такса',
+                        // PAY-13: pause/resume ride status_changed with metadata.kind.
+                        LoanEvent::TYPE_STATUS_CHANGED => match ($record->metadata['kind'] ?? null) {
+                            'payouts_paused' => 'Авансирането спряно',
+                            'payouts_resumed' => 'Авансирането възобновено',
+                            default => 'Статус променен',
+                        },
+                        default => $state,
                     })
                     ->colors([
                         'warning' => LoanEvent::TYPE_WENT_LATE,
                         'success' => LoanEvent::TYPE_RECOVERED_FROM_LATE,
-                        'danger'  => LoanEvent::TYPE_WENT_DEFAULT,
-                        'info'    => fn ($state) => str_starts_with($state, 'buyback_'),
+                        'danger' => LoanEvent::TYPE_WENT_DEFAULT,
+                        'info' => fn ($state) => str_starts_with($state, 'buyback_'),
                         'primary' => fn ($state) => str_starts_with($state, 'early_repayment_'),
-                        'gray'    => fn ($state) => in_array($state, [LoanEvent::TYPE_FEE_APPLIED, LoanEvent::TYPE_STATUS_CHANGED]),
+                        'gray' => fn ($state) => in_array($state, [LoanEvent::TYPE_FEE_APPLIED, LoanEvent::TYPE_STATUS_CHANGED]),
                     ]),
 
                 Tables\Columns\TextColumn::make('transition')
@@ -74,7 +80,7 @@ class LoanEventsRelationManager extends RelationManager
                 Tables\Columns\TextColumn::make('triggered_by')
                     ->label('Източник')
                     ->formatStateUsing(fn (LoanEvent $r) => $r->triggered_by === LoanEvent::TRIGGERED_BY_ADMIN
-                        ? ('admin: ' . ($r->triggeredByUser->name ?? "#{$r->triggered_by_user_id}"))
+                        ? ('admin: '.($r->triggeredByUser->name ?? "#{$r->triggered_by_user_id}"))
                         : 'система'),
 
                 // Pretty-print metadata as "key: value, key: value" with a
@@ -83,7 +89,7 @@ class LoanEventsRelationManager extends RelationManager
                     ->label('Детайли')
                     ->formatStateUsing(fn ($state) => $state
                         ? collect($state)
-                            ->map(fn ($v, $k) => "{$k}: " . (is_scalar($v) ? $v : json_encode($v)))
+                            ->map(fn ($v, $k) => "{$k}: ".(is_scalar($v) ? $v : json_encode($v)))
                             ->join(', ')
                         : '—')
                     ->limit(50)

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -21,29 +22,31 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class LegalEntityProfile extends Model
 {
+    use Auditable;
+
     public const LEGAL_FORMS = [
-        'EOOD'         => 'ЕООД',
-        'OOD'          => 'ООД',
-        'AD'           => 'АД',
-        'EAD'          => 'ЕАД',
-        'ADSITZ'       => 'АДСИЦ',
-        'ET'           => 'ЕТ',
+        'EOOD' => 'ЕООД',
+        'OOD' => 'ООД',
+        'AD' => 'АД',
+        'EAD' => 'ЕАД',
+        'ADSITZ' => 'АДСИЦ',
+        'ET' => 'ЕТ',
         'KOOPERATSIYA' => 'Кооперация',
-        'DRUGO'        => 'Друго',
+        'DRUGO' => 'Друго',
     ];
 
     public const REPRESENTATIVE_ROLES = [
-        'upravitel'      => 'Управител',
-        'prokurist'      => 'Прокурист',
+        'upravitel' => 'Управител',
+        'prokurist' => 'Прокурист',
         'upalnomoshteno' => 'Упълномощено лице',
     ];
 
     public const SOURCES_OF_FUNDS = [
         'business_income' => 'Доходи от стопанска дейност',
-        'dividends'       => 'Дивиденти',
-        'asset_sale'      => 'Продажба на актив',
-        'loan'            => 'Заем',
-        'other'           => 'Друго',
+        'dividends' => 'Дивиденти',
+        'asset_sale' => 'Продажба на актив',
+        'loan' => 'Заем',
+        'other' => 'Друго',
     ];
 
     protected $fillable = [
@@ -70,10 +73,10 @@ class LegalEntityProfile extends Model
     protected function casts(): array
     {
         return [
-            'eik'                => 'encrypted',
-            'vat_number'         => 'encrypted',
+            'eik' => 'encrypted',
+            'vat_number' => 'encrypted',
             'representative_egn' => 'encrypted',
-            'pep_status'         => 'boolean',
+            'pep_status' => 'boolean',
         ];
     }
 

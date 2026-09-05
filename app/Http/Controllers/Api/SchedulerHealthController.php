@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PlatformMetric;
 use App\Models\PlatformSetting;
+use App\Services\Loans\PayoutPauseService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Public health endpoint for external monitoring (UptimeRobot, Pingdom,
@@ -57,6 +59,9 @@ class SchedulerHealthController extends Controller
 
     private const CRITICAL_THRESHOLD_MIN = 48 * 60;  // 2880
 
+    /** A job waiting this long means the worker is not running. */
+    private const QUEUE_STALE_SECONDS = 15 * 60;
+
     public function __invoke(): JsonResponse
     {
         // --- F1: late check ---
@@ -76,11 +81,31 @@ class SchedulerHealthController extends Controller
         $payoutsMinutesSince = $payoutsLastRunAt ? (int) $payoutsLastRunAt->diffInMinutes(now()) : null;
         $payoutsStatus = $this->statusFromMinutes($payoutsMinutesSince);
 
+        // Audit 2026-09-01 (PAY-16): the run happened on time but at least one
+        // loan failed inside it — its investors were not paid that morning.
+        // Warning here; the loud alert is the admin mail + Telegram from the command.
+        if ($payoutsStatus === 'healthy' && PlatformMetric::read('last_payouts_status') === 'failure') {
+            $payoutsStatus = 'warning';
+        }
+
+        // Audit 2026-09-01 (A3): the 03:00 ledger reconciliation used to leave no
+        // trace anywhere but its e-mail. Stale = critical like every money cron;
+        // a recorded mismatch stays critical regardless of age until the next clean run.
+        $reconcileLastRunAt = PlatformMetric::measuredAt('last_reconcile_run_at');
+        $reconcileMinutesSince = $reconcileLastRunAt ? (int) $reconcileLastRunAt->diffInMinutes(now()) : null;
+        $reconcileLastStatus = PlatformMetric::read('last_reconcile_status');
+        $reconcileStatus = $this->statusFromMinutes($reconcileMinutesSince);
+        if ($reconcileLastStatus !== null && $reconcileLastStatus !== 'ok') {
+            $reconcileStatus = 'critical';
+        }
+
+        $queue = $this->queueSnapshot();
+
         // Top-level = WORST of the schedulers, but DISABLED schedulers are
         // excluded from the computation (ops rule: a deliberately-toggled-off
         // scheduler mustn't trigger a critical alert). Payouts has no kill
         // switch — paying investors is never optional, so it always counts.
-        $statuses = [$payoutsStatus];
+        $statuses = [$payoutsStatus, $reconcileStatus, $queue['status']];
         if ($lateCheckEnabled) {
             $statuses[] = $lateStatus;
         }
@@ -127,13 +152,63 @@ class SchedulerHealthController extends Controller
                 'last_run_at' => $payoutsLastRunAt?->toIso8601String(),
                 'minutes_since_last_run' => $payoutsMinutesSince,
                 'expected_interval_minutes' => self::EXPECTED_INTERVAL_MIN,
+                // PAY-13: a pause is not a health degradation — informational only.
+                'payout_pause_enabled' => PayoutPauseService::isEnabled(),
                 'last_run_stats' => [
                     'status' => PlatformMetric::read('last_payouts_status'),
                     'loans_processed' => $this->intMetric('last_payouts_loans_processed'),
                     'loans_failed' => $this->intMetric('last_payouts_loans_failed'),
+                    'loans_paused' => $this->intMetric('last_payouts_loans_paused'),
+                    'pause_newly_paused' => $this->intMetric('last_payouts_pause_newly_paused'),
+                    'pause_resumed' => $this->intMetric('last_payouts_pause_resumed'),
                 ],
             ],
+
+            'reconcile' => [
+                'status' => $reconcileStatus,
+                'last_run_at' => $reconcileLastRunAt?->toIso8601String(),
+                'minutes_since_last_run' => $reconcileMinutesSince,
+                'expected_interval_minutes' => self::EXPECTED_INTERVAL_MIN,
+                'last_run_stats' => [
+                    'status' => $reconcileLastStatus,
+                    'wallets_checked' => $this->intMetric('last_reconcile_wallets_checked'),
+                    'mismatches' => $this->intMetric('last_reconcile_mismatches'),
+                ],
+            ],
+
+            'queue' => $queue,
+
+            // SEC-22: informational only — a missed run delays a closure by a day
+            // and emailOutputOnFailure covers failures; deliberately NOT in the worst-of.
+            'account_deletions' => [
+                'last_run_at' => PlatformMetric::measuredAt('last_account_deletions_run_at')?->toIso8601String(),
+                'last_run_stats' => ['status' => PlatformMetric::read('last_account_deletions_status')],
+            ],
         ], $overall === 'critical' ? 503 : 200);
+    }
+
+    /**
+     * Live view of the database queue. Every admin alert and investor mail is a
+     * queued job — a stopped Supervisor worker is otherwise invisible until
+     * somebody notices the silence. Capped at «warning»: a stuck queue delays
+     * notifications, it does not move money, so it must not flip the 503 the
+     * uptime monitor reserves for the money crons.
+     */
+    private function queueSnapshot(): array
+    {
+        $pending = (int) DB::table('jobs')->whereNull('reserved_at')->count();
+        $oldestAvailableAt = DB::table('jobs')->whereNull('reserved_at')->min('available_at');
+        $oldestWaitingSeconds = $oldestAvailableAt !== null ? max(0, now()->getTimestamp() - (int) $oldestAvailableAt) : 0;
+        $failedLast24h = (int) DB::table('failed_jobs')->where('failed_at', '>=', now()->subDay())->count();
+        $lastBusyAt = PlatformMetric::measuredAt('last_queue_busy_at');
+
+        return [
+            'status' => ($oldestWaitingSeconds > self::QUEUE_STALE_SECONDS || $failedLast24h > 0) ? 'warning' : 'healthy',
+            'pending_jobs' => $pending,
+            'oldest_waiting_seconds' => $oldestWaitingSeconds,
+            'failed_jobs_24h' => $failedLast24h,
+            'last_busy_at' => $lastBusyAt?->toIso8601String(),
+        ];
     }
 
     private function statusFromMinutes(?int $minutes): string

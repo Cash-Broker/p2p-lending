@@ -2,13 +2,17 @@
 
 namespace App\Filament\Resources\LoanResource\RelationManagers;
 
+use App\Enums\PayoutType;
 use App\Models\LoanOffer;
+use App\Services\OfferProjectionService;
+use Closure;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
+use InvalidArgumentException;
 
 /**
  * Admin management of a loan's three investor offers (rate + availability).
@@ -50,7 +54,24 @@ class OffersRelationManager extends RelationManager
                 ->label('Годишна доходност (%)')
                 ->helperText('Свободно число — задавате го за този кредит.')
                 ->numeric()->required()->step(0.01)->minValue(0.01)->maxValue(999.99)
-                ->rules(['numeric', 'min:0.01', 'max:999.99']),
+                ->rules([
+                    'numeric', 'min:0.01', 'max:999.99',
+                    // PAY-40 (audit 2026-09-01): the rate side of the same check
+                    // the loan form runs on the term — see LoanResource::assertTermAmortizes.
+                    fn (?LoanOffer $record, RelationManager $livewire): Closure => function (string $attribute, $value, Closure $fail) use ($record, $livewire) {
+                        if ($record?->payout_type !== PayoutType::Amortizing || ! is_numeric($value)) {
+                            return;
+                        }
+
+                        $term = (int) $livewire->getOwnerRecord()->term_months;
+
+                        try {
+                            app(OfferProjectionService::class)->schedule('50.00', (string) $value, $term, PayoutType::Amortizing);
+                        } catch (InvalidArgumentException) {
+                            $fail("При доходност {$value}% и срок {$term} мес. минималната инвестиция от 50 € не може да бъде амортизирана (месечната вноска не покрива лихвата). Намалете срока на кредита или сменете доходността.");
+                        }
+                    },
+                ]),
             Forms\Components\Toggle::make('is_enabled')
                 ->label('Активна оферта')
                 ->helperText('Когато е изключена, офертата не се предлага на инвеститорите.')

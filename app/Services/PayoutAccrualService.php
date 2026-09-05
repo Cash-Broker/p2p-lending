@@ -6,7 +6,7 @@ use App\Enums\PayoutType;
 use App\Models\Investment;
 use App\Models\InvestmentSchedule;
 use App\Models\Loan;
-use App\Models\Transaction;
+use App\Support\Loans\AccruedInterestLedger;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -16,7 +16,9 @@ use InvalidArgumentException;
  * The scheduled-accrual payout engine for OFFER-based loans (boss feature
  * 2026-06-23). On a given date it advances every investor's position per their
  * plan, REGARDLESS of whether the borrower has actually paid — the platform
- * accrues on schedule and carries the exposure in the `accrued` bucket.
+ * accrues on schedule and carries the exposure in the `accrued` bucket —
+ * UNTIL the loan is paused (PAY-13: Loan::isPayoutPaused(), stamp + setting);
+ * a paused loan returns paused=true with zero wallet calls.
  *
  * Per plan (the investor's snapshotted offer):
  *   • amortizing / interest-only — each due installment is RELEASED straight to
@@ -41,13 +43,13 @@ class PayoutAccrualService
     /**
      * Advance every offer-based investment of a loan to $asOf.
      *
-     * @return array{released_count:int, accrued_count:int, released_total:string, accrued_total:string}
+     * @return array{released_count:int, accrued_count:int, released_total:string, accrued_total:string, paused:bool}
      */
     public function processLoan(int $loanId, ?CarbonInterface $asOf = null): array
     {
         $asOf = $asOf ?? now();
 
-        $summary = ['released_count' => 0, 'accrued_count' => 0, 'released_total' => '0.00', 'accrued_total' => '0.00'];
+        $summary = ['released_count' => 0, 'accrued_count' => 0, 'released_total' => '0.00', 'accrued_total' => '0.00', 'paused' => false];
 
         DB::transaction(function () use ($loanId, $asOf, &$summary) {
             $loan = Loan::where('id', $loanId)->lockForUpdate()->firstOrFail();
@@ -57,6 +59,17 @@ class PayoutAccrualService
             // funding-stage loans qualify too. Terminal + default stay out.
             if (! in_array($loan->status, Loan::PAYOUT_ELIGIBLE_STATUSES, true)) {
                 throw new InvalidArgumentException('Scheduled payout cannot run for this loan status.');
+            }
+
+            // PAY-13 (owner 2026-09-03): «по график» holds UNTIL PayoutPauseService
+            // stamped the loan AND payout_pause_enabled is on. Authoritative gate
+            // under the row lock — a paused loan is a no-op for EVERY caller (cron,
+            // «Пусни плащане сега»); the withheld rows stay pending and are paid by
+            // this same code once the pause lifts.
+            if ($loan->isPayoutPaused()) {
+                $summary['paused'] = true;
+
+                return;
             }
 
             $investments = $loan->investments()
@@ -233,28 +246,11 @@ class PayoutAccrualService
     }
 
     /**
-     * Net interest currently accrued for one investment (Σ accrued − Σ released
-     * − Σ reversed), read from the immutable ledger by reference. The trailing
-     * ":" guards against investment-id prefix collisions (1 vs 11).
+     * Net interest currently accrued for one investment, read from the
+     * immutable ledger — shared definition, see AccruedInterestLedger.
      */
     private function accruedToDate(int $loanId, int $investmentId): string
     {
-        $rows = Transaction::query()
-            ->where('reference', 'like', "loan:{$loanId}:investment:{$investmentId}:%")
-            ->whereIn('type', [
-                Transaction::TYPE_INTEREST_ACCRUED,
-                Transaction::TYPE_INTEREST_RELEASED,
-                Transaction::TYPE_INTEREST_ACCRUAL_REVERSED,
-            ])
-            ->get(['type', 'amount']);
-
-        $net = '0.00';
-        foreach ($rows as $row) {
-            $net = $row->type === Transaction::TYPE_INTEREST_ACCRUED
-                ? bcadd($net, (string) $row->amount, 2)
-                : bcsub($net, (string) $row->amount, 2);
-        }
-
-        return $net;
+        return AccruedInterestLedger::netFor($loanId, $investmentId);
     }
 }

@@ -2,12 +2,13 @@
 
 namespace App\Console\Commands;
 
+use App\Models\PlatformMetric;
 use App\Models\Transaction;
 use App\Models\Wallet;
+use App\Support\OpsAlert;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 /**
  * Verifies ledger integrity: sum of all transactions must equal wallet balances.
@@ -106,75 +107,100 @@ class ReconcileLedger extends Command
 
         $mismatches = 0;
         $mismatchDetails = [];
+        $walletsChecked = Wallet::count();
 
-        Wallet::chunk(100, function ($wallets) use (&$mismatches, &$mismatchDetails) {
-            foreach ($wallets as $wallet) {
-                $userId = $wallet->user_id;
+        // One transaction for the whole pass (audit 2026-09-01, PAY-02). Under
+        // MySQL's default REPEATABLE READ every SELECT below sees the same
+        // snapshot, so a WalletService commit landing between "read the wallet
+        // row" and "sum its ledger" can no longer produce a spurious «stop
+        // withdrawals» alert — or mask a real drift by cancelling it out.
+        DB::transaction(function () use (&$mismatches, &$mismatchDetails) {
+            Wallet::chunk(100, function ($wallets) use (&$mismatches, &$mismatchDetails) {
+                foreach ($wallets as $wallet) {
+                    $userId = $wallet->user_id;
+                    $errors = [];
+                    $expected = $this->expectedBuckets($userId, $errors);
 
-                $sums = Transaction::where('user_id', $userId)
-                    ->select('type', DB::raw('SUM(amount) as total'))
-                    ->groupBy('type')
-                    ->pluck('total', 'type');
+                    $actualAvailablePlusReserved = bcadd($wallet->available, $wallet->reserved, 2);
 
+                    if (bccomp($actualAvailablePlusReserved, $expected['cash'], 2) !== 0) {
+                        $errors[] = "available+reserved: expected={$expected['cash']}, actual={$actualAvailablePlusReserved}";
+                    }
+
+                    if (bccomp($wallet->invested, $expected['invested'], 2) !== 0) {
+                        $errors[] = "invested: expected={$expected['invested']}, actual={$wallet->invested}";
+                    }
+
+                    if (bccomp($wallet->earned, $expected['earned'], 2) !== 0) {
+                        $errors[] = "earned: expected={$expected['earned']}, actual={$wallet->earned}";
+                    }
+
+                    if (bccomp($wallet->accrued, $expected['accrued'], 2) !== 0) {
+                        $errors[] = "accrued: expected={$expected['accrued']}, actual={$wallet->accrued}";
+                    }
+
+                    if (! empty($errors)) {
+                        $mismatches++;
+                        $errorMsg = "Ledger mismatch for user #{$userId}: ".implode('; ', $errors);
+                        $this->error($errorMsg);
+                        Log::error($errorMsg);
+
+                        $mismatchDetails[] = [
+                            'user_id' => $userId,
+                            'wallet' => [
+                                'available' => $wallet->available,
+                                'reserved' => $wallet->reserved,
+                                'invested' => $wallet->invested,
+                                'earned' => $wallet->earned,
+                            ],
+                            'expected' => [
+                                'available+reserved' => $expected['cash'],
+                                'invested' => $expected['invested'],
+                                'earned' => $expected['earned'],
+                            ],
+                            'errors' => $errors,
+                        ];
+                    }
+                }
+            });
+
+            // Ledger rows whose wallet row is gone (GDPR account closure deletes
+            // `wallets`, never `transactions`). WalletService cannot write for
+            // such a user any more, so this is not a money leak — but the
+            // platform-wide identity «Σ ledger = Σ wallets» is only provable if
+            // every orphaned ledger nets to zero in every BALANCE bucket. `earned`
+            // is a lifetime counter (every interest type maps +1, nothing maps −1),
+            // so a closed investor who ever received interest legitimately leaves
+            // earned > 0 behind — it is not compared (review 2026-09-05).
+            $orphanUserIds = Transaction::query()
+                ->select('user_id')
+                ->distinct()
+                ->whereNotIn('user_id', Wallet::query()->select('user_id'))
+                ->pluck('user_id');
+
+            foreach ($orphanUserIds as $userId) {
                 $errors = [];
+                $expected = $this->expectedBuckets((int) $userId, $errors);
 
-                // Default-deny: any persisted type without a map entry is a
-                // hard error, not a silently-dropped sum.
-                $unknownTypes = array_diff($sums->keys()->all(), array_keys(self::LEDGER_MAP));
-                foreach ($unknownTypes as $unknownType) {
-                    $errors[] = "unmapped transaction type '{$unknownType}' (sum={$sums[$unknownType]})";
-                }
-
-                $expectedCash = '0.00';
-                $expectedInvested = '0.00';
-                $expectedEarned = '0.00';
-                $expectedAccrued = '0.00';
-
-                foreach (self::LEDGER_MAP as $type => $signs) {
-                    $amount = (string) ($sums[$type] ?? '0.00');
-                    $expectedCash = bcadd($expectedCash, bcmul((string) $signs['cash'], $amount, 2), 2);
-                    $expectedInvested = bcadd($expectedInvested, bcmul((string) $signs['invested'], $amount, 2), 2);
-                    $expectedEarned = bcadd($expectedEarned, bcmul((string) $signs['earned'], $amount, 2), 2);
-                    $expectedAccrued = bcadd($expectedAccrued, bcmul((string) $signs['accrued'], $amount, 2), 2);
-                }
-
-                $expectedAvailablePlusReserved = $expectedCash;
-                $actualAvailablePlusReserved = bcadd($wallet->available, $wallet->reserved, 2);
-
-                if (bccomp($actualAvailablePlusReserved, $expectedAvailablePlusReserved, 2) !== 0) {
-                    $errors[] = "available+reserved: expected={$expectedAvailablePlusReserved}, actual={$actualAvailablePlusReserved}";
-                }
-
-                if (bccomp($wallet->invested, $expectedInvested, 2) !== 0) {
-                    $errors[] = "invested: expected={$expectedInvested}, actual={$wallet->invested}";
-                }
-
-                if (bccomp($wallet->earned, $expectedEarned, 2) !== 0) {
-                    $errors[] = "earned: expected={$expectedEarned}, actual={$wallet->earned}";
-                }
-
-                if (bccomp($wallet->accrued, $expectedAccrued, 2) !== 0) {
-                    $errors[] = "accrued: expected={$expectedAccrued}, actual={$wallet->accrued}";
+                foreach (['cash', 'invested', 'accrued'] as $bucket) {
+                    if (bccomp($expected[$bucket], '0', 2) !== 0) {
+                        $errors[] = "no wallet row, but ledger expects {$bucket}={$expected[$bucket]}";
+                    }
                 }
 
                 if (! empty($errors)) {
                     $mismatches++;
-                    $errorMsg = "Ledger mismatch for user #{$userId}: ".implode('; ', $errors);
+                    $errorMsg = "Ledger mismatch for user #{$userId} (wallet deleted): ".implode('; ', $errors);
                     $this->error($errorMsg);
                     Log::error($errorMsg);
 
                     $mismatchDetails[] = [
                         'user_id' => $userId,
-                        'wallet' => [
-                            'available' => $wallet->available,
-                            'reserved' => $wallet->reserved,
-                            'invested' => $wallet->invested,
-                            'earned' => $wallet->earned,
-                        ],
+                        'wallet' => ['available' => '—', 'reserved' => '—', 'invested' => '—', 'earned' => '—'],
                         'expected' => [
-                            'available+reserved' => $expectedAvailablePlusReserved,
-                            'invested' => $expectedInvested,
-                            'earned' => $expectedEarned,
+                            'available+reserved' => $expected['cash'],
+                            'invested' => $expected['invested'],
+                            'earned' => $expected['earned'],
                         ],
                         'errors' => $errors,
                     ];
@@ -190,28 +216,76 @@ class ReconcileLedger extends Command
                 $this->sendAlertEmail($mismatches, $mismatchDetails);
             }
 
+            $this->recordMetrics('mismatch', $walletsChecked, $mismatches);
+
             return Command::FAILURE;
         }
 
         $this->info('OK: All wallets reconciled successfully.');
+        $this->recordMetrics('ok', $walletsChecked, 0);
 
         return Command::SUCCESS;
     }
 
+    /**
+     * Audit 2026-09-01 (A3): the health endpoint reads these — until now the
+     * only trace of a reconciliation run was its e-mail. A metric write must
+     * never change the exit code of the check itself.
+     */
+    private function recordMetrics(string $status, int $walletsChecked, int $mismatches): void
+    {
+        try {
+            PlatformMetric::record('last_reconcile_run_at', now()->toIso8601String());
+            PlatformMetric::record('last_reconcile_status', $status);
+            PlatformMetric::record('last_reconcile_wallets_checked', (string) $walletsChecked);
+            PlatformMetric::record('last_reconcile_mismatches', (string) $mismatches);
+        } catch (\Throwable $e) {
+            Log::warning('ledger:reconcile metrics not recorded', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Rebuild the four reconstructable buckets for one user from the ledger
+     * via LEDGER_MAP. Unmapped persisted types are appended to $errors
+     * (default-deny) rather than silently dropped from the sums.
+     *
+     * @param  array<int, string>  $errors
+     * @return array{cash: string, invested: string, earned: string, accrued: string}
+     */
+    private function expectedBuckets(int $userId, array &$errors): array
+    {
+        $sums = Transaction::where('user_id', $userId)
+            ->select('type', DB::raw('SUM(amount) as total'))
+            ->groupBy('type')
+            ->pluck('total', 'type');
+
+        $unknownTypes = array_diff($sums->keys()->all(), array_keys(self::LEDGER_MAP));
+        foreach ($unknownTypes as $unknownType) {
+            $errors[] = "unmapped transaction type '{$unknownType}' (sum={$sums[$unknownType]})";
+        }
+
+        $expected = ['cash' => '0.00', 'invested' => '0.00', 'earned' => '0.00', 'accrued' => '0.00'];
+
+        foreach (self::LEDGER_MAP as $type => $signs) {
+            $amount = (string) ($sums[$type] ?? '0.00');
+            foreach ($expected as $bucket => $_) {
+                $expected[$bucket] = bcadd($expected[$bucket], bcmul((string) $signs[$bucket], $amount, 2), 2);
+            }
+        }
+
+        return $expected;
+    }
+
     private function sendAlertEmail(int $count, array $details): void
     {
-        $adminEmail = config('app.admin_email', 'yordanyordanov0104@gmail.com');
+        // Recipient = config('app.admin_email') / ADMIN_ALERT_EMAIL — the single
+        // ops-alert address, no longer hardcoded here (2026-09-03).
+        $sent = OpsAlert::mail("Ledger mismatch detected — {$count} wallet(s)", $this->formatEmailBody($count, $details));
 
-        try {
-            Mail::raw($this->formatEmailBody($count, $details), function ($message) use ($adminEmail, $count) {
-                $message->to($adminEmail)
-                    ->subject("[Vamaasset ALERT] Ledger mismatch detected — {$count} wallet(s)");
-            });
-
-            $this->info("Alert email sent to {$adminEmail}");
-        } catch (\Throwable $e) {
-            Log::error('Failed to send ledger reconciliation alert email', ['error' => $e->getMessage()]);
-            $this->error("Failed to send alert email: {$e->getMessage()}");
+        if ($sent) {
+            $this->info('Alert email sent to '.OpsAlert::email());
+        } else {
+            $this->error('Failed to send alert email — see the application log.');
         }
     }
 

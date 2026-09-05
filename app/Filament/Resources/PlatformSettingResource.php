@@ -92,7 +92,12 @@ class PlatformSettingResource extends Resource
                     ->dehydrated(false)
                     ->afterStateHydrated(fn ($component, $record) => $component->state(
                         $record && filter_var($record->value, FILTER_VALIDATE_BOOLEAN)
-                    )),
+                    ))
+                    ->helperText(fn ($record) => match ($record?->key) {
+                        'payout_pause_enabled' => 'Изключено = платформата плаща по график независимо от кредитополучателя (решение на Рени). Включено = след прага дни (payout_pause_late_days) авансирането спира за закъснелите кредити; изключването пуска парите при следващото плащане (PAY-13).',
+                        'borrower_tracker_auto_generate' => 'Изключено (по подразбиране) = план на кредитополучателя има само там, където е създаден ръчно; офертните кредити не стават „закъснели“ сами. Включвай САМО ако вноските на длъжника ще се отбелязват редовно — иначе всеки нов кредит става „закъснял“ 10 дни след първия падеж и инвеститорите получават имейл.',
+                        default => null,
+                    }),
 
                 // int → numeric TextInput, with grace_period_days range guard
                 Forms\Components\TextInput::make('value_int')
@@ -101,12 +106,22 @@ class PlatformSettingResource extends Resource
                     ->visible(fn ($record) => $record?->type === 'int')
                     ->dehydrated(false)
                     ->afterStateHydrated(fn ($component, $record) => $component->state($record?->value))
-                    ->rules(fn ($record) => $record?->key === 'grace_period_days'
-                        ? ['integer', 'min:0', 'max:30']
-                        : ['integer'])
-                    ->helperText(fn ($record) => $record?->key === 'grace_period_days'
-                        ? 'Брой дни след падежа преди вноска да бъде маркирана като закъсняла. Диапазон 0–30.'
-                        : null),
+                    ->rules(fn ($record) => match ($record?->key) {
+                        'grace_period_days' => ['integer', 'min:0', 'max:30'],
+                        'withdrawal_new_iban_cooldown_hours' => ['integer', 'min:0', 'max:720'],
+                        'account_deletion_waiting_days' => ['integer', 'min:1', 'max:60'],
+                        'kyc_retention_years' => ['integer', 'min:1', 'max:30'],
+                        'payout_pause_late_days' => ['integer', 'min:0', 'max:365'],
+                        default => ['integer'],
+                    })
+                    ->helperText(fn ($record) => match ($record?->key) {
+                        'grace_period_days' => 'Брой дни след падежа преди вноска да бъде маркирана като закъсняла. Диапазон 0–30.',
+                        'withdrawal_new_iban_cooldown_hours' => 'Часове след потвърждаването на нов IBAN, преди към него да може да се заяви теглене. 0 = без изчакване. Одобрено: 24 (SEC-01).',
+                        'account_deletion_waiting_days' => 'Дни между потвърждението по имейл и реалното закриване на акаунт. Одобрено: 7 (SEC-22). Важи за бъдещи потвърждения.',
+                        'kyc_retention_years' => 'Години, през които документите за самоличност и съгласията на закрит акаунт се пазят в KYC архива (ЗМИП чл. 67 — 5). Важи за бъдещи закривания.',
+                        'payout_pause_late_days' => 'Брой дни след като първата вноска на кредитополучателя стане закъсняла, преди платформата да СПРЕ да плаща инвеститорите по график за този кредит. Действа само при включено payout_pause_enabled. 0 = още същата нощ (04:00 след проверката в 03:30). Диапазон 0–365 (PAY-13).',
+                        default => null,
+                    }),
 
                 // float → numeric with decimals
                 Forms\Components\TextInput::make('value_float')
@@ -139,7 +154,7 @@ class PlatformSettingResource extends Resource
             Section::make()->schema([
                 Forms\Components\Placeholder::make('warning')
                     ->label('')
-                    ->content('⚠️ Промяната влиза в сила при следващото daily late-check изпълнение (03:30). Аудит запис се записва автоматично.'),
+                    ->content('⚠️ Промяната влиза в сила при следващото нощно изпълнение (03:30 late-check / 04:00 плащания). Аудит запис се записва автоматично.'),
             ]),
         ]);
     }

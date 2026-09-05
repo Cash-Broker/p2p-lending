@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { observeBuild } from '../utils/buildVersion'
 import { shouldForceRelogin, expiredLoginUrl } from '../utils/sessionGuard'
+import { requiresIdempotencyKey } from '../utils/idempotency'
 // Static on purpose (auth.js also imports this module — the cycle is safe:
 // both sides only touch the other's export inside runtime functions). The
 // expiry check below must run SYNCHRONOUSLY in the rejection chain: a lazy
@@ -48,7 +49,9 @@ const api = axios.create({
 /**
  * Auto-inject X-Idempotency-Key on money-moving POST requests that require it.
  *
- * The backend rejects POST /loans/{id}/invest without this header (422).
+ * The backend rejects POST /loans/{id}/invest without this header (422);
+ * POST /withdrawal accepts it and returns the same request on a retry
+ * (audit 2026-09-01, PAY-03). The list lives in utils/idempotency.js.
  * The header lets the backend deduplicate client retries — if a request is sent
  * twice with the same key, the second call returns the original investment
  * instead of creating a duplicate.
@@ -60,9 +63,7 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const method = (config.method || '').toLowerCase()
   const url = config.url || ''
-  const requiresIdempotencyKey = method === 'post' && /\/loans\/[^/]+\/invest$/.test(url)
-
-  if (requiresIdempotencyKey) {
+  if (requiresIdempotencyKey(method, url)) {
     const headers = config.headers || {}
     const hasKey = !!(headers['X-Idempotency-Key'] || headers['x-idempotency-key'])
     if (!hasKey) {

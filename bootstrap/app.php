@@ -7,6 +7,7 @@ use App\Http\Middleware\EnsureKycApproved;
 use App\Http\Middleware\SecurityHeaders;
 use App\Services\TelegramService;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -23,11 +24,17 @@ return Application::configure(basePath: dirname(__DIR__))
     // mechanism, greppable, pinned by EventListenerRegistrationTest.
     ->withEvents(discover: false)
     ->withSchedule(function (Schedule $schedule): void {
+        // Every cron failure reaches the ops address — «ако някоя операция не
+        // мине» (owner 2026-09-03). Output capture is already on for each command.
+        $opsEmail = (string) config('app.admin_email');
+
         // Ledger reconciliation — daily at 03:00, sends email alert on mismatch
         $schedule->command('ledger:reconcile --notify')
             ->dailyAt('03:00')
             ->withoutOverlapping()
-            ->runInBackground();
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/ledger-reconcile.log'))
+            ->emailOutputOnFailure($opsEmail);
 
         // Late-loan automation — daily at 03:30, after ledger reconciliation
         // has finished and the DB is in a clean state. The 60-minute lock TTL
@@ -40,7 +47,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ->dailyAt('03:30')
             ->withoutOverlapping(60)
             ->runInBackground()
-            ->appendOutputTo(storage_path('logs/loans-process-late.log'));
+            ->appendOutputTo(storage_path('logs/loans-process-late.log'))
+            ->emailOutputOnFailure($opsEmail);
 
         // F2 — buyback-eligibility detection. Daily at 03:45, after the
         // late-detection cron has transitioned loans into/out of 'late'
@@ -56,7 +64,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ->dailyAt('03:45')
             ->withoutOverlapping(60)
             ->runInBackground()
-            ->appendOutputTo(storage_path('logs/loans-detect-buyback-eligible.log'));
+            ->appendOutputTo(storage_path('logs/loans-detect-buyback-eligible.log'))
+            ->emailOutputOnFailure($opsEmail);
 
         // Scheduled payouts — daily at 04:00, after late-detection has settled
         // loan statuses. Accrues/releases each investor's due amount per their
@@ -66,7 +75,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ->dailyAt('04:00')
             ->withoutOverlapping(60)
             ->runInBackground()
-            ->appendOutputTo(storage_path('logs/loans-process-payouts.log'));
+            ->appendOutputTo(storage_path('logs/loans-process-payouts.log'))
+            ->emailOutputOnFailure($opsEmail);
 
         // Conditional bonuses — release the ones whose investment condition is
         // now met (Reni 2026-08-18). Runs 15 minutes AFTER the payout cron on
@@ -77,7 +87,26 @@ return Application::configure(basePath: dirname(__DIR__))
             ->dailyAt('04:15')
             ->withoutOverlapping(30)
             ->runInBackground()
-            ->appendOutputTo(storage_path('logs/bonuses-release-eligible.log'));
+            ->appendOutputTo(storage_path('logs/bonuses-release-eligible.log'))
+            ->emailOutputOnFailure($opsEmail);
+
+        // SEC-22 (owner 2026-09-03): finalise confirmed account closures whose
+        // waiting period ran out — after every money cron so the ledger is quiet
+        // when a wallet row disappears. Kill switch account_deletion_finalize_enabled.
+        $schedule->command('accounts:finalize-deletions')
+            ->dailyAt('04:30')
+            ->withoutOverlapping(30)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/accounts-finalize-deletions.log'))
+            ->emailOutputOnFailure($opsEmail);
+
+        // SEC-16: purge KYC archives whose ЗМИП clock ran out. Kill switch kyc_retention_purge_enabled.
+        $schedule->command('kyc:purge-retained')
+            ->dailyAt('05:00')
+            ->withoutOverlapping(30)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/kyc-purge-retained.log'))
+            ->emailOutputOnFailure($opsEmail);
 
         // Daily morning digest — Telegram summary (INFO tier, silent) of
         // platform state: new registrations, KYC pending, deposits awaiting
@@ -91,7 +120,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ->dailyAt('09:00')
             ->withoutOverlapping(15)
             ->runInBackground()
-            ->appendOutputTo(storage_path('logs/telegram-digest.log'));
+            ->appendOutputTo(storage_path('logs/telegram-digest.log'))
+            ->emailOutputOnFailure($opsEmail);
 
         // Investor weekly earnings bulletin (Reni 2026-08-13) — Monday
         // mornings after the admin digest. Queued mails; investors with
@@ -101,7 +131,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ->weeklyOn(1, '09:30')
             ->withoutOverlapping(30)
             ->runInBackground()
-            ->appendOutputTo(storage_path('logs/investors-weekly-earnings.log'));
+            ->appendOutputTo(storage_path('logs/investors-weekly-earnings.log'))
+            ->emailOutputOnFailure($opsEmail);
 
         // Morning Web Push digest (2026-08-17): the night's 04:00 payout run
         // batched into one «получихте X € лихва» push per subscribed
@@ -111,7 +142,16 @@ return Application::configure(basePath: dirname(__DIR__))
             ->dailyAt('09:05')
             ->withoutOverlapping(15)
             ->runInBackground()
-            ->appendOutputTo(storage_path('logs/push-payout-digest.log'));
+            ->appendOutputTo(storage_path('logs/push-payout-digest.log'))
+            ->emailOutputOnFailure($opsEmail);
+
+        // Audit 2026-09-01 (A3): every admin alert and investor mail is queued,
+        // so a stopped worker fails silently. queue:monitor raises QueueBusy
+        // (→ TelegramQueueBusyAlert) once the backlog passes the threshold.
+        $schedule->command('queue:monitor database:default --max=100')
+            ->everyFifteenMinutes()
+            ->withoutOverlapping(10)
+            ->emailOutputOnFailure($opsEmail);
     })
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -158,9 +198,15 @@ return Application::configure(basePath: dirname(__DIR__))
                 $request = request();
                 $url = $request ? ($request->method().' '.$request->fullUrl()) : 'CLI / queue';
                 $userId = optional(auth()->user())->id ?? '(none)';
+                // A failed SQL statement is echoed with its bound values (names,
+                // IBANs, amounts) — Telegram gets the class and location only;
+                // the full text stays in the application log.
+                $summary = $e instanceof QueryException
+                    ? get_class($e).' (SQL details withheld — see the application log)'
+                    : get_class($e).': '.$e->getMessage();
                 $svc->critical(
                     'Production Exception',
-                    mb_substr(get_class($e).': '.$e->getMessage(), 0, 800),
+                    mb_substr($summary, 0, 800),
                     [
                         'url' => mb_substr($url, 0, 200),
                         'user_id' => $userId,

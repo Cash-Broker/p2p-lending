@@ -25,7 +25,9 @@ use Throwable;
 class TelegramService
 {
     private const API_BASE = 'https://api.telegram.org/bot';
+
     private const TIMEOUT_SECONDS = 5;
+
     private const MAX_MESSAGE_CHARS = 4000; // Telegram limit is 4096; 4000 leaves headroom.
 
     public function __construct(
@@ -76,7 +78,8 @@ class TelegramService
 
             return true;
         } catch (Throwable $e) {
-            Log::warning('Telegram exception', ['error' => $e->getMessage()]);
+            // The request URL carries the bot token — never let it reach the log.
+            Log::warning('Telegram exception', ['error' => str_replace((string) $this->token, '[bot-token]', $e->getMessage())]);
 
             return false;
         }
