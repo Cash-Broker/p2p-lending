@@ -1,7 +1,8 @@
 # CLAUDE.md — Vamaasset P2P Lending Platform
 
-> This file is deliberately **.gitignored** (audit C3/C4 untracked internal docs — commit `fcebc15`).
-> Keep it local; never `git add -f` it. Update it when architecture-level facts change.
+> This file IS tracked (owner decision 2026-09-05: the GitHub repo is private by default and only
+> unlocked occasionally, so CLAUDE.md and `docs/audits/` are committed). Never put secrets in it.
+> Update it when architecture-level facts change.
 > Business-level documentation (BG, for the client) lives in `docs/BIZNES-DOKUMENTACIA.md` (tracked).
 
 ## Role
@@ -263,6 +264,47 @@ work deliberately stopped at the offer engine for exactly this reason).
   supply amounts (the old unbacked-mint path is closed). Duplicate guard: row `status='paid'`.
 - Admin never types repayment amounts anywhere. The installment IS the amount.
 
+**3. PAY-13 — borrower tracker + payout pause for OFFER loans (owner 2026-09-03, shipped 2026-09-05)**
+
+- Offer loans now become `late` through a BORROWER TRACKING PLAN: `amortization_schedules` rows with
+  `plan_kind='borrower_tracker'` (NULL = legacy plan, byte-identical). Linear split (Σ principal ==
+  `amortizationBase()`, last row absorbs the remainder), informational interest at `interest_rate_annual ??
+  interest_rate`; amounts are NEVER distributed (RepaymentService refuses offer loans). `BorrowerPlanService`:
+  `generate` (active|late offer loans only, never overwrites), `generateAtActivation` (from `DB::afterCommit` in
+  `InvestmentService::invest`, first due = today + 1 month, swallows + Telegram on failure) — **gated by `borrower_tracker_auto_generate`, FALSE by default (owner
+  2026-09-05: Reni has never created a plan on any loan and will not record borrower installments by hand; PAY-13 is
+  DORMANT until an automation is chosen — bank-statement import matched on `contract_number`, or an exception-driven
+  «длъжникът не плати» flag). Owner 2026-09-05: every live loan is `payout_mode=automatic` and Reni wants EVERYTHING
+  automatic — never design a recurring admin duty; a fact from outside the platform needs an automatic feed**, `recordBorrowerPayment` /
+  `markPaidThrough` (status paid, `paid_at = now()` so recovery rule R1 sees a real recovery, `borrower_paid_on`,
+  `recorded_by` plain admin id). Zero WalletService calls — the architecture test enforces it.
+- **Every new `amortizationSchedules()` reader picks a scope**: `legacyPlan()` for anything money/funding (fundingCap,
+  UpcomingDueDatesWidget, BonusService fallback, AccruedEarnings legacy path, `LoanController::show`, the auto-repay
+  borrower guard) or `borrowerTracker()`; LateDetection / LoanStatusUpdater / BuybackEligibility read both on purpose.
+  `refreshDaysLateSnapshots` ticks only rows of active|late|default loans (no zombie counters on closed loans); a
+  FULL early closure marks open tracker rows paid (buyback already did).
+- Admin duty (Reni): record the borrower's installments in the loan's «Погасителен план» tab («Платена от
+  кредитополучателя» per row, «Отбележи платени до дата» bulk) BEFORE due + `grace_period_days`, otherwise the loan
+  goes `late` at 03:30 (investor e-mail with THEIR outstanding = Σ their pending|late investment rows, Buyback
+  Queue, 🟠 Telegram). Live loans predating the feature get their tracker by hand («Създай план на
+  кредитополучателя»: first due + «платени до», acknowledgement checkbox when rows would already be overdue).
+  Digest counts «вноски с изтекъл падеж, неотбелязани» (drives the action-items mail) and «офертни кредити без план».
+- **Payout pause** — `payout_pause_enabled` ships FALSE (Reni's «по график» unchanged until she flips it) +
+  `payout_pause_late_days` (30, placeholder). `PayoutPauseService::reconcile()` is step 0 of `loans:process-payouts`
+  (NOT behind `late_check_enabled`): stamps `loans.payouts_paused_at` when the OLDEST late tracker row's
+  `became_late_at` is ≥ threshold days old (row clock — a manual `late → active` Select flip releases nothing),
+  clears it (`payouts_resumed`, `resume_reason` borrower_rows_settled|setting_disabled) only for payout-eligible
+  loans; default/terminal keep the stamp silently. Events ride `status_changed` with NULL/NULL statuses +
+  `metadata.kind`. The gate is `Loan::isPayoutPaused()` (= stamp AND setting) inside `PayoutAccrualService::
+  processLoan()` under the loan lock → `paused=true`, zero wallet calls, for cron AND «Пусни плащане сега».
+  Withheld investor rows stay `pending` (API derives `withheld`; SPA shows «Задържана» / «плащанията са спрени»);
+  recovery pays them through the same engine exactly once. Investors get `LoanPayoutsPausedNotification`
+  (wording awaits Reni before the flag is ever on), admins `PayoutsPausedAdminNotification` + 🟠.
+  Funding-stage offer loans are NOT covered (no `funding → late` edge — open question).
+- Test authors: with the seeded default an offer loan activated via `InvestmentService` has NO tracker (old shape,
+  never goes late). Tests that exercise the tracker set `PlatformSetting::set('borrower_tracker_auto_generate', true)`
+  BEFORE the invest, or call `BorrowerPlanService::generate()` directly.
+
 ## Buyback (F2) / Early repayment (F3) / Fees (F4) / APR (F5)
 
 - **Buyback:** cron `loans:detect-buyback-eligible` 03:45 flags late/default loans past
@@ -458,7 +500,9 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
   `BeneficialOwner` (UBO, PEP flag), validators ValidEgn/ValidEik/ValidVat.
 - Encrypted-at-rest (`encrypted` cast): Borrower PII, IBANs (WithdrawalRequest, SavedIban),
   LegalEntityProfile ids, BeneficialOwner ids.
-- GDPR deletion = anonymization (`AccountDeletionService`); blocked while investments active.
+- GDPR deletion = anonymization (`AccountDeletionService`); blocked while investments active. Since 2026-09-05 it is
+  request → e-mail confirm → 7-day wait → 04:30 cron (SEC-22) and keeps a KYC archive (SEC-16) — see the group-B
+  section under «Audit 2026-09-01».
 
 ## Scheduler & ops
 
@@ -468,8 +512,10 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 | 03:00                                                                                                 | `ledger:reconcile --notify`       | mismatch ⇒ email + "stop withdrawals"                                                                                    |
 | 03:30                                                                                                 | `loans:process-late`              | F1: late detection + recovery + auto-repay; flags `--dry-run --loan= --detail --force`; kill switch `late_check_enabled` |
 | 03:45                                                                                                 | `loans:detect-buyback-eligible`   | F2; same flags; kill switch `buyback_check_enabled`; must run after F1                                                   |
-| 04:00                                                                                                 | `loans:process-payouts`           | offer payout engine, automatic loans only                                                                                |
+| 04:00                                                                                                 | `loans:process-payouts`           | offer payout engine, automatic loans only; step 0 = PAY-13 pause reconciler (`payout_pause_enabled`, `payout_pause_late_days`) |
 | 04:15                                                                                                 | `bonuses:release-eligible`        | conditional bonuses whose condition now holds (flags `--dry-run --user=`); runs after the payout cron marks installments paid |
+| 04:30                                                                                                 | `accounts:finalize-deletions`     | SEC-22: anonymises confirmed closures whose waiting period ran out (flags `--dry-run --user=`); kill switch `account_deletion_finalize_enabled`; metrics `last_account_deletions_*` (informational in health) |
+| 05:00                                                                                                 | `kyc:purge-retained`              | SEC-16: purges KYC archives past `retained_until` (flags `--dry-run --retention=`); kill switch `kyc_retention_purge_enabled` |
 | 09:00                                                                                                 | `telegram:digest`                 | BG morning digest (INFO tier, silent) + admin ACTION-ITEMS EMAIL (`AdminActionItemsNotification`, queued, only when KYC/deposits/withdrawals/buyback > 0, only to role=admin; independent of Telegram config). Since 2026-08-07 the digest email is a REMINDER backstop — the primary admin alerting is event-driven (see KYC section) |
 
 - Health: `GET /api/health/scheduler` (public, 60/min) — F1 flat fields + nested `buyback`
@@ -594,6 +640,95 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
   `scrollBehavior` was tried and removed on purpose: defining one flips
   `history.scrollRestoration` to 'manual' for the WHOLE SPA and restores position before
   async pages have their rows. Sitemap entries are hand-maintained (`public/sitemap.xml`).
+
+## Audit 2026-09-01 → fix batch A (2026-09-03) — facts that now hold
+
+Reports: `docs/audits/2026-09-01-fable51/` (BG); plan + status: `05-fix-plan.md`. Group A done
+(uncommitted at time of writing), group B = questions for Reni, group C = needs sign-off.
+
+- `App\Exceptions\InsufficientBalanceException` (subclass of InvalidArgumentException) is the
+  ONLY wallet-shortfall signal from `WalletService`; `LoanController::invest` maps just that to
+  422 — every other exception from invest stays 500 + CRITICAL. Never widen that catch again.
+- Amortizing annuity can go negative in the last row (50 € at 12/16/20 % from ~100–119 months;
+  ≤ 84 months clean). Guards: generators throw; loan form (`LoanResource::assertTermAmortizes`)
+  and offer rate edit refuse the pair; `offer-quotes` answers 422. There is NO term cap (Reni:
+  everything editable) — a product limit is a group-B question.
+- Early closure: residual `accrued` is written off per EMPTIED POSITION (full closure or a
+  partial that hands an investor their whole outstanding); amount in
+  `loan_early_closures.accrued_written_off`; `request_token` (Hidden per opened modal) makes a
+  double submit a no-op under the loan lock.
+- Withdrawals: `X-Idempotency-Key` (SPA `utils/idempotency.js`) → `withdrawal_requests.idempotency_key`;
+  approve refuses non-approved KYC (BG toast); fee-swallowed amounts refused at REQUEST time;
+  `approved_by/approved_at/processed_by` + `deposit_requests.approved_by` are plain ids, no FK.
+- Contracts: `investment_contracts.template_hash` (sha256 of the Blade file at conclusion);
+  render throws on mismatch — edit v1 and every download 500s. NULL (pre-feature) renders.
+- Throttle rule: ALWAYS give `throttle:N,1,<prefix>` a prefix — without one every throttled
+  route shares one bucket per user (that bug blocked withdrawals after 5 contract previews).
+- Health `/api/health/scheduler` now has `reconcile` (null/stale/mismatch → critical, in the
+  worst-of) and `queue` (max warning). **Deploy step: run `php artisan ledger:reconcile` once
+  after deploy** or health is 503 until 03:00. `queue:monitor database:default --max=100`
+  every 15 min → `TelegramQueueBusyAlert` (registered in AppServiceProvider).
+- Payout run with `loans_failed > 0` → `PayoutRunFailedAdminNotification` (mail+bell) + 🔴.
+- Audit trail: `Auditable` also on SavedIban/InvestmentSchedule/AmortizationSchedule/Originator/
+  LegalEntityProfile/BeneficialOwner; e-mail masked, eik/egn/kyc paths/bank_reference redacted;
+  `AuditLog::recordAccess()` writes `viewed` rows for KYC files and contract PDFs.
+- Architecture tests (`tests/Feature/AuditFixes2026/InvariantSuiteTest.php`): no new `(float)` in
+  app/Services|app/Http outside the allowlist; `transactions` rows and wallet buckets are written
+  only in `WalletService`. A failing one is a design conversation, not a test to edit.
+- `/admin/trust-ip` link works only for the signed-in addressed admin. «Нов линк» rotates a
+  private loan's token and deletes its grants (investors keep access via the investment).
+
+Group-B decisions implemented 2026-09-03 (owner Yordan; Reni's earlier decisions untouched):
+- **PAY-31** «без одобрен KYC няма депозит»: `DepositService::approve` throws DomainException unless
+  `kyc_status === 'approved'`; the DEP code is still issued pre-KYC (investor sees bank details).
+- **PAY-24** fee disclosed = fee charged: `withdrawal_requests.fee_quoted` stamped in
+  `createRequest`, `approve()` charges it; NULL (pre-column rows) → live quote.
+- **Ops alerts** `config('app.admin_email')` (`ADMIN_ALERT_EMAIL`, default = Yordan's address):
+  `App\Support\OpsAlert::mail()` is SYNCHRONOUS (queue may be down); every scheduled command
+  has `emailOutputOnFailure`; reconcile mismatch, failed payout run and QueueBusy mail it.
+- **SEC-11** «Покажи IBAN» (WithdrawalRequestResource, approved|processed only): admin password
+  via `AdminReauthenticationService` (5 failures / 15 min), `audit_logs` `viewed` row BEFORE the
+  reveal (suffix only), 2-minute cache ticket → `show_iban` modal. Filament re-checks visibility
+  at call time, so hidden actions are no-ops; the in-closure status re-read is the belt.
+- **PAY-30** `funding → repaid` is in ALLOWED_TRANSITIONS (system only; blocklist keeps it out of
+  the Select). `LoanStatusUpdaterService::autoRepayCompletedLoans` sweeps active+funding;
+  `ScheduledPayoutService::runForLoan` calls `autoRepayLoanIfComplete` for funding loans right
+  after paying them; `InvestmentService::validateInvestment` refuses a funding loan whose rows
+  are all paid/closed; early closure (full/partial) works from `funding`. LoanEvent
+  `from_status` is the real one (was hardcoded `active`).
+
+Group-B decisions implemented 2026-09-05 (owner Yordan; PAY-18/19 designed only — LEDGER_MAP sign-off pending, see
+`05-fix-plan.md` «PAY-18/19 — предложение за sign-off»):
+- **SEC-01** new saved IBAN → signed confirmation e-mail (`/ibans/confirm/{iban}/{token}`, 60-min token, resend 3/10 min);
+  withdrawals only to a CONFIRMED saved IBAN older than `withdrawal_new_iban_cooldown_hours` (24) —
+  `WithdrawalRequest` requires `saved_iban_id`, free-text `iban` is `prohibited`; legacy rows (no token ever issued)
+  count as confirmed from `created_at` (`SavedIban::isLegacy()`); investor gets a mail on every withdrawal request.
+- **SEC-22** account deletion = 4-step state machine on `users` (`deletion_requested_at/confirmed_at/scheduled_for/
+  finalized_at`): request (password + fail-fast eligibility using available − locked bonus, mail with confirm + «не съм
+  аз» links; HMAC of id|email|requested_at so a cancel/re-request kills old links) → confirm (signed link, no session;
+  schedules `account_deletion_waiting_days`=7) → cancel (profile / link → `revokeAllSessions` + admin bell/mail/🟠 /
+  admin with reason / password reset / blocked finalisation) → `accounts:finalize-deletions` 04:30 (kill switch
+  `account_deletion_finalize_enabled`) re-checks under locks and runs the old anonymisation. Investor mails are MAIL
+  ONLY (bell/push would reach an attacker's device). Admin: ViewUser «Отмени закриването» — deliberately NO «закрий сега».
+- **SEC-16** at finalisation identity files are COPIED to `kyc-retained/{user}/` and consents + subject snapshotted
+  (encrypted) into `kyc_retentions` with `retained_until` = closure + `kyc_retention_years` (5); originals deleted
+  only after commit; a blocked finalisation discards the copies. Rows immutable except the purge transition;
+  admin-only route `/admin/kyc-retained/{id}/{kind}` (audit `viewed`, no-store) + Filament «KYC архив»;
+  `kyc:purge-retained` 05:00 (kill switch `kyc_retention_purge_enabled`). ⚠ Privacy policy §7 still promises
+  physical deletion — text change (v1.2) pending.
+- **PAY-13** see «Dual schedule architecture → PAY-13» below.
+- **Review round 2026-09-05 (88 agents) — facts that now hold:** signed e-mail links (IBAN confirm, deletion
+  confirm/cancel) are `Route::match(['get','post'])`: GET renders `resources/views/links/confirm-action.blade.php`
+  and changes NOTHING (mail scanners prefetch URLs), the action runs on the POST; `User::isClosed()` (finalized
+  OR `@deleted.invalid` OR the old `@removed.p2pinvest.bg`) refuses login, reset links and resets; `revokeAllSessions`
+  also deletes push subscriptions; `deletion_scheduled_for` is start-of-day (= the 04:30 run date);
+  `ReconcileLedger`'s orphan branch compares cash/invested/accrued only (`earned` is a lifetime counter — a closed
+  investor who earned interest is NOT a mismatch); `config('app.admin_email')` uses `?:` and `OpsAlert::DEFAULT_RECIPIENT`
+  (an empty `ADMIN_ALERT_EMAIL=` no longer mutes alerts); IBAN add/delete throttled 5/h and 10/h; a PARTIAL early
+  closure from `funding` decrements `loans.funded_amount` by the closed principal (open question for Reni);
+  `Auditable` masks `users.name` to initials; attestation dates compare calendar days in Europe/Sofia
+  (`BorrowerPlanService::BUSINESS_TZ`); `PayoutPauseService::reconcile` returns `failed` and the 04:00 run continues
+  past a crashed step 0 (`last_payouts_pause_failed` + OpsAlert).
 
 ## Open product decisions — ask, don't invent
 
