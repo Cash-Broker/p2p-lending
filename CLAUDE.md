@@ -35,8 +35,14 @@ Virtual P2P / marketplace lending (Mintos/Bondora model), brand **Vamaasset** (�
 
 ## Tech stack (verified 2026-07-11)
 
-- PHP ^8.3 (dev CLI runs 8.5), **Laravel 13**, **Filament 5** (^5.4, locked 5.6.x — NOT v3;
-  see Filament idioms below), MySQL
+- PHP ^8.3 (dev CLI runs 8.5), **Laravel 13**, **Filament 5** (^5.4, locked 5.7.x — NOT v3;
+  see Filament idioms below), MySQL. Livewire 4.4 comes in under Filament (not a direct require).
+  ⚠ Filament's published assets (`public/css/filament`, `public/js/filament`,
+  `public/fonts/filament`) are **tracked in git** and ship via `git pull` — after ANY
+  `composer update` that moves filament/*, run `php artisan filament:upgrade` and COMMIT the
+  regenerated files, or prod serves the old panel JS against the new PHP. The Inter woff2 files
+  are content-hashed: an upgrade adds new hashes and orphans the old ones (CSP is
+  `font-src 'self'`, so a missing hash = no font, not a CDN fallback).
 - Sanctum 4 SPA cookie auth (`statefulApi()`, no bearer tokens)
 - Vue 3.5 + Vite 8 + **Tailwind 4** (CSS-first, `@theme` in `resources/css/app.css`, no
   tailwind.config.js) + Pinia 3 + vue-router 4 + chart.js
@@ -575,9 +581,12 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
     unsubscribe everyone (caught by tests 2026-08-17). Do not widen that catch.
   - **Deploy order (prod has 3 caches — burned us twice on 2026-08-17: empty table name, then
     405 on the new routes)**:
-    `git pull && composer install --no-dev --optimize-autoloader && npm run build &&
+    `git pull && composer install --no-dev --optimize-autoloader && npm ci && npm run build &&
      php artisan config:clear && php artisan route:clear && php artisan migrate &&
      php artisan config:cache && php artisan route:cache && php artisan queue:restart`
+    ⚠ `npm ci` was ADDED 2026-09-07: without it `npm run build` reuses the server's stale
+    `node_modules`, so a `package-lock.json` security bump (e.g. the nanoid advisory) never
+    actually reaches the box even though Dependabot goes quiet.
     ⚠ `.env` from `webpush:vapid` ends WITHOUT a newline — never `echo X >> .env` after it
     (it glues onto VAPID_PRIVATE_KEY and silently corrupts the key).
 - Prod: Hetzner, NGINX (`.htaccess` inert — vhost must carry Permissions-Policy & body limits;
