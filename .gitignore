@@ -1,8 +1,21 @@
 *.log
 .DS_Store
+
+# Secrets and local backups — never in git.
+# The bare `.env.backup` line used to be a literal match, so a real prod backup
+# named `.env.backup-20260424-145734Z` sailed straight past it and showed up as
+# untracked on the server (found 2026-09-07). `.env.*` closes the whole family;
+# `!.env.example` keeps the tracked template. A leaked APP_KEY would decrypt every
+# `encrypted` column: borrower PII, IBANs, LegalEntityProfile EGN/EIK.
 .env
-.env.backup
-.env.production
+.env.*
+!.env.example
+*.bak
+*.bak-*
+*.backup
+*.backup-*
+*.prod-backup
+
 .phpactor.json
 .phpunit.result.cache
 /.fleet
