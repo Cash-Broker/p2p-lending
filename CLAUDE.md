@@ -534,8 +534,24 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 - Telegram (`TelegramService`): critical 🔴 / high 🟠 / info 🟡(silent); no-op if unconfigured;
   never throws. Uncaught exceptions mirror to CRITICAL (4xx/validation skipped).
 - Queue: `database` connection, Supervisor `p2p-worker:*` on prod. Queued: password-reset job,
-  admin-login-alert mail, the 4 loan-event notifications (with per-event dedupe in `via()`).
-  Deposit/withdrawal/KYC/repayment notifications are synchronous.
+  admin-login-alert mail, the 4 loan-event notifications (with per-event dedupe in `via()`),
+  and `ScheduledPayoutReceivedNotification` (below). Deposit/withdrawal/KYC/legacy-repayment
+  notifications are synchronous.
+- **Investor «Получено плащане» mail + bell (2026-09-12, Yordan: «хубаво е да знаят»)** —
+  `ScheduledPayoutReceivedNotification` (mail + database, deliberately NO push: the 09:05
+  digest already pushes the same euros). Sent by `ScheduledPayoutNotifier` from
+  `ScheduledPayoutService::runForLoan` AFTER `PayoutAccrualService::processLoan` returned
+  (= after commit), for cron AND «Пусни плащане сега»; `processLoan` hands back
+  `paid_schedule_ids`. One notification per (investor, loan, run) listing every row released
+  in that run; capitalized only at maturity (accrual is not a payment); «последна вноска»
+  = no pending|late rows left across the investor's positions in that loan. Dedupe in `via()`
+  on `data->schedule_ids` (JSON contains) — so a queue retry or the re-send command
+  `payouts:notify-paid --date=Y-m-d [--loan=] [--dry-run]` (manual, never scheduled; born to
+  announce the 2026-09-12 run that predated the mail) can't double-mail. ⚠ The dedupe rides the
+  user-deletable `notifications` table (same as the loan-event notifications): an investor who
+  wiped their bell + an admin re-send for that day = one duplicate mail, nothing worse.
+  The notifier NEVER throws — a mail problem must not make `runAllAutomatic` count a PAID loan
+  as failed. Kill switch `payout_email_enabled` (bool, default true).
 - **Web Push (2026-08-17)**: `laravel-notification-channels/webpush`, VAPID keys in .env
   (Windows dev: `webpush:vapid` fails on EC keygen — use `npx web-push generate-vapid-keys`).
   `public/sw.js` is push-ONLY (⚠ never add fetch/caching — stale-bundle hazard).

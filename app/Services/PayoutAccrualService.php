@@ -43,13 +43,17 @@ class PayoutAccrualService
     /**
      * Advance every offer-based investment of a loan to $asOf.
      *
-     * @return array{released_count:int, accrued_count:int, released_total:string, accrued_total:string, paused:bool}
+     * `paid_schedule_ids` lists every schedule row this call marked `paid` —
+     * the caller announces them to investors AFTER the commit (2026-09-12,
+     * ScheduledPayoutNotifier); nothing is sent from inside the transaction.
+     *
+     * @return array{released_count:int, accrued_count:int, released_total:string, accrued_total:string, paused:bool, paid_schedule_ids:array<int,int>}
      */
     public function processLoan(int $loanId, ?CarbonInterface $asOf = null): array
     {
         $asOf = $asOf ?? now();
 
-        $summary = ['released_count' => 0, 'accrued_count' => 0, 'released_total' => '0.00', 'accrued_total' => '0.00', 'paused' => false];
+        $summary = ['released_count' => 0, 'accrued_count' => 0, 'released_total' => '0.00', 'accrued_total' => '0.00', 'paused' => false, 'paid_schedule_ids' => []];
 
         DB::transaction(function () use ($loanId, $asOf, &$summary) {
             $loan = Loan::where('id', $loanId)->lockForUpdate()->firstOrFail();
@@ -129,6 +133,7 @@ class PayoutAccrualService
 
             $summary['released_count']++;
             $summary['released_total'] = bcadd($summary['released_total'], (string) $row->total, 2);
+            $summary['paid_schedule_ids'][] = (int) $row->id;
         }
     }
 
@@ -208,6 +213,7 @@ class PayoutAccrualService
 
             $summary['released_count']++;
             $summary['released_total'] = bcadd($summary['released_total'], bcadd($finalInterest, $amount, 2), 2);
+            $summary['paid_schedule_ids'][] = (int) $row->id;
 
             return;
         }

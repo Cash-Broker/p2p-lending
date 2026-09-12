@@ -22,6 +22,7 @@ class ScheduledPayoutService
         private PayoutAccrualService $accrual,
         private RepaymentService $repayment,
         private LoanStatusUpdaterService $statusUpdater,
+        private ScheduledPayoutNotifier $notifier,
     ) {}
 
     /**
@@ -42,6 +43,12 @@ class ScheduledPayoutService
             if ($loan->fresh()->status === Loan::STATUS_FUNDING) {
                 $result['auto_repaid'] = $this->statusUpdater->autoRepayLoanIfComplete($loan->id);
             }
+
+            // Money is committed at this point (processLoan's transaction has
+            // returned) — tell the investors (2026-09-12). The notifier never
+            // throws: a mail problem must not turn a PAID loan into a "failed"
+            // one in the cron's report.
+            $result['notified'] = $this->notifier->notifyForScheduleIds($result['paid_schedule_ids'] ?? []);
 
             return $result;
         }
