@@ -1,9 +1,12 @@
 # CLAUDE.md — Vamaasset P2P Lending Platform
 
 > This file IS tracked (owner decision 2026-09-05: the GitHub repo is private by default and only
-> unlocked occasionally, so CLAUDE.md and `docs/audits/` are committed). Never put secrets in it.
-> Update it when architecture-level facts change.
-> Business-level documentation (BG, for the client) lives in `docs/BIZNES-DOKUMENTACIA.md` (tracked).
+> unlocked occasionally). Never put secrets in it. Update it when architecture-level facts change.
+> **`docs/` is LOCAL ONLY** (owner decision 2026-09-12 — gitignored, removed from GitHub and the
+> server; it was tracked 2026-09-05 → 2026-09-12 and stays readable in those commits). Business-level
+> documentation (BG, for the client) lives in `docs/BIZNES-DOKUMENTACIA.md` + the owner's guide
+> `docs/RAKOVODSTVO-KAK-RABOTI-VAMAASSET.md`; audit reports in `docs/audits/`; runbooks in
+> `docs/runbooks/`. All on Yordan's machine — keep them updated, never re-add them to git.
 
 ## Role
 
@@ -114,7 +117,8 @@ app/
 resources/js/          Vue SPA (views/, components/, stores/{auth,consent}, api/axios.js, router/)
 audit/                 Python reference oracle + fixtures
 scripts/ops/           local-backup.sh / local-restore.sh (AES-256 encrypted mysqldump)
-docs/                  BIZNES-DOKUMENTACIA.md (BG business doc), runbooks/backup-restore-bg.md
+docs/                  LOCAL ONLY (gitignored 2026-09-12): BIZNES-DOKUMENTACIA.md, RAKOVODSTVO-…md,
+                       audits/, runbooks/backup-restore-bg.md
 ```
 
 Note: `DECISIONS.md` **no longer exists** — several docblocks still reference it (dangling).
@@ -668,7 +672,8 @@ OR has grant. API route `/loans/shared/{token}` is registered BEFORE `/loans/{lo
 
 ## Audit 2026-09-01 → fix batch A (2026-09-03) — facts that now hold
 
-Reports: `docs/audits/2026-09-01-fable51/` (BG); plan + status: `05-fix-plan.md`. Group A done
+Reports: `docs/audits/2026-09-01-fable51/` (BG, local only since 2026-09-12); plan + status:
+`05-fix-plan.md`. Group A done
 (uncommitted at time of writing), group B = questions for Reni, group C = needs sign-off.
 
 - `App\Exceptions\InsufficientBalanceException` (subclass of InvalidArgumentException) is the

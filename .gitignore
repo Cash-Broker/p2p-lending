@@ -49,3 +49,8 @@ DECISIONS.md
 pentest_*.php
 PENTEST_*.md
 
+
+# Business/owner documentation and audit reports — local only since 2026-09-12
+# (owner decision: nothing from docs/ goes to GitHub or the server; it was
+# tracked 2026-09-05 → 2026-09-12 and is still readable in those commits).
+/docs/
