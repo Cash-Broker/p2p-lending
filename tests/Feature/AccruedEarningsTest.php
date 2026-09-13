@@ -10,6 +10,7 @@ use App\Models\Transaction;
 use App\Models\User;
 use App\Services\AccruedEarningsService;
 use App\Services\InvestmentService;
+use App\Services\Loans\EarlyClosureExecutionService;
 use App\Services\PayoutAccrualService;
 use App\Services\ScheduledPayoutService;
 use App\Services\WalletService;
@@ -261,6 +262,47 @@ class AccruedEarningsTest extends TestCase
         $result = app(AccruedEarningsService::class)->forUser($user->id, now()->addDays(400));
 
         $this->assertSame('0.00', $result['amount_daily']);
+    }
+
+    /**
+     * Regression (review 2026-09-13): after a PARTIAL early closure the
+     * capitalized row's principal shrinks while `investments.amount` stays
+     * frozen. The engine compounds on the ROW (CLAUDE.md, 2026-08-18); the
+     * display counter kept compounding on the original amount, so the
+     * investor's ticker — and every admin figure built on it — showed
+     * interest on money already returned.
+     */
+    public function test_capitalized_accrual_follows_the_row_principal_after_a_partial_closure(): void
+    {
+        [$loan, $user] = $this->investorWithOfferLoan(PayoutType::Capitalized);
+        $admin = User::factory()->admin()->create(['email_verified_at' => now()]);
+        $service = app(AccruedEarningsService::class);
+
+        $row = $loan->investments()->first()->schedules()->first();
+        $firstDue = $row->due_date->copy()->startOfDay()->subMonthsNoOverflow(11);
+
+        // Close 40 % of the position on day 20 → the row now carries 600.00.
+        Carbon::setTestNow(now()->addDays(20));
+        app(EarlyClosureExecutionService::class)->execute($loan->id, $admin->id, '400.00');
+        $this->assertSame('600.00', (string) $row->fresh()->principal);
+
+        // On the third monthly milestone the engine parks its compounded
+        // target on the 600 — the display must read the SAME figure, not the
+        // target on the original 1 000.
+        $milestone = $firstDue->copy()->addMonthsNoOverflow(2);
+        Carbon::setTestNow($milestone->copy()->addHours(6));
+        app(PayoutAccrualService::class)->processLoan($loan->id);
+
+        $engine = (string) $user->wallet->fresh()->accrued;
+        $display = $service->forUser($user->id)['amount_daily'];
+
+        $this->assertGreaterThan(0, (float) $engine);
+        $this->assertSame($engine, $display);
+        $this->assertSame($engine, $service->accruedByUser([$user->id])[$user->id]);
+        // Sanity: the old (wrong) figure was the 1 000-based target, 5/3 of this.
+        $this->assertLessThan(bcmul($engine, '1.6', 2), $display);
+
+        Carbon::setTestNow();
     }
 
     // ── Legacy (pre-offer) loans ──

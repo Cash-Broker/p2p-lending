@@ -3,14 +3,18 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\UserResource\Pages;
+use App\Filament\Resources\UserResource\Pages\ListUsers;
+use App\Filament\Resources\UserResource\Pages\ViewUser;
 use App\Models\KycRetention;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Models\Wallet;
 use App\Notifications\BonusCreditedNotification;
 use App\Notifications\BonusGrantedAdminNotification;
 use App\Notifications\KycStatusNotification;
 use App\Rules\ValidPhone;
 use App\Services\AccountDeletionService;
+use App\Services\AccruedEarningsService;
 use App\Services\BonusService;
 use App\Services\TelegramService;
 use App\Support\Money;
@@ -26,10 +30,13 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Columns\Summarizers\Sum;
+use Filament\Tables\Columns\Summarizers\Summarizer;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Number;
 use Illuminate\Support\Str;
 
 class UserResource extends Resource
@@ -113,6 +120,25 @@ class UserResource extends Resource
                     // the same row answers «колко има платформата общо» and
                     // «колко има тази група» without any extra screen.
                     ->summarize(Sum::make('total')->label('Общо')->money('EUR')),
+                // «Текущ баланс» (Reni 2026-09-13: «на всеки инвеститор освен
+                // това което е инвестирал, текущия му баланс с начислените
+                // лихви») = invested + interest earned to date on the open
+                // positions — the investor's own «Текуща печалба», so the
+                // column adds up to the «Текущо начислени лихви» card above.
+                // The interest slice is spelled out underneath. NOT sortable:
+                // the accrual is schedule math, not a column.
+                Tables\Columns\TextColumn::make('invested_with_accrued_interest')->label('Текущ баланс')
+                    ->state(fn (User $record, $livewire): ?string => static::investedWithAccruedInterestFor($record, $livewire))
+                    ->money('EUR')
+                    ->placeholder('—')
+                    ->description(fn (User $record, $livewire): ?string => static::accruedInterestNote($record, $livewire))
+                    ->tooltip('Инвестирано + лихвите, начислени до днес по график (при инвеститора — «Текуща печалба», по дни)')
+                    ->color('success')
+                    // Same recipe as the rows: Σ invested + the accrued-interest
+                    // figure the header card shows — for the same filtered set.
+                    ->summarize(Summarizer::make('total')->label('Общо')
+                        ->using(fn (QueryBuilder $query, $livewire): string => static::investedWithAccruedInterestTotal($query, $livewire))
+                        ->money('EUR')),
                 Tables\Columns\TextColumn::make('wallet.available')->label('Свободни')
                     ->money('EUR')
                     ->placeholder('—')
@@ -141,6 +167,87 @@ class UserResource extends Resource
             ->recordActions([
                 ViewAction::make(),
             ]);
+    }
+
+    /**
+     * Interest this investor has earned to date on their open positions —
+     * the figure they see as «Текуща печалба». Both pages hand us a per-render
+     * memo (the list batches its rows; the profile computes its one record
+     * ONCE — two entries built from two `now()` instants could straddle
+     * midnight and stop adding up); anywhere else it is computed for the one
+     * user through the SAME service scope, so no screen can disagree.
+     */
+    public static function accruedInterestFor(User $record, mixed $livewire = null): string
+    {
+        if ($livewire instanceof ListUsers || $livewire instanceof ViewUser) {
+            return $livewire->accruedInterestFor($record);
+        }
+
+        return app(AccruedEarningsService::class)->accruedByUser([$record->id])[$record->id] ?? '0.00';
+    }
+
+    /**
+     * «Текущ баланс» (the admin label) = invested + accrued interest to date.
+     * Deliberately NOT named current_balance: `Wallet::currentBalance()` /
+     * the API key `current_balance` are «Текущо салдо» = invested + the
+     * `accrued` BUCKET only — a smaller figure (the bucket holds just the
+     * capitalized plans' monthly milestones), so the two must not share an
+     * identifier. Null (→ «—») for a user without a wallet, exactly like the
+     * «Инвестирано» column beside it. The `accrued` bucket is NOT added on
+     * top: it is a slice of the same interest already parked in the balance —
+     * adding it would count those euros twice.
+     */
+    public static function investedWithAccruedInterestFor(User $record, mixed $livewire = null): ?string
+    {
+        if ($record->wallet === null) {
+            return null;
+        }
+
+        return bcadd((string) $record->wallet->invested, static::accruedInterestFor($record, $livewire), 2);
+    }
+
+    /**
+     * The line under the balance: how much of it is interest. Quiet when
+     * nothing has accrued yet — a «вкл. 0,00 €» on every fresh row is noise.
+     * Kept short on purpose («вкл.», not «от тях … начислени»): the wording
+     * sets the column's width, and the list has to fit one screen (boss
+     * 2026-08-11); the tooltip carries the full explanation.
+     */
+    public static function accruedInterestNote(User $record, mixed $livewire = null): ?string
+    {
+        if ($record->wallet === null) {
+            return null;
+        }
+
+        $accrued = static::accruedInterestFor($record, $livewire);
+
+        // Same locale fallback as ->money('EUR') on the figure above it, so
+        // one cell never mixes two number formats.
+        return bccomp($accrued, '0', 2) > 0
+            ? 'вкл. '.Number::currency((float) $accrued, 'EUR', config('app.locale')).' лихви'
+            : null;
+    }
+
+    /**
+     * Column total for the table's current filter/search: Σ invested over
+     * those users + the same accrued-interest total the «Текущо начислени
+     * лихви» card shows for them. Filament hands the filtered table query
+     * wrapped as a derived table aliased `users` (for the page footer with
+     * its LIMIT/OFFSET inside); the wallet SUM takes it as an IN (...)
+     * subquery, the accrual reads the page's shared memo so a footer never
+     * re-walks positions the rows (or the other footer) already covered.
+     */
+    public static function investedWithAccruedInterestTotal(QueryBuilder $query, mixed $livewire = null): string
+    {
+        $userIds = $query->select('users.id');
+
+        $invested = (string) Wallet::whereIn('user_id', $userIds)->sum('invested');
+
+        $accrued = $livewire instanceof ListUsers
+            ? $livewire->accruedInterestTotalFor($userIds->pluck('users.id')->map(fn ($id) => (int) $id)->all())
+            : app(AccruedEarningsService::class)->accruedByPlan($userIds)['total'];
+
+        return bcadd(bcadd($invested ?: '0', '0', 2), $accrued, 2);
     }
 
     /**
@@ -532,10 +639,27 @@ class UserResource extends Resource
                 Infolists\Components\TextEntry::make('legalEntityProfile.eik')->label('ЕИК')->copyable()->fontFamily('mono'),
             ])->columns(2)->visible(fn ($record) => $record->isLegalEntity() && $record->legalEntityProfile),
 
+            // First row reads as the sum it is: Инвестирани + Начислени лихви
+            // = Текущ баланс (the list's column, split out here — Reni
+            // 2026-09-13). Second row: cash on hand + interest paid out so far.
             Section::make('Портфейл')->schema([
-                Infolists\Components\TextEntry::make('wallet.available')->label('Свободни')->money('EUR'),
                 Infolists\Components\TextEntry::make('wallet.invested')->label('Инвестирани')->money('EUR'),
-                Infolists\Components\TextEntry::make('wallet.earned')->label('Спечелени')->money('EUR'),
+                Infolists\Components\TextEntry::make('accrued_interest')->label('Начислени лихви')
+                    ->state(fn (User $record, $livewire): ?string => $record->wallet !== null ? static::accruedInterestFor($record, $livewire) : null)
+                    ->money('EUR')
+                    ->placeholder('—')
+                    ->helperText('«Текуща печалба» при инвеститора — още неизплатени.'),
+                Infolists\Components\TextEntry::make('invested_with_accrued_interest')->label('Текущ баланс')
+                    ->state(fn (User $record, $livewire): ?string => static::investedWithAccruedInterestFor($record, $livewire))
+                    ->money('EUR')
+                    ->placeholder('—')
+                    ->helperText('Инвестирани + начислени лихви.'),
+                Infolists\Components\TextEntry::make('wallet.available')->label('Свободни')->money('EUR'),
+                // `earned` = interest already PAID OUT (lifetime counter). The
+                // investor's dashboard calls it «Изплатени» (Reni 2026-08-13);
+                // next to «Начислени лихви» the old «Спечелени» read as the
+                // same thing, so the admin label now matches the investor's.
+                Infolists\Components\TextEntry::make('wallet.earned')->label('Изплатени лихви')->money('EUR'),
             ])->columns(3),
 
             // Visit analytics (2026-08-15): «влизал ли е, колко често» —
@@ -588,6 +712,6 @@ class UserResource extends Resource
 
     public static function getPages(): array
     {
-        return ['index' => Pages\ListUsers::route('/'), 'view' => Pages\ViewUser::route('/{record}')];
+        return ['index' => ListUsers::route('/'), 'view' => ViewUser::route('/{record}')];
     }
 }

@@ -18,8 +18,9 @@ use Illuminate\Support\Number;
  * raises the rows-per-page.
  *
  * The figures are not a separate report: `InteractsWithPageTable` hands us
- * the table's own filtered + searched query (minus pagination), so the two
- * cards always describe exactly the rows underneath them.
+ * the table's own filtered + searched query (minus pagination), so the
+ * cards always describe exactly the rows underneath them. Four cards since
+ * 2026-09-13: the «Текущ баланс» column got its total up here too.
  */
 class UserMoneyOverview extends BaseWidget
 {
@@ -87,6 +88,15 @@ class UserMoneyOverview extends BaseWidget
                 ->description(static::note($totals?->total_accrued, 'от тях вече в балансите'))
                 ->icon('heroicon-o-arrow-trending-up')
                 ->color('warning'),
+
+            // The «Текущ баланс» column's total (Reni 2026-09-13), up here
+            // where the boss wants totals — NOT only in the footer below the
+            // fold. Both operands are the two cards to its left, so it is
+            // their sum by construction and costs no extra query.
+            Stat::make('Текущ баланс общо', static::money(bcadd((string) ($totals?->total_invested ?? '0'), $accruedInterest, 2)))
+                ->description('Инвестирани + начислени лихви')
+                ->icon('heroicon-o-scale')
+                ->color('success'),
         ];
     }
 

@@ -91,25 +91,7 @@ class AccruedEarningsService
                 continue; // handled per-loan below (share of the loan schedule)
             }
 
-            // Schedules exist from the invest moment (2026-08-13). For
-            // investments predating that (not yet backfilled) fall back to a
-            // pure projection anchored on invested_at, so the counter runs
-            // «нон стоп» from the first euro either way.
-            $rows = $investment->schedules->isNotEmpty()
-                ? $investment->schedules
-                : $this->projectedRows($investment);
-
-            if ($investment->payout_type === PayoutType::Capitalized) {
-                $this->addCapitalized($investment, $rows, $asOf, $totals);
-            } else {
-                $this->addScheduledRows(
-                    $rows,
-                    $asOf,
-                    $totals,
-                    // Offer rows carry the investor's own interest — full weight.
-                    '1',
-                );
-            }
+            $this->accrueOfferInvestment($investment, $asOf, $totals);
         }
 
         // Legacy (null-offer) investments: the schedule lives on the LOAN; the
@@ -174,27 +156,8 @@ class AccruedEarningsService
             ];
         }
 
-        $investments = Investment::query()
-            ->whereIn('user_id', $userIds)
-            ->whereNotNull('loan_offer_id')
-            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES))
-            ->with([
-                'loan',
-                'schedules' => fn ($q) => $q->orderBy('due_date')->orderBy('id'),
-            ])
-            ->get();
-
-        foreach ($investments as $investment) {
-            $plan = $investment->payout_type;
-            $rows = $investment->schedules->isNotEmpty()
-                ? $investment->schedules
-                : $this->projectedRows($investment);
-
-            if ($plan === PayoutType::Capitalized) {
-                $this->addCapitalized($investment, $rows, $asOf, $totalsByPlan[$plan->value]);
-            } else {
-                $this->addScheduledRows($rows, $asOf, $totalsByPlan[$plan->value], '1');
-            }
+        foreach ($this->offerInvestmentsOf($userIds) as $investment) {
+            $this->accrueOfferInvestment($investment, $asOf, $totalsByPlan[$investment->payout_type->value]);
         }
 
         $byPlan = [];
@@ -211,10 +174,97 @@ class AccruedEarningsService
     }
 
     /**
+     * The same accrued-to-date figure, keyed by INVESTOR — one row per person
+     * on the admin users list («Текущ баланс» = invested + this, Reni
+     * 2026-09-13: «на всеки инвеститор освен това което е инвестирал, текущия
+     * му баланс с начислените лихви»).
+     *
+     * Same scope and same math as {@see accruedByPlan} (offer investments on
+     * payout-eligible loans, daily granularity), so the column's total is the
+     * «Текущо начислени лихви» card to the cent, and each row is what that
+     * investor sees as «Текуща печалба» on their own dashboard. One query for
+     * the whole set — a per-row {@see forUser} call would be N×3 queries on
+     * every page render.
+     *
+     * Investors without an accruing position are absent from the result —
+     * callers read with a '0.00' default.
+     *
+     * @param  EloquentBuilder|QueryBuilder|array<int, int>  $userIds
+     * @return array<int, string> user id → accrued interest to date (scale 2)
+     */
+    public function accruedByUser(EloquentBuilder|QueryBuilder|array $userIds, ?CarbonInterface $asOf = null): array
+    {
+        $asOf = ($asOf ?? now())->copy();
+
+        $totalsByUser = [];
+
+        foreach ($this->offerInvestmentsOf($userIds) as $investment) {
+            $totalsByUser[$investment->user_id] ??= [
+                'daily' => '0.00',
+                'live' => '0.000000',
+                'rate_per_day' => '0.0000000000',
+            ];
+
+            $this->accrueOfferInvestment($investment, $asOf, $totalsByUser[$investment->user_id]);
+        }
+
+        return array_map(
+            fn (array $totals) => bcadd($totals['daily'], '0', 2),
+            $totalsByUser,
+        );
+    }
+
+    /**
+     * Offer investments the payout engine will pay, for a set of investors —
+     * the shared scope of the admin aggregates ({@see accruedByPlan},
+     * {@see accruedByUser}).
+     *
+     * @param  EloquentBuilder|QueryBuilder|array<int, int>  $userIds
+     * @return Collection<int, Investment>
+     */
+    private function offerInvestmentsOf(EloquentBuilder|QueryBuilder|array $userIds): Collection
+    {
+        return Investment::query()
+            ->whereIn('user_id', $userIds)
+            ->whereNotNull('loan_offer_id')
+            ->whereHas('loan', fn ($q) => $q->whereIn('status', Loan::PAYOUT_ELIGIBLE_STATUSES))
+            ->with([
+                'loan',
+                'schedules' => fn ($q) => $q->orderBy('due_date')->orderBy('id'),
+            ])
+            ->get();
+    }
+
+    /**
+     * Accrue one offer investment into $totals — the exact per-investment
+     * dispatch {@see forUser} performs, shared so the admin aggregates can
+     * never drift from the investor's own counter.
+     *
+     * @param  array{daily: string, live: string, rate_per_day: string}  $totals
+     */
+    private function accrueOfferInvestment(Investment $investment, CarbonInterface $asOf, array &$totals): void
+    {
+        // Schedules exist from the invest moment (2026-08-13). For
+        // investments predating that (not yet backfilled) fall back to a
+        // pure projection anchored on invested_at, so the counter runs
+        // «нон стоп» from the first euro either way.
+        $rows = $investment->schedules->isNotEmpty()
+            ? $investment->schedules
+            : $this->projectedRows($investment);
+
+        if ($investment->payout_type === PayoutType::Capitalized) {
+            $this->addCapitalized($investment, $rows, $asOf, $totals);
+        } else {
+            // Offer rows carry the investor's own interest — full weight.
+            $this->addScheduledRows($rows, $asOf, $totals, '1');
+        }
+    }
+
+    /**
      * Projection fallback for offer investments without persisted schedules
      * (pre-2026-08-13 investments before the backfill runs). Row shape mimics
      * InvestmentSchedule closely enough for the accrual math: due_date /
-     * interest / status.
+     * principal / interest / status.
      *
      * @return Collection<int, object>
      */
@@ -233,6 +283,7 @@ class AccruedEarningsService
 
         return collect($rows)->map(fn (array $row) => (object) [
             'due_date' => $row['due_date'],
+            'principal' => $row['principal'],
             'interest' => $row['interest'],
             'status' => 'pending',
         ]);
@@ -295,17 +346,24 @@ class AccruedEarningsService
             return; // matured + released (or nothing generated yet)
         }
 
+        // The ROW is the source of truth for the outstanding principal, not
+        // `investment->amount` — exactly as PayoutAccrualService::processCapitalized
+        // reads it: a partial early closure (Reni 2026-08-18) shrinks the row's
+        // principal AND interest while the investment amount stays frozen, and
+        // compounding on the original principal afterwards would show interest
+        // on money already returned (review finding 2026-09-13; the engine was
+        // fixed on 2026-08-18, this display path had not been).
+        $principal = (string) $row->principal;
+
         // Term from the FROZEN row — mirrors the engine; the live (editable)
         // loan.term_months must not move the milestones (see
         // OfferProjectionService::capitalizedTermFromRow).
         $term = OfferProjectionService::capitalizedTermFromRow(
-            (string) $investment->amount,
+            $principal,
             (string) $investment->interest_rate,
             (string) $row->interest,
             (int) $investment->loan->term_months,
         );
-
-        $principal = (string) $investment->amount;
         $finalInterest = (string) $row->interest;
         $maturity = $row->due_date->copy()->startOfDay();
         $firstDue = $maturity->copy()->subMonthsNoOverflow($term - 1);

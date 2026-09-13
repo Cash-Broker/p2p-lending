@@ -96,7 +96,22 @@ app/
                        AccruedEarningsService::accruedByPlan — «Текущо начислени
                        лихви» MUST equal Σ of each investor's «Текуща печалба»,
                        Reni 2026-08-19; the remaining SCHEDULE interest was
-                       explicitly rejected as a headline),
+                       explicitly rejected as a headline. Per-investor since
+                       2026-09-13: users-list column «Текущ баланс» + profile
+                       «Начислени лихви»/«Текущ баланс» = wallet.invested +
+                       AccruedEarningsService::accruedByUser — the SAME scope, so
+                       Σ column == card; NOT Wallet::currentBalance() («Текущо
+                       салдо» = invested + the `accrued` BUCKET only, a smaller
+                       figure; the bucket is never added on top). Default loans
+                       are outside that scope, so a capitalized position on a
+                       DEFAULT loan keeps its bucket euros out of the column
+                       until buyback — the open write-off decision.
+                       ⚠ ASSUMPTION TO CONFIRM with Reni: «текущия му баланс с
+                       начислените лихви» was read as invested + accrued
+                       interest, WITHOUT the free money; if she means the whole
+                       profile, add wallet.available + reserved to
+                       `investedWithAccruedInterestFor()` / `...Total()` and the
+                       «Текущ баланс общо» card — nothing else changes),
                        TelegramService, KycImageNormalizer,
                        AccountDeletionService
   Services/Loans/      InvestorDistributionService, Buyback{Calculation,Execution,Eligibility}Service,
@@ -348,7 +363,11 @@ work deliberately stopped at the offer engine for exactly this reason).
     auto-close; the payout services already filter on pending/late.
   - ⚠ `PayoutAccrualService::processCapitalized` now reads `$row->principal` instead of
     `$investment->amount` — otherwise a shrunken position keeps accruing on the original
-    principal and pays it out twice at maturity.
+    principal and pays it out twice at maturity. `AccruedEarningsService::addCapitalized`
+    (the «Текуща печалба» ticker + every admin figure built on it) was only aligned on
+    2026-09-13 — until then the DISPLAY kept compounding on the original amount after a
+    partial closure. Any new reader of a capitalized row: principal from the ROW, never
+    `investments.amount`.
   - `loan_early_closures` = one row per event (ratio, amounts, as-of, admin) — the only place
     the inputs survive, since the closure rewrites the schedules it was computed from. Money
     rides the existing `early_repayment_principal/interest` types, so **`LEDGER_MAP` is
