@@ -10,18 +10,21 @@
     "dependencies": {
         "chart.js": "^4.5.1",
         "pinia": "^3.0.4",
-        "vue": "^3.5.30",
+        "vue": "^3.5.43",
         "vue-chartjs": "^5.3.3",
         "vue-router": "^4.6.4"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.2.2",
         "@vitejs/plugin-vue": "^6.0.5",
-        "axios": "^1.15.2",
+        "axios": "^1.20.0",
         "concurrently": "^10.0.4",
         "laravel-vite-plugin": "^3.0.0",
         "tailwindcss": "^4.2.2",
         "vite": "^8.0.8",
-        "vitest": "^4.1.10"
+        "vitest": "^4.1.11"
+    },
+    "overrides": {
+        "shell-quote": "^1.12.0"
     }
 }

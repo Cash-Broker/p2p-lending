@@ -38,8 +38,12 @@ Virtual P2P / marketplace lending (Mintos/Bondora model), brand **Vamaasset** (�
 
 ## Tech stack (verified 2026-07-11)
 
-- PHP ^8.3 (dev CLI runs 8.5), **Laravel 13**, **Filament 5** (^5.4, locked 5.7.x — NOT v3;
+- PHP ^8.3 (dev CLI runs 8.5), **Laravel 13**, **Filament 5** (^5.10.1, locked 5.10.1 — NOT v3;
   see Filament idioms below), MySQL. Livewire 4.4 comes in under Filament (not a direct require).
+  ⚠ Never lock filament 5.10.0: under prod's Europe/Sofia its date-only fields show and save the
+  PREVIOUS day (the suite runs UTC — `AmortizationScheduleRowFormTest` pins Sofia to catch it).
+  Bump only the packages an advisory names (`composer update <pkgs> --with laravel/framework:X`);
+  `-W` on filament/* drags the whole framework + symfony tree along, majors included.
   ⚠ Filament's published assets (`public/css/filament`, `public/js/filament`,
   `public/fonts/filament`) are **tracked in git** and ship via `git pull` — after ANY
   `composer update` that moves filament/*, run `php artisan filament:upgrade` and COMMIT the
