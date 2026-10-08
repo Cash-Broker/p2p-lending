@@ -68,6 +68,13 @@ Route::get('/admin/kyc-document/{path}', function (string $path) {
         abort(403);
     }
 
+    // Same rule as Flysystem's WhitespacePathNormalizer: control characters
+    // (or a failed UTF-8 match) make every disk call throw CorruptedPathDetected,
+    // which would surface as a 500 + CRITICAL alert. Such a path names no file.
+    if (preg_match('#\p{C}#u', $path) !== 0) {
+        abort(404);
+    }
+
     $fullPath = 'kyc-documents/'.$path;
     if (! Storage::disk('local')->exists($fullPath)) {
         abort(404);

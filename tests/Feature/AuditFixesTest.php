@@ -363,6 +363,23 @@ class AuditFixesTest extends TestCase
         $response->assertStatus(403);
     }
 
+    // Flysystem throws CorruptedPathDetected on control characters (and, since
+    // 3.35.3, on malformed UTF-8); a garbage path must stay a 4xx, never a
+    // 500 + CRITICAL Telegram alert.
+    public function test_kyc_document_with_corrupted_path_is_a_client_error(): void
+    {
+        $admin = User::factory()->admin()->create(['email_verified_at' => now()]);
+
+        foreach (['%01.jpg', 'x%7F.jpg', 'sub/%1B.jpg'] as $controlChar) {
+            $this->actingAs($admin)->get('/admin/kyc-document/'.$controlChar)->assertNotFound();
+        }
+
+        // Malformed UTF-8 never reaches the route: the framework answers 400.
+        foreach (['%FF.jpg', 'a%C3.jpg'] as $malformed) {
+            $this->actingAs($admin)->get('/admin/kyc-document/'.$malformed)->assertStatus(400);
+        }
+    }
+
     // ── Finding 28: Ledger reconciliation ──
 
     public function test_ledger_reconciliation_passes_on_clean_data(): void
