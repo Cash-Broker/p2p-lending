@@ -4,8 +4,12 @@ namespace Tests\Feature;
 
 use App\Filament\Resources\UserResource\Pages\ListUsers;
 use App\Filament\Resources\UserResource\Pages\ViewUser;
+use App\Models\Originator;
 use App\Models\User;
 use Filament\Facades\Filament;
+use Filament\Livewire\DatabaseNotifications;
+use Filament\Notifications\Livewire\Notifications;
+use Filament\Notifications\Notification as FilamentNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Arr;
 use Livewire\Livewire;
@@ -47,7 +51,30 @@ class BulgarianTranslationsTest extends TestCase
             'text input: hide password' => ['filament-forms::components.text_input.actions.hide_password.label', 'Скрий паролата'],
             'text input: copy' => ['filament-forms::components.text_input.actions.copy.label', 'Копирай'],
             'text input: copied' => ['filament-forms::components.text_input.actions.copy.message', 'Копирано'],
+            'select: search box' => ['filament-forms::components.select.search_label', 'Търсене'],
+            'select: clear' => ['filament-forms::components.select.actions.clear.label', 'Изчисти избора'],
+            'select: remove option' => ['filament-forms::components.select.actions.remove_option.label', 'Премахни :label'],
+            'select: create option' => ['filament-forms::components.select.actions.create_option.label', 'Създай'],
+            'file upload: download' => ['filament-forms::components.file_upload.actions.download.label', 'Изтегли'],
+            'file upload: open' => ['filament-forms::components.file_upload.actions.open.label', 'Отвори в нов раздел'],
             'table: loading live region' => ['filament-tables::table.loading', 'Зареждане...'],
+            'table: apply columns' => ['filament-tables::table.column_manager.actions.apply.label', 'Приложи колоните'],
+            'table: reset columns' => ['filament-tables::table.column_manager.actions.reset.label', 'Нулирай'],
+            'table: record actions header' => ['filament-tables::table.columns.actions.label', 'Действие|Действия'],
+            'table: boolean icon true' => ['filament-tables::table.columns.icon.boolean.true', 'Да'],
+            'table: boolean icon false' => ['filament-tables::table.columns.icon.boolean.false', 'Не'],
+            'panel: skip link' => ['filament-panels::layout.skip_to_content.label', 'Към съдържанието'],
+            'panel: sidebar landmark' => ['filament-panels::layout.navigation.label', 'Странична навигация'],
+            'panel: topbar landmark' => ['filament-panels::layout.topbar.label', 'Горна лента'],
+            'panel: avatar alt' => ['filament-panels::layout.avatar.alt', 'Аватар на :name'],
+            'panel: theme switcher' => ['filament-panels::layout.actions.theme_switcher.label', 'Тема'],
+            'panel: bell with unread' => ['filament-panels::layout.actions.open_database_notifications.label_with_unread_count', '{1} Известия, :count непрочетено известие|[2,*] Известия, :count непрочетени известия'],
+            'panel: error toast title' => ['filament-panels::error-notifications.title', 'Грешка при зареждане на страницата'],
+            'panel: error toast body' => ['filament-panels::error-notifications.body', 'Възникна грешка при зареждането на страницата. Моля, опитайте отново по-късно.'],
+            'notifications: close toast' => ['filament-notifications::notification.actions.close.label', 'Затвори известието'],
+            'notifications: unread marker' => ['filament-notifications::database.modal.unread_label', 'Непрочетено известие'],
+            'support: breadcrumbs' => ['filament::components/breadcrumbs.label', 'Навигационна пътека'],
+            'support: loading section' => ['filament::components/loading-section.label', 'Зареждане...'],
         ];
     }
 
@@ -63,6 +90,29 @@ class BulgarianTranslationsTest extends TestCase
         // own bg file must survive it.
         $this->assertSame('Търси', __('filament-tables::table.fields.search.label'));
         $this->assertSame('Зареждане...', __('filament-forms::components.select.loading_message'));
+        $this->assertSame('Създаване на опция', __('filament-forms::components.select.actions.create_option.modal.heading'));
+        $this->assertSame('Колони', __('filament-tables::table.column_manager.heading'));
+        $this->assertSame('Включи тъмна тема', __('filament-panels::layout.actions.theme_switcher.dark.label'));
+        $this->assertSame('Изход', __('filament-panels::layout.actions.logout.label'));
+        $this->assertSame('Известия', __('filament-panels::layout.actions.open_database_notifications.label'));
+        $this->assertSame('Маркирай всички като прочетени', __('filament-notifications::database.modal.actions.mark_all_as_read.label'));
+    }
+
+    public function test_bell_unread_count_is_pluralised_in_bulgarian(): void
+    {
+        $key = 'filament-panels::layout.actions.open_database_notifications.label_with_unread_count';
+
+        $this->assertSame('Известия, 1 непрочетено известие', trans_choice($key, 1, ['count' => 1]));
+        $this->assertSame('Известия, 2 непрочетени известия', trans_choice($key, 2, ['count' => 2]));
+        $this->assertSame('Известия, 15 непрочетени известия', trans_choice($key, 15, ['count' => 15]));
+    }
+
+    public function test_record_actions_header_label_is_pluralised_in_bulgarian(): void
+    {
+        $key = 'filament-tables::table.columns.actions.label';
+
+        $this->assertSame('Действие', trans_choice($key, 1));
+        $this->assertSame('Действия', trans_choice($key, 3));
     }
 
     public function test_table_result_count_is_pluralised_in_bulgarian(): void
@@ -96,6 +146,66 @@ class BulgarianTranslationsTest extends TestCase
         $this->assertStringNotContainsString('filament-tables::table.result_count', $html);
         $this->assertStringNotContainsString('filament-tables::table.loading', $html);
         $this->assertMatchesRegularExpression('/\d+ резултата?|Няма резултати/u', $html);
+    }
+
+    public function test_admin_pages_render_no_patched_key_raw(): void
+    {
+        // The error-toast lines are embedded only while debug is off (prod).
+        config(['app.debug' => false]);
+
+        $admin = User::factory()->admin()->create(['email_verified_at' => now(), 'name' => 'Мария Иванова']);
+        User::factory()->create(['email_verified_at' => now()]);
+        Originator::factory()->create(['buyback' => true]);
+        Originator::factory()->create(['buyback' => false]);
+
+        // These pages render the panel shell (every page), the column manager
+        // and record-actions header (lists), both boolean icon states
+        // (originators), the searchable selects with an inline create button
+        // (loan form) and the file upload (originator logo). The bell, toasts
+        // and password reveal have their own render tests; no admin form uses
+        // a copyable TextInput, so text_input.actions.copy is covered by the
+        // data provider only.
+        $html = collect(['/admin', '/admin/users', '/admin/originators', '/admin/originators/create', '/admin/loans/create'])
+            ->map(fn (string $page): string => $this->actingAs($admin)->get($page)->assertOk()->getContent())
+            ->implode("\n");
+
+        foreach (self::patchedFilamentLines() as [$key]) {
+            $this->assertStringNotContainsString($key, $html);
+        }
+
+        foreach (['Към съдържанието', 'Странична навигация', 'Горна лента', 'Аватар на Мария Иванова', 'Навигационна пътека', 'Приложи колоните'] as $bulgarian) {
+            $this->assertStringContainsString($bulgarian, $html);
+        }
+
+        $this->assertStringContainsString('window.filamentErrorNotifications', $html);
+    }
+
+    public function test_admin_notification_chrome_renders_in_bulgarian(): void
+    {
+        $admin = User::factory()->admin()->create(['email_verified_at' => now()]);
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        $this->actingAs($admin);
+
+        FilamentNotification::make()->title('Нов инвеститор')->sendToDatabase($admin);
+
+        // The bell's lazy placeholder carries the unread count (aria-label + tooltip).
+        $this->get('/admin')
+            ->assertOk()
+            ->assertSee('Известия, 1 непрочетено известие')
+            ->assertDontSee('filament-panels::layout.actions.open_database_notifications');
+
+        // The slide-over list marks each unread item for screen readers.
+        $slideOver = Livewire::test(DatabaseNotifications::class)->html();
+
+        $this->assertStringContainsString('Непрочетено известие', $slideOver);
+        $this->assertStringNotContainsString('filament-notifications::', $slideOver);
+
+        // Every toast's close button (tooltip + aria-label).
+        FilamentNotification::make()->title('Записано')->success()->send();
+        $toasts = Livewire::test(Notifications::class)->html();
+
+        $this->assertStringContainsString('Затвори известието', $toasts);
+        $this->assertStringNotContainsString('filament-notifications::', $toasts);
     }
 
     public function test_every_framework_validation_rule_has_a_bulgarian_message_with_the_same_placeholders(): void
